@@ -17,7 +17,13 @@ repos:
         args: ["--fix"]
       - id: ruff-format
 
-  - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: 0.0.1a8
+  # ty (Astral's type checker) has no published pre-commit repo yet —
+  # run it as a local hook against the project venv.
+  - repo: local
     hooks:
       - id: ty
+        name: ty
+        entry: uv run ty check
+        language: system
+        types: [python]
+        pass_filenames: false
