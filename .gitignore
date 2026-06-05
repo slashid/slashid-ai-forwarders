@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+
+# uv
+.venv/
+uv.lock
+
+# Build artifacts
+build/
+dist/
+*.zip
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Local secrets / fixtures
+.env
+.env.*
+!.env.example
+fixtures/local/

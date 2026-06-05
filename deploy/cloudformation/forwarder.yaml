@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  SlashID Bedrock MIL → NHI AI invocations forwarder.
+
+  Creates a Lambda that subscribes to the customer's Bedrock Model Invocation
+  Logging CloudWatch log group, extracts identity / model / token / tool
+  metadata, and posts the events to SlashID's NHI AI invocations endpoint.
+
+  Prompt and response content never leaves the customer account.
+
+Parameters:
+  BedrockLogGroupName:
+    Type: String
+    Description: CloudWatch log group MIL writes to (e.g. /aws/bedrock/modelinvocations).
+
+  SlashIDEndpoint:
+    Type: String
+    Default: https://api.slashid.com
+    Description: SlashID API endpoint.
+
+  SlashIDOrgId:
+    Type: String
+    Description: SlashID organization UUID.
+
+  SlashIDTokenSSMParameter:
+    Type: String
+    Description: Name of the SSM SecureString parameter holding the SlashID admin JWT.
+
+  LambdaPackageS3Bucket:
+    Type: String
+    Description: S3 bucket containing the forwarder zip artifact.
+
+  LambdaPackageS3Key:
+    Type: String
+    Description: S3 key for the forwarder zip artifact.
+
+Resources:
+  # Placeholder — full resource set (IAM role, Lambda, DLQ, subscription filter)
+  # lands in subsequent commits.
+  Placeholder:
+    Type: AWS::CloudFormation::WaitConditionHandle

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Ruff (lint)
+        run: uv run ruff check
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check
+
+      - name: ty (typecheck)
+        run: uv run ty check
+
+      - name: pytest
+        run: uv run pytest

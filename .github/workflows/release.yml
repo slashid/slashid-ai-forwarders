@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Build Lambda deployment package
+        run: |
+          mkdir -p build
+          uv export --no-dev --no-emit-project --format requirements-txt > build/requirements.txt
+          uv pip install --target build --requirement build/requirements.txt
+          cp -r src/slashid_bedrock_forwarder build/
+          (cd build && zip -qr ../slashid-bedrock-forwarder-${{ github.ref_name }}.zip . -x requirements.txt)
+
+      - name: Stage CloudFormation template
+        run: cp deploy/cloudformation/forwarder.yaml cloudformation.yaml
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            slashid-bedrock-forwarder-${{ github.ref_name }}.zip
+            cloudformation.yaml
+          generate_release_notes: true
