@@ -17,10 +17,10 @@ from slashid_bedrock_forwarder.events import (
     ("name", "expected"),
     [
         ("mcp__claude_ai_Excalidraw__create_view", ("create_view", "claude_ai_Excalidraw", "mcp")),
-        ("git__status", ("status", "git", "builtin")),
-        ("Bash", ("Bash", "builtin", "builtin")),
-        ("Read", ("Read", "builtin", "builtin")),
-        ("mcp__foo", ("foo", "builtin", "builtin")),
+        ("git__status", ("status", "git", "runtime")),
+        ("Bash", ("Bash", "builtin", "runtime")),
+        ("Read", ("Read", "builtin", "runtime")),
+        ("mcp__foo", ("foo", "builtin", "runtime")),
     ],
 )
 def test_parse_tool_name(name: str, expected: tuple[str, str, str]) -> None:
@@ -129,7 +129,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
 
     servers = {s.name: s for s in event.available_tool_servers}
     assert servers["excalidraw"].kind == "mcp"
-    assert servers["builtin"].kind == "builtin"
+    assert servers["builtin"].kind == "runtime"
 
     tools_by_name = {t.name: t for t in event.available_tools}
     assert tools_by_name["create_view"].tool_server_id == servers["excalidraw"].id
@@ -137,6 +137,48 @@ def test_build_event_with_tools_and_used_ids() -> None:
 
     assert event.used_tool_ids == [tools_by_name["create_view"].id]
     assert event.stop_reason == "tool_use"
+
+
+def test_build_event_populates_raw_model_id() -> None:
+    event = build_event(
+        _mil_record(),
+        org_id="org-1",
+        connection_id="conn-1",
+        identity_source_type="manual_import",
+    )
+    assert event is not None
+    assert event.model.id == "us.anthropic.claude-sonnet-4-6"
+    assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
+
+
+def test_unknown_stop_reason_falls_back_to_unknown() -> None:
+    event = build_event(
+        _mil_record(output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "wat"}}),
+        org_id="org-1",
+        connection_id="conn-1",
+        identity_source_type="manual_import",
+    )
+    assert event is not None
+    assert event.stop_reason == "unknown"
+
+
+def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
+    """Pydantic Literal type rejects values outside the AIStopReason enum."""
+    from pydantic import ValidationError
+
+    from slashid_bedrock_forwarder.events import AIInvocationObservedV1, AIModel
+
+    with pytest.raises(ValidationError):
+        AIInvocationObservedV1(
+            org_id="o",
+            connection_id="c",
+            request_id="r",
+            timestamp="t",
+            identifier_from_source="x",
+            identity_source_type="manual_import",
+            model=AIModel(id="m"),
+            stop_reason="not-a-real-reason",  # ty: ignore[invalid-argument-type]
+        )
 
 
 def test_build_event_wire_form_drops_none_optional_fields() -> None:

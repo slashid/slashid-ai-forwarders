@@ -2,8 +2,9 @@
 
 Pure logic: no I/O. Builds AIInvocationObservedV1 envelopes for
 POST /nhi/events/ai-invocations. Models mirror the SlashID OpenAPI
-schemas; `model_dump(mode="json", exclude_none=True)` produces
-wire-compatible payloads.
+schemas (see `~/slashid/ng-evangelion/spec/openapi.yaml`, components
+AIInvocationObservedV1 et al). `model_dump(mode="json", exclude_none=True)`
+produces wire-compatible payloads.
 """
 
 from __future__ import annotations
@@ -11,9 +12,37 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Enum mirrors of the OpenAPI schema. Kept as Literal so pydantic both
+# accepts and rejects values without dragging in a runtime Enum class.
+AIToolServerKind = Literal["mcp", "runtime"]
+
+AIModelProvider = Literal[
+    "anthropic",
+    "openai",
+    "google",
+    "meta",
+    "mistral",
+    "unknown",
+]
+
+AIStopReason = Literal[
+    "end_turn",
+    "max_tokens",
+    "stop_sequence",
+    "tool_use",
+    "pause_turn",
+    "refusal",
+    "guardrail_intervened",
+    "content_filtered",
+    "malformed_model_output",
+    "malformed_tool_use",
+    "model_context_window_exceeded",
+    "unknown",
+]
 
 
 class _WireModel(BaseModel):
@@ -23,6 +52,8 @@ class _WireModel(BaseModel):
 
 
 class AIInvocationTokens(_WireModel):
+    """spec/openapi.yaml — AIInvocationTokens. All fields required, int64."""
+
     input: int = 0
     output: int = 0
     cache_read: int = 0
@@ -30,26 +61,67 @@ class AIInvocationTokens(_WireModel):
     reasoning: int = 0
 
 
-class AIToolServer(_WireModel):
+class AIModel(_WireModel):
+    """spec/openapi.yaml — AIModelDetails."""
+
     id: str
-    name: str
-    kind: str
+    name: str | None = None
+    provider: AIModelProvider | None = None
+    family: str | None = None
+    version: str | None = None
+    raw_model_id: str | None = None
+
+
+class AIToolAnnotations(_WireModel):
+    """spec/openapi.yaml — AIToolAnnotations. All MCP-style hints, all optional."""
+
+    read_only_hint: bool | None = None
+    destructive_hint: bool | None = None
+    idempotent_hint: bool | None = None
+    open_world_hint: bool | None = None
 
 
 class AITool(_WireModel):
+    """spec/openapi.yaml — AIToolDetails. Only `id` is required server-side."""
+
     id: str
-    name: str
-    tool_server_id: str
+    name: str | None = None
+    title: str | None = None
     description: str | None = None
     input_schema: str | None = None
+    output_schema: str | None = None
+    annotations: AIToolAnnotations | None = None
+    tool_server_id: str | None = None
 
 
-class AIModel(_WireModel):
+class AIToolServerCapabilities(_WireModel):
+    """spec/openapi.yaml — AIToolServerCapabilities."""
+
+    supports_prompts: bool | None = None
+    supports_resources: bool | None = None
+    supports_tools: bool | None = None
+    supports_logging: bool | None = None
+    supports_completions: bool | None = None
+    prompts_list_changed: bool | None = None
+    resources_list_changed: bool | None = None
+    tools_list_changed: bool | None = None
+    resources_subscribe: bool | None = None
+
+
+class AIToolServer(_WireModel):
+    """spec/openapi.yaml — AIToolServerDetails."""
+
     id: str
+    name: str | None = None
+    kind: AIToolServerKind | None = None
+    title: str | None = None
+    version: str | None = None
+    instructions: str | None = None
+    capabilities: AIToolServerCapabilities | None = None
 
 
 class AIInvocationObservedV1(_WireModel):
-    """Body for POST /nhi/events/ai-invocations (single event)."""
+    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations."""
 
     org_id: str
     connection_id: str
@@ -62,18 +134,30 @@ class AIInvocationObservedV1(_WireModel):
     available_tool_servers: list[AIToolServer] | None = None
     available_tools: list[AITool] | None = None
     used_tool_ids: list[str] | None = None
-    stop_reason: str | None = None
+    stop_reason: AIStopReason | None = None
+    conversation_id: str | None = None
 
 
-_STOP_REASON_MAP: dict[str, str] = {
-    "end_turn": "end_turn",
-    "tool_use": "tool_use",
-    "max_tokens": "max_tokens",
-    "stop_sequence": "stop_sequence",
-    "guardrail_intervened": "guardrail_intervened",
-    "content_filtered": "content_filtered",
-    "pause_turn": "pause_turn",
-}
+# --- record parsing ---------------------------------------------------------
+
+# Bedrock / Anthropic stop reasons map 1:1 onto the AIStopReason enum once we
+# fall back to "unknown" for anything not in the union.
+_STOP_REASON_VALUES: frozenset[str] = frozenset(
+    [
+        "end_turn",
+        "max_tokens",
+        "stop_sequence",
+        "tool_use",
+        "pause_turn",
+        "refusal",
+        "guardrail_intervened",
+        "content_filtered",
+        "malformed_model_output",
+        "malformed_tool_use",
+        "model_context_window_exceeded",
+        "unknown",
+    ]
+)
 
 
 def _ts(record: dict[str, Any]) -> str:
@@ -90,32 +174,37 @@ def _identifier(record: dict[str, Any]) -> str:
     return ident.get("resolved_arn") or ident.get("arn") or ""
 
 
-def _stop_reason(record: dict[str, Any]) -> str | None:
+def _stop_reason(record: dict[str, Any]) -> AIStopReason | None:
     obody = (record.get("output") or {}).get("outputBodyJson") or {}
     raw = obody.get("stopReason")
-    if isinstance(raw, str) and raw:
-        return _STOP_REASON_MAP.get(raw, "unknown")
-    return None
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw in _STOP_REASON_VALUES:
+        # ty/pydantic narrows the union for us once `raw` is in the known set.
+        return raw  # type: ignore[return-value]
+    return "unknown"
 
 
-def parse_tool_name(name: str) -> tuple[str, str, str]:
+def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
     """Split a Bedrock toolSpec name into (tool_name, server_name, server_kind).
 
-    - `mcp__{server}__{tool}` → (`{tool}`, `{server}`, `mcp`)
-    - `{server}__{tool}`      → (`{tool}`, `{server}`, `builtin`)
-    - `{tool}`                → (`{tool}`, `builtin`,  `builtin`)
-      (bare tools share one synthetic `builtin` server.)
+    - `mcp__{server}__{tool}` → (`{tool}`, `{server}`, `"mcp"`)
+    - `{server}__{tool}`      → (`{tool}`, `{server}`, `"runtime"`)
+    - `{tool}`                → (`{tool}`, `"builtin"`, `"runtime"`)
+      (bare tools share one synthetic `builtin` server; `runtime` is the
+       AIToolServerDetails.kind enum value the SlashID schema uses for
+       any non-MCP server.)
     """
     if name.startswith("mcp__"):
         rest = name[len("mcp__") :]
         if "__" in rest:
             server, tool = rest.split("__", 1)
             return tool, server, "mcp"
-        return rest, "builtin", "builtin"
+        return rest, "builtin", "runtime"
     if "__" in name:
         server, tool = name.split("__", 1)
-        return tool, server, "builtin"
-    return name, "builtin", "builtin"
+        return tool, server, "runtime"
+    return name, "builtin", "runtime"
 
 
 def _short_hash(s: str) -> str:
@@ -149,7 +238,9 @@ def _available_tools(
 
         if server_id not in servers_by_id:
             servers_by_id[server_id] = AIToolServer(
-                id=server_id, name=server_name, kind=server_kind
+                id=server_id,
+                name=server_name,
+                kind=server_kind,
             )
 
         tools.append(
@@ -205,6 +296,7 @@ def build_event(
 
     inp = record.get("input") or {}
     out = record.get("output") or {}
+    model_id = str(record.get("modelId") or "")
 
     return AIInvocationObservedV1(
         org_id=org_id,
@@ -213,7 +305,7 @@ def build_event(
         timestamp=_ts(record),
         identifier_from_source=_identifier(record),
         identity_source_type=identity_source_type,
-        model=AIModel(id=str(record.get("modelId") or "")),
+        model=AIModel(id=model_id, raw_model_id=model_id or None),
         tokens=AIInvocationTokens(
             input=int(inp.get("inputTokenCount") or 0),
             output=int(out.get("outputTokenCount") or 0),
