@@ -22,9 +22,14 @@ Parameters:
     Type: String
     Description: SlashID organization UUID.
 
-  SlashIDTokenSSMParameter:
+  SlashIDConnectionId:
     Type: String
-    Description: Name of the SSM SecureString parameter holding the SlashID admin JWT.
+    Description: UUID of the SlashID push connection that receives the events.
+
+  SlashIDPushToken:
+    Type: String
+    NoEcho: true
+    Description: Event-streaming bearer token for the connection.
 
   LambdaPackageS3Bucket:
     Type: String

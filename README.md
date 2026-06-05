@@ -28,10 +28,13 @@ The customer provides:
 
 | Parameter | Description |
 |---|---|
-| `BedrockLogGroupArn` | The CloudWatch log group MIL writes to |
+| `BedrockLogGroupName` | The CloudWatch log group MIL writes to |
 | `SlashIDEndpoint` | e.g. `https://api.slashid.com` |
 | `SlashIDOrgId` | Organization UUID |
-| `SlashIDTokenSSMParameter` | Name of the SSM SecureString param holding the admin JWT |
+| `SlashIDConnectionId` | UUID of the SlashID push connection that receives events |
+| `SlashIDPushToken` | Event-streaming bearer token for that connection (NoEcho) |
+
+The push token is the only credential the Lambda needs. Identity creation and STS role-chain unrolling happen on the SlashID side.
 
 ## Development
 

@@ -9,15 +9,12 @@ authors = [{ name = "SlashID" }]
 dependencies = [
     "httpx>=0.28",
     "pydantic>=2.10",
+    "pydantic-settings>=2.6",
     "tenacity>=9.0",
 ]
 
 [dependency-groups]
 dev = [
-    # boto3 is provided by the AWS Lambda Python runtime — we don't pack it
-    # into the deploy zip, but the dev env needs it for type checking the
-    # lazy SSM import in config.py.
-    "boto3>=1.35",
     "pytest>=8.0",
     "ruff>=0.8",
     "ty>=0.0.1a8",

@@ -76,9 +76,9 @@ def test_records_from_payload_extracts_and_normalizes() -> None:
 
 
 def test_lambda_handler_empty_payload_returns_zero(monkeypatch: pytest.MonkeyPatch) -> None:
-    # No config / SSM call needed for an empty payload — short-circuits before _run.
+    # Empty payload short-circuits before _run, so the env vars don't need to be set.
     monkeypatch.setattr(handler, "load_config", lambda: object())
 
     cw_event = _wrap_cw_event({"messageType": "CONTROL_MESSAGE", "logEvents": []})
     result = handler.lambda_handler(cw_event, None)
-    assert result == {"identities_imported": 0, "events_pushed": 0, "records_seen": 0}
+    assert result == {"events_pushed": 0, "records_seen": 0}

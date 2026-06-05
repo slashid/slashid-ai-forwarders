@@ -1,10 +1,9 @@
 """MIL record → AIInvocationObservedV1 transformation.
 
-Pure logic: no I/O. Extracts identities for /nhi/identities/import and
-builds AIInvocationObservedV1 envelopes for /nhi/events/ai-invocations.
-
-Models mirror the SlashID OpenAPI schemas; `model_dump(mode="json",
-exclude_none=True)` produces wire-compatible payloads.
+Pure logic: no I/O. Builds AIInvocationObservedV1 envelopes for
+POST /nhi/events/ai-invocations. Models mirror the SlashID OpenAPI
+schemas; `model_dump(mode="json", exclude_none=True)` produces
+wire-compatible payloads.
 """
 
 from __future__ import annotations
@@ -21,14 +20,6 @@ class _WireModel(BaseModel):
     """Base for outbound wire-format models."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-
-class IdentityImportItem(_WireModel):
-    """Payload entry for POST /nhi/identities/import."""
-
-    identifier_from_source: str
-    name: str
-    metadata: dict[str, Any] | None = None
 
 
 class AIInvocationTokens(_WireModel):
@@ -97,13 +88,6 @@ def _ts(record: dict[str, Any]) -> str:
 def _identifier(record: dict[str, Any]) -> str:
     ident = record.get("identity") or {}
     return ident.get("resolved_arn") or ident.get("arn") or ""
-
-
-def _name_from_arn(arn: str) -> str:
-    """`arn:aws:iam::123:user/paulo` → `paulo`."""
-    if "/" in arn:
-        return arn.split("/", 1)[1]
-    return arn
 
 
 def _stop_reason(record: dict[str, Any]) -> str | None:
@@ -242,34 +226,3 @@ def build_event(
         used_tool_ids=used or None,
         stop_reason=_stop_reason(record),
     )
-
-
-def extract_identities(records: list[dict[str, Any]]) -> list[IdentityImportItem]:
-    """Build IdentityImportItem payloads from unique caller ARNs."""
-    seen: dict[str, IdentityImportItem] = {}
-    for r in records:
-        arn = _identifier(r)
-        if not arn or arn in seen:
-            continue
-
-        kind = "unknown"
-        if ":user/" in arn:
-            kind = "user"
-        elif ":assumed-role/" in arn:
-            kind = "assumed-role"
-        elif ":federated-user/" in arn:
-            kind = "federated-user"
-        elif ":role/" in arn:
-            kind = "role"
-
-        seen[arn] = IdentityImportItem(
-            identifier_from_source=arn,
-            name=_name_from_arn(arn),
-            metadata={
-                "source": "aws_bedrock_mil",
-                "aws_account_id": str(r.get("accountId") or ""),
-                "principal_kind": kind,
-                "arn": arn,
-            },
-        )
-    return list(seen.values())

@@ -1,12 +1,9 @@
-"""Async HTTP client for the SlashID NHI endpoints.
+"""Async HTTP client for the SlashID NHI AI invocations endpoint.
 
-Three calls in service of the forwarder pipeline:
-
-1. `POST /nhi/identities/import` — admin-authed, lands `IdentityImportItem[]`.
-2. `GET  /nhi/connections`        — admin-authed; pick the `manual_import` one,
-   read its `id` + `push_auth_token`.
-3. `POST /nhi/events/ai-invocations` — push-token-authed, batched under
-   the endpoint's 1 MB body limit.
+The forwarder only authenticates with the connection's event-streaming
+token. Identity creation, role-chain unrolling, and conversation
+stitching all happen on the SlashID side — the Lambda is intentionally
+a one-trick pony.
 """
 
 from __future__ import annotations
@@ -23,7 +20,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from .events import AIInvocationObservedV1, IdentityImportItem
+from .events import AIInvocationObservedV1
 
 log = logging.getLogger(__name__)
 
@@ -32,23 +29,11 @@ MAX_BATCH_BYTES = 900_000
 
 
 class TransientPushError(Exception):
-    """Retryable upstream failure (5xx, timeout, network)."""
+    """Retryable upstream failure (5xx, 429, network)."""
 
 
 class PermanentPushError(Exception):
-    """Non-retryable upstream failure (4xx other than 429)."""
-
-
-def _admin_auth_headers(admin_token: str) -> dict[str, str]:
-    """Pick the right admin header.
-
-    The SlashID validator accepts either `SlashID-API-Key: <opaque>` or
-    `Authorization: Bearer <jwt>`. Detect JWTs by the `eyJ` prefix and two
-    dots; everything else is treated as an opaque API key.
-    """
-    if admin_token.startswith("eyJ") and admin_token.count(".") == 2:
-        return {"Authorization": f"Bearer {admin_token}"}
-    return {"SlashID-API-Key": admin_token}
+    """Non-retryable upstream failure (other 4xx)."""
 
 
 def _classify(resp: httpx.Response) -> Exception:
@@ -115,64 +100,6 @@ def _events_payload(events: list[AIInvocationObservedV1]) -> dict[str, list[dict
     return {
         "events": [ev.model_dump(mode="json", exclude_none=True) for ev in events],
     }
-
-
-async def import_identities(
-    client: httpx.AsyncClient,
-    items: list[IdentityImportItem],
-    *,
-    endpoint: str,
-    admin_token: str,
-    org_id: str,
-    max_retries: int = 3,
-) -> int:
-    """POST /nhi/identities/import. Returns the count sent."""
-    if not items:
-        return 0
-    url = f"{endpoint}/nhi/identities/import"
-    headers = {**_admin_auth_headers(admin_token), "SlashID-OrgID": org_id}
-    body = [i.model_dump(mode="json", exclude_none=True) for i in items]
-    await _request_with_retry(
-        client, "POST", url, headers=headers, json_body=body, max_retries=max_retries
-    )
-    log.info("import_identities: %d items posted", len(items))
-    return len(items)
-
-
-async def discover_manual_import_connection(
-    client: httpx.AsyncClient,
-    *,
-    endpoint: str,
-    admin_token: str,
-    org_id: str,
-    max_retries: int = 3,
-) -> tuple[str, str]:
-    """GET /nhi/connections → (connection_id, push_auth_token) for the manual_import conn.
-
-    Raises `PermanentPushError` if no manual_import connection exists.
-    """
-    url = f"{endpoint}/nhi/connections"
-    headers = {**_admin_auth_headers(admin_token), "SlashID-OrgID": org_id}
-    resp = await _request_with_retry(
-        client, "GET", url, headers=headers, json_body=None, max_retries=max_retries
-    )
-    data = resp.json()
-    conns = data.get("result") if isinstance(data, dict) else data
-    if isinstance(conns, dict):
-        conns = [conns]
-    if not isinstance(conns, list):
-        raise PermanentPushError(f"unexpected /nhi/connections payload: {data!r}")
-
-    for c in conns:
-        if isinstance(c, dict) and c.get("source") == "manual_import":
-            cid = c.get("id")
-            tok = c.get("push_auth_token")
-            if not cid or not tok:
-                raise PermanentPushError(f"manual_import connection {cid} missing push_auth_token")
-            log.info("discover_manual_import_connection: %s", cid)
-            return str(cid), str(tok)
-
-    raise PermanentPushError("no manual_import connection found; identity import must run first")
 
 
 async def push_invocations(

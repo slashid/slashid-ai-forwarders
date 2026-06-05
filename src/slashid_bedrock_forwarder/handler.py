@@ -9,9 +9,12 @@ serialized in the `message` field. The pipeline:
 
   1. Decode + decompress + json-parse the CW Logs payload
   2. Normalize each record (Anthropic → Converse shape)
-  3. Extract unique identities → POST /nhi/identities/import
-  4. Discover the manual_import connection (cached for the container lifetime)
-  5. Build AIInvocationObservedV1 events → POST /nhi/events/ai-invocations
+  3. Build AIInvocationObservedV1 events → POST /nhi/events/ai-invocations
+
+The connection ID is supplied via env var (the customer's streaming
+endpoint), and the only credential is the connection's push bearer
+token. Identity creation, role-chain unrolling, and conversation
+stitching are SlashID-side responsibilities.
 
 Failure modes are raised; the async-invocation DLQ catches terminal failures.
 """
@@ -29,13 +32,9 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Config, load_config
-from .events import build_event, extract_identities
+from .events import build_event
 from .mil_normalize import normalize_record
-from .sink import (
-    discover_manual_import_connection,
-    import_identities,
-    push_invocations,
-)
+from .sink import push_invocations
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -68,10 +67,6 @@ class CWLogsPayload(BaseModel):
     logEvents: list[CWLogEntry] = Field(default_factory=list)
 
 
-# Container-lifetime cache for the discovered manual_import connection.
-_connection_cache: tuple[str, str] | None = None
-
-
 def _decode_cw_payload(event: CWLogsEvent) -> CWLogsPayload:
     """Decode the base64-encoded gzipped CW Logs payload."""
     compressed = base64.b64decode(event.awslogs.data)
@@ -99,62 +94,33 @@ def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
     return records
 
 
-async def _resolve_connection(client: httpx.AsyncClient, config: Config) -> tuple[str, str]:
-    """Return (connection_id, push_token), reading from the cache when warm."""
-    global _connection_cache
-    if _connection_cache is None:
-        _connection_cache = await discover_manual_import_connection(
-            client,
-            endpoint=config.endpoint,
-            admin_token=config.admin_token,
-            org_id=config.org_id,
-            max_retries=config.max_retries,
-        )
-    return _connection_cache
-
-
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
-    """Identity import → connection discovery → AI invocation push."""
+    """Build AIInvocationObservedV1 events and push them in batches."""
+    events = [
+        built
+        for r in records
+        if (
+            built := build_event(
+                r,
+                org_id=config.org_id,
+                connection_id=config.connection_id,
+                identity_source_type=config.identity_source_type,
+            )
+        )
+        is not None
+    ]
+
     timeout = httpx.Timeout(config.request_timeout_seconds)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        identities = extract_identities(records)
-        identity_count = await import_identities(
-            client,
-            identities,
-            endpoint=config.endpoint,
-            admin_token=config.admin_token,
-            org_id=config.org_id,
-            max_retries=config.max_retries,
-        )
-
-        connection_id, push_token = await _resolve_connection(client, config)
-
-        events = [
-            built
-            for r in records
-            if (
-                built := build_event(
-                    r,
-                    org_id=config.org_id,
-                    connection_id=connection_id,
-                    identity_source_type=config.identity_source_type,
-                )
-            )
-            is not None
-        ]
         event_count = await push_invocations(
             client,
             events,
             endpoint=config.endpoint,
-            push_token=push_token,
+            push_token=config.push_token,
             max_retries=config.max_retries,
         )
 
-    return {
-        "identities_imported": identity_count,
-        "events_pushed": event_count,
-        "records_seen": len(records),
-    }
+    return {"events_pushed": event_count, "records_seen": len(records)}
 
 
 def lambda_handler(event: dict[str, Any], context: object) -> dict[str, int]:
@@ -170,6 +136,6 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, int]:
     records = _records_from_payload(payload)
     if not records:
         log.info("no MIL records in payload (control message or empty batch)")
-        return {"identities_imported": 0, "events_pushed": 0, "records_seen": 0}
+        return {"events_pushed": 0, "records_seen": 0}
 
     return asyncio.run(_run(records, config))

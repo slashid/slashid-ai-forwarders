@@ -9,7 +9,6 @@ import pytest
 from slashid_bedrock_forwarder.events import (
     AIInvocationObservedV1,
     build_event,
-    extract_identities,
     parse_tool_name,
 )
 
@@ -161,25 +160,3 @@ def test_build_event_wire_form_drops_none_optional_fields() -> None:
         "cache_write": 0,
         "reasoning": 0,
     }
-
-
-def test_extract_identities_dedupes_by_arn() -> None:
-    records = [
-        _mil_record(requestId="r1"),
-        _mil_record(requestId="r2"),  # same identity
-        _mil_record(
-            requestId="r3",
-            identity={"arn": "arn:aws:sts::123:assumed-role/role/sess"},
-        ),
-    ]
-    items = extract_identities(records)
-    assert len(items) == 2
-
-    by_arn = {i.identifier_from_source: i for i in items}
-    user = by_arn["arn:aws:iam::123456789012:user/alice"]
-    assert user.name == "alice"
-    assert user.metadata is not None
-    assert user.metadata["principal_kind"] == "user"
-    role = by_arn["arn:aws:sts::123:assumed-role/role/sess"]
-    assert role.metadata is not None
-    assert role.metadata["principal_kind"] == "assumed-role"
