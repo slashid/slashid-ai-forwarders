@@ -1,6 +1,6 @@
 # SlashID Bedrock Forwarder
 
-CloudWatch-triggered AWS Lambda forwarding AWS Bedrock Model Invocation events to SlashID — strips bodies, extracts only model and tool metadata.
+CloudWatch-triggered AWS Lambda forwarding AWS Bedrock Model Invocation events to SlashID — strips bodies, forwards only model and tool metadata.
 
 ## Architecture
 
