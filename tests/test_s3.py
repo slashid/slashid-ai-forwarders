@@ -45,7 +45,7 @@ async def test_resolve_offloaded_bodies_inlines_fetched_body(
 ) -> None:
     fetched: list[str] = []
 
-    async def fake_fetch(uri: str, *, max_attempts: int = 5) -> dict[str, Any] | None:
+    async def fake_fetch(uri: str, *, max_attempts: int = 6) -> dict[str, Any] | None:
         fetched.append(uri)
         return {"toolConfig": {"tools": [{"toolSpec": {"name": "Bash"}}]}}
 
@@ -78,7 +78,7 @@ async def test_resolve_offloaded_bodies_inlines_fetched_body(
 
 @pytest.mark.asyncio
 async def test_resolve_offloaded_bodies_tolerates_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_fetch(uri: str, *, max_attempts: int = 5) -> dict[str, Any] | None:
+    async def fake_fetch(uri: str, *, max_attempts: int = 6) -> dict[str, Any] | None:
         return None  # body never landed
 
     monkeypatch.setattr(s3, "fetch_offloaded_body", fake_fetch)

@@ -24,7 +24,7 @@ from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential,
+    wait_fixed,
 )
 
 log = logging.getLogger(__name__)
@@ -86,14 +86,14 @@ def _sync_get(bucket: str, key: str) -> bytes:
     return resp["Body"].read()
 
 
-async def fetch_offloaded_body(s3_uri: str, *, max_attempts: int = 5) -> dict[str, Any] | None:
-    """Fetch + decode a body-offload object, retrying briefly while it lands.
+async def fetch_offloaded_body(s3_uri: str, *, max_attempts: int = 6) -> dict[str, Any] | None:
+    """Fetch + decode a body-offload object, retrying while it lands.
 
-    Bedrock writes the body-offload object after the main MIL record. The
-    Lambda may run before the body is in place, so we retry on NoSuchKey
-    with bounded exponential backoff (roughly 30s total over 5 attempts).
-    Returns None on permanent failure — callers should treat that as
-    "body unavailable" rather than abort.
+    Bedrock writes the body-offload object after the main MIL record by
+    up to ~60 seconds. We retry on NoSuchKey every 15s for 6 attempts
+    (~90s total window) to cover the worst-case lag. Returns None on
+    permanent failure — callers should treat that as "body unavailable"
+    rather than abort.
     """
     parsed = _parse_s3_uri(s3_uri)
     if parsed is None:
@@ -103,7 +103,7 @@ async def fetch_offloaded_body(s3_uri: str, *, max_attempts: int = 5) -> dict[st
 
     retrying = AsyncRetrying(
         stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=1.0, min=1.0, max=15.0),
+        wait=wait_fixed(15),
         retry=retry_if_exception_type(_OffloadedBodyNotReady),
         reraise=True,
     )
