@@ -31,6 +31,16 @@ Parameters:
     NoEcho: true
     Description: Event-streaming bearer token for the connection.
 
+  BedrockBodyOffloadS3Bucket:
+    Type: String
+    Default: ""
+    Description: |
+      S3 bucket Bedrock writes MIL body-offload objects to (large prompts
+      / system prompts that exceed the inline CloudWatch payload limit).
+      Usually the same bucket configured as MIL's S3 destination. Leave
+      blank to skip the IAM grant — the Lambda will still emit events,
+      but with empty `available_tools` for offloaded records.
+
   LambdaPackageS3Bucket:
     Type: String
     Description: S3 bucket containing the forwarder zip artifact.

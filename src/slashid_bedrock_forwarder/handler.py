@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .config import Config, load_config
 from .events import build_event
 from .mil_normalize import normalize_record
+from .s3 import resolve_offloaded_bodies
 from .sink import push_invocations
 
 log = logging.getLogger()
@@ -95,7 +96,9 @@ def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
 
 
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
-    """Build AIInvocationObservedV1 events and push them in batches."""
+    """Resolve any offloaded MIL bodies, build events, push them in batches."""
+    await resolve_offloaded_bodies(records)
+
     events = [
         built
         for r in records
