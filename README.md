@@ -31,11 +31,9 @@ The customer provides:
 | `BedrockLogGroupName` | The CloudWatch log group MIL writes to |
 | `BedrockBodyOffloadS3Bucket` | (optional) Bucket Bedrock writes offloaded prompts to. Granted `s3:GetObject` so the Lambda can inline large prompts. Leave blank to skip — offloaded records still ingest, just without tool-catalog metadata. |
 | `SlashIDEndpoint` | e.g. `https://api.slashid.com` |
-| `SlashIDOrgId` | Organization UUID |
-| `SlashIDConnectionId` | UUID of the SlashID push connection that receives events |
-| `SlashIDPushToken` | Event-streaming bearer token for that connection (NoEcho) |
+| `SlashIDPushToken` | Event-streaming bearer token for the connection (NoEcho) |
 
-The push token is the only credential the Lambda needs. Identity creation and STS role-chain unrolling happen on the SlashID side.
+The push token is the only credential the Lambda needs. SlashID derives the org and connection IDs from the token; identity creation and STS role-chain unrolling happen on the SlashID side.
 
 ## Development
 

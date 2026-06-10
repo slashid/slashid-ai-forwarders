@@ -121,10 +121,15 @@ class AIToolServer(_WireModel):
 
 
 class AIInvocationObservedV1(_WireModel):
-    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations."""
+    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations.
 
-    org_id: str
-    connection_id: str
+    `org_id` and `connection_id` are spec-required but the server derives
+    both from the authenticated push token, so we omit them on the wire.
+    Kept as optional fields so the model still matches the schema shape.
+    """
+
+    org_id: str | None = None
+    connection_id: str | None = None
     request_id: str
     timestamp: str
     identifier_from_source: str
@@ -278,8 +283,6 @@ def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> li
 def build_event(
     record: dict[str, Any],
     *,
-    org_id: str,
-    connection_id: str,
     identity_source_type: str,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
@@ -287,6 +290,10 @@ def build_event(
     Returns None when the record lacks a `requestId` (body-offload S3
     objects share the listing prefix in some MIL layouts; they appear as
     pseudo-records with no identifying metadata).
+
+    `org_id` and `connection_id` are intentionally left unset — the server
+    derives both from the authenticated push token, and our pydantic model
+    makes them optional so `exclude_none=True` drops them from the wire.
     """
     if not record.get("requestId"):
         return None
@@ -299,8 +306,6 @@ def build_event(
     model_id = str(record.get("modelId") or "")
 
     return AIInvocationObservedV1(
-        org_id=org_id,
-        connection_id=connection_id,
         request_id=str(record["requestId"]),
         timestamp=_ts(record),
         identifier_from_source=_identifier(record),

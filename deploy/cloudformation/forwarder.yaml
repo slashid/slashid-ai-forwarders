@@ -18,18 +18,13 @@ Parameters:
     Default: https://api.slashid.com
     Description: SlashID API endpoint.
 
-  SlashIDOrgId:
-    Type: String
-    Description: SlashID organization UUID.
-
-  SlashIDConnectionId:
-    Type: String
-    Description: UUID of the SlashID push connection that receives the events.
-
   SlashIDPushToken:
     Type: String
     NoEcho: true
-    Description: Event-streaming bearer token for the connection.
+    Description: |
+      Event-streaming bearer token for the connection. The server derives
+      the org and connection IDs from this token, so we don't pass them
+      separately.
 
   BedrockBodyOffloadS3Bucket:
     Type: String
@@ -123,8 +118,6 @@ Resources:
       Environment:
         Variables:
           SLASHID_ENDPOINT: !Ref SlashIDEndpoint
-          SLASHID_ORG_ID: !Ref SlashIDOrgId
-          SLASHID_CONNECTION_ID: !Ref SlashIDConnectionId
           SLASHID_PUSH_TOKEN: !Ref SlashIDPushToken
 
   # CloudWatch Logs needs explicit permission to invoke the Lambda. The

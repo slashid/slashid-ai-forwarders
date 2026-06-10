@@ -102,15 +102,7 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
     events = [
         built
         for r in records
-        if (
-            built := build_event(
-                r,
-                org_id=config.org_id,
-                connection_id=config.connection_id,
-                identity_source_type=config.identity_source_type,
-            )
-        )
-        is not None
+        if (built := build_event(r, identity_source_type=config.identity_source_type)) is not None
     ]
 
     timeout = httpx.Timeout(config.request_timeout_seconds)

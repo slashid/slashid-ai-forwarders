@@ -26,8 +26,6 @@ class Config(BaseSettings):
     )
 
     endpoint: str = Field(..., min_length=1)
-    org_id: str = Field(..., min_length=1)
-    connection_id: str = Field(..., min_length=1)
     push_token: str = Field(..., min_length=1)
     identity_source_type: str = "manual_import"
     request_timeout_seconds: float = 10.0

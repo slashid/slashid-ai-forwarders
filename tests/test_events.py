@@ -42,12 +42,7 @@ def _mil_record(**overrides: Any) -> dict[str, Any]:
 
 
 def test_build_event_minimal() -> None:
-    event = build_event(
-        _mil_record(),
-        org_id="org-1",
-        connection_id="conn-1",
-        identity_source_type="manual_import",
-    )
+    event = build_event(_mil_record(), identity_source_type="manual_import")
     assert event is not None
     assert isinstance(event, AIInvocationObservedV1)
     assert event.request_id == "req-1"
@@ -58,6 +53,9 @@ def test_build_event_minimal() -> None:
     assert event.tokens.cache_read == 5
     assert event.tokens.cache_write == 0
     assert event.stop_reason == "end_turn"
+    # org_id and connection_id stay None — the server derives them from the push token.
+    assert event.org_id is None
+    assert event.connection_id is None
     # Optional fields stay None when no tools are present.
     assert event.available_tool_servers is None
     assert event.available_tools is None
@@ -67,15 +65,7 @@ def test_build_event_minimal() -> None:
 def test_build_event_skips_records_without_request_id() -> None:
     record = _mil_record()
     del record["requestId"]
-    assert (
-        build_event(
-            record,
-            org_id="org-1",
-            connection_id="conn-1",
-            identity_source_type="manual_import",
-        )
-        is None
-    )
+    assert build_event(record, identity_source_type="manual_import") is None
 
 
 def test_build_event_with_tools_and_used_ids() -> None:
@@ -116,12 +106,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
             },
         },
     )
-    event = build_event(
-        record,
-        org_id="org-1",
-        connection_id="conn-1",
-        identity_source_type="manual_import",
-    )
+    event = build_event(record, identity_source_type="manual_import")
     assert event is not None
     assert event.available_tool_servers is not None
     assert event.available_tools is not None
@@ -140,12 +125,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
 
 
 def test_build_event_populates_raw_model_id() -> None:
-    event = build_event(
-        _mil_record(),
-        org_id="org-1",
-        connection_id="conn-1",
-        identity_source_type="manual_import",
-    )
+    event = build_event(_mil_record(), identity_source_type="manual_import")
     assert event is not None
     assert event.model.id == "us.anthropic.claude-sonnet-4-6"
     assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
@@ -154,8 +134,6 @@ def test_build_event_populates_raw_model_id() -> None:
 def test_unknown_stop_reason_falls_back_to_unknown() -> None:
     event = build_event(
         _mil_record(output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "wat"}}),
-        org_id="org-1",
-        connection_id="conn-1",
         identity_source_type="manual_import",
     )
     assert event is not None
@@ -170,8 +148,6 @@ def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
 
     with pytest.raises(ValidationError):
         AIInvocationObservedV1(
-            org_id="o",
-            connection_id="c",
             request_id="r",
             timestamp="t",
             identifier_from_source="x",
@@ -182,15 +158,13 @@ def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
 
 
 def test_build_event_wire_form_drops_none_optional_fields() -> None:
-    event = build_event(
-        _mil_record(),
-        org_id="org-1",
-        connection_id="conn-1",
-        identity_source_type="manual_import",
-    )
+    event = build_event(_mil_record(), identity_source_type="manual_import")
     assert event is not None
     wire = event.model_dump(mode="json", exclude_none=True)
-    # No empty None placeholders on the wire.
+    # The server derives org_id + connection_id from the token; we drop them.
+    assert "org_id" not in wire
+    assert "connection_id" not in wire
+    # No empty None placeholders for the rest either.
     assert "available_tool_servers" not in wire
     assert "available_tools" not in wire
     assert "used_tool_ids" not in wire
