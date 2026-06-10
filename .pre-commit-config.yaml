@@ -5,6 +5,11 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # CloudFormation templates use !Ref / !Sub / !GetAtt / !If etc.,
+        # which the plain PyYAML loader can't construct. --unsafe still
+        # checks the document is parseable, just doesn't try to construct
+        # the unknown tags.
+        args: ["--unsafe"]
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files

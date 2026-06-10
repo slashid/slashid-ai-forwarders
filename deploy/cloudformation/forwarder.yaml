@@ -49,8 +49,136 @@ Parameters:
     Type: String
     Description: S3 key for the forwarder zip artifact.
 
+  LambdaMemoryMB:
+    Type: Number
+    Default: 512
+    MinValue: 128
+    MaxValue: 10240
+    Description: Lambda memory allocation (also scales CPU proportionally).
+
+  LambdaTimeoutSeconds:
+    Type: Number
+    Default: 180
+    MinValue: 30
+    MaxValue: 900
+    Description: |
+      Lambda invocation timeout. Must cover the worst-case offloaded-body
+      retry window (~90s) plus actual processing.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365, 400, 545, 731, 1827, 3653]
+    Description: Retention for the forwarder Lambda's own log group.
+
+Conditions:
+  HasOffloadBucket: !Not [!Equals [!Ref BedrockBodyOffloadS3Bucket, ""]]
+
 Resources:
-  # Placeholder — full resource set (IAM role, Lambda, DLQ, subscription filter)
-  # lands in subsequent commits.
-  Placeholder:
-    Type: AWS::CloudFormation::WaitConditionHandle
+  # Async-invoke DLQ. Failed invocations land here after Lambda's built-in
+  # retries are exhausted; drain manually or with a separate replay tool.
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600  # 14 days, the SQS maximum
+
+  ForwarderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DLQWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt DeadLetterQueue.Arn
+        - !If
+          - HasOffloadBucket
+          - PolicyName: OffloadBodyRead
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub arn:${AWS::Partition}:s3:::${BedrockBodyOffloadS3Bucket}/*
+          - !Ref AWS::NoValue
+
+  # Explicit Lambda log group so we control retention. Must exist before
+  # the Lambda is created; otherwise Lambda auto-creates one with infinite
+  # retention. The name matches Lambda's default convention.
+  ForwarderLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-forwarder
+      RetentionInDays: !Ref LogRetentionDays
+
+  ForwarderFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ForwarderLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-forwarder
+      Runtime: python3.13
+      Handler: slashid_bedrock_forwarder.handler.lambda_handler
+      Role: !GetAtt ForwarderRole.Arn
+      MemorySize: !Ref LambdaMemoryMB
+      Timeout: !Ref LambdaTimeoutSeconds
+      Code:
+        S3Bucket: !Ref LambdaPackageS3Bucket
+        S3Key: !Ref LambdaPackageS3Key
+      Environment:
+        Variables:
+          SLASHID_ENDPOINT: !Ref SlashIDEndpoint
+          SLASHID_ORG_ID: !Ref SlashIDOrgId
+          SLASHID_CONNECTION_ID: !Ref SlashIDConnectionId
+          SLASHID_PUSH_TOKEN: !Ref SlashIDPushToken
+      DeadLetterConfig:
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+
+  # CloudWatch Logs needs explicit permission to invoke the Lambda. The
+  # SourceArn is scoped to just the customer's MIL log group so other
+  # subscription-filter callers can't trigger us.
+  LogGroupInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Action: lambda:InvokeFunction
+      Principal: !Sub logs.${AWS::Region}.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${BedrockLogGroupName}:*
+      SourceAccount: !Ref AWS::AccountId
+
+  # The subscription filter itself. An empty FilterPattern matches every
+  # record in the log group — MIL writes only invocation records, so we
+  # take them all.
+  BedrockSubscriptionFilter:
+    Type: AWS::Logs::SubscriptionFilter
+    DependsOn: LogGroupInvokePermission
+    Properties:
+      LogGroupName: !Ref BedrockLogGroupName
+      FilterPattern: ""
+      DestinationArn: !GetAtt ForwarderFunction.Arn
+
+Outputs:
+  ForwarderFunctionName:
+    Value: !Ref ForwarderFunction
+    Description: Name of the forwarder Lambda function.
+
+  ForwarderFunctionArn:
+    Value: !GetAtt ForwarderFunction.Arn
+    Description: ARN of the forwarder Lambda function.
+
+  DeadLetterQueueUrl:
+    Value: !Ref DeadLetterQueue
+    Description: SQS DLQ URL; drain to retry permanently failed events.
+
+  DeadLetterQueueArn:
+    Value: !GetAtt DeadLetterQueue.Arn
+    Description: SQS DLQ ARN.
