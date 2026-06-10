@@ -75,13 +75,6 @@ Conditions:
   HasOffloadBucket: !Not [!Equals [!Ref BedrockBodyOffloadS3Bucket, ""]]
 
 Resources:
-  # Async-invoke DLQ. Failed invocations land here after Lambda's built-in
-  # retries are exhausted; drain manually or with a separate replay tool.
-  DeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      MessageRetentionPeriod: 1209600  # 14 days, the SQS maximum
-
   ForwarderRole:
     Type: AWS::IAM::Role
     Properties:
@@ -94,13 +87,6 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: DLQWrite
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: sqs:SendMessage
-                Resource: !GetAtt DeadLetterQueue.Arn
         - !If
           - HasOffloadBucket
           - PolicyName: OffloadBodyRead
@@ -140,8 +126,6 @@ Resources:
           SLASHID_ORG_ID: !Ref SlashIDOrgId
           SLASHID_CONNECTION_ID: !Ref SlashIDConnectionId
           SLASHID_PUSH_TOKEN: !Ref SlashIDPushToken
-      DeadLetterConfig:
-        TargetArn: !GetAtt DeadLetterQueue.Arn
 
   # CloudWatch Logs needs explicit permission to invoke the Lambda. The
   # SourceArn is scoped to just the customer's MIL log group so other
@@ -174,11 +158,3 @@ Outputs:
   ForwarderFunctionArn:
     Value: !GetAtt ForwarderFunction.Arn
     Description: ARN of the forwarder Lambda function.
-
-  DeadLetterQueueUrl:
-    Value: !Ref DeadLetterQueue
-    Description: SQS DLQ URL; drain to retry permanently failed events.
-
-  DeadLetterQueueArn:
-    Value: !GetAtt DeadLetterQueue.Arn
-    Description: SQS DLQ ARN.
