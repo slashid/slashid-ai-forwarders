@@ -74,3 +74,7 @@ jobs:
             ${{ env.ARTIFACT }}
             cloudformation.yaml
           generate_release_notes: true
+          # SemVer pre-release tags carry a hyphen (e.g. v0.1.0-rc1).
+          # Mark those as pre-releases so GitHub doesn't surface them as
+          # "Latest" in the UI or to the `latest` API endpoint.
+          prerelease: ${{ contains(github.ref_name, '-') }}
