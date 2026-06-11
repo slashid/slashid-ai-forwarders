@@ -118,7 +118,9 @@ def _reconstruct_message_from_stream(events: list[Any]) -> dict[str, Any]:
                     try:
                         parsed_input = cast("dict[str, Any]", json.loads(buf))
                     except json.JSONDecodeError:
-                        log.warning("tool_use input_json malformed: %r", buf[:80])
+                        # Length only — the buffer can hold tool arguments and
+                        # we don't want those bytes in CloudWatch logs.
+                        log.warning("tool_use input_json malformed (%d bytes)", len(buf))
                 content.append(
                     {
                         "toolUse": {

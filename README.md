@@ -18,7 +18,7 @@ Bedrock call ──→ MIL ──→ CloudWatch Logs ──┐
                                   SlashID NHI subgraph
 ```
 
-On terminal failure, the Lambda's async-invoke DLQ (SQS) catches the event for later replay.
+On terminal failure, the Lambda exhausts AWS's two built-in async-invoke retries and CloudWatch's `Errors` metric increments — set an alarm on it. (No SQS DLQ is wired up in v1; add `DeadLetterConfig` to `forwarder.yaml` if you want replay-capable durability.)
 
 ## Install
 

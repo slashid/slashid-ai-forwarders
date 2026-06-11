@@ -60,8 +60,14 @@ def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
     return bucket, key
 
 
-def _decode_body(raw: bytes, key: str) -> dict[str, Any] | None:
-    """Gunzip if needed, JSON-parse, return a dict or None on failure."""
+def _decode_body(raw: bytes, key: str) -> dict[str, Any] | list[Any] | None:
+    """Gunzip if needed, JSON-parse, return a dict, list, or None on failure.
+
+    Anthropic-shape outputs from InvokeModelWithResponseStream are a
+    top-level *list* of SSE events; mil_normalize handles that shape in
+    `_reconstruct_message_from_stream`. Rejecting lists here would
+    silently lose every large InvokeModel-against-Anthropic call.
+    """
     if key.endswith(".gz"):
         raw = gzip.decompress(raw)
     try:
@@ -69,7 +75,7 @@ def _decode_body(raw: bytes, key: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         log.warning("offloaded body at %s is not valid JSON", key)
         return None
-    return parsed if isinstance(parsed, dict) else None
+    return parsed if isinstance(parsed, dict | list) else None
 
 
 def _sync_get(bucket: str, key: str) -> bytes:
@@ -86,7 +92,9 @@ def _sync_get(bucket: str, key: str) -> bytes:
     return resp["Body"].read()
 
 
-async def fetch_offloaded_body(s3_uri: str, *, max_attempts: int = 6) -> dict[str, Any] | None:
+async def fetch_offloaded_body(
+    s3_uri: str, *, max_attempts: int = 6
+) -> dict[str, Any] | list[Any] | None:
     """Fetch + decode a body-offload object, retrying while it lands.
 
     Bedrock writes the body-offload object after the main MIL record by
@@ -94,6 +102,10 @@ async def fetch_offloaded_body(s3_uri: str, *, max_attempts: int = 6) -> dict[st
     (~90s total window) to cover the worst-case lag. Returns None on
     permanent failure — callers should treat that as "body unavailable"
     rather than abort.
+
+    The body is either a dict (Converse / Anthropic Messages) or a list
+    of SSE events (Anthropic streaming) — both shapes are recognised by
+    `mil_normalize.normalize_record`.
     """
     parsed = _parse_s3_uri(s3_uri)
     if parsed is None:

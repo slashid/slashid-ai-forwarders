@@ -39,6 +39,18 @@ def test_decode_body_invalid_returns_none() -> None:
     assert s3._decode_body(b"not json", "key.json") is None
 
 
+def test_decode_body_accepts_list_for_anthropic_streams() -> None:
+    """InvokeModelWithResponseStream offloads land as top-level arrays of SSE events.
+
+    Regression for B1: rejecting list bodies silently lost every large
+    Anthropic streaming call's tool/stop-reason data.
+    """
+    raw = b'[{"type":"message_start"},{"type":"content_block_stop","index":0}]'
+    decoded = s3._decode_body(raw, "anthropic-stream.json")
+    assert isinstance(decoded, list)
+    assert len(decoded) == 2
+
+
 @pytest.mark.asyncio
 async def test_resolve_offloaded_bodies_inlines_fetched_body(
     monkeypatch: pytest.MonkeyPatch,

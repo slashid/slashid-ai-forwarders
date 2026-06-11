@@ -16,7 +16,8 @@ endpoint), and the only credential is the connection's push bearer
 token. Identity creation, role-chain unrolling, and conversation
 stitching are SlashID-side responsibilities.
 
-Failure modes are raised; the async-invocation DLQ catches terminal failures.
+Failure modes are raised; AWS retries the async invocation twice, then
+the CloudWatch `Errors` metric increments and the event is dropped.
 """
 
 from __future__ import annotations
