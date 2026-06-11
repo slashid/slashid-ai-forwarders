@@ -32,6 +32,7 @@ The customer provides:
 | `BedrockBodyOffloadS3Bucket` | (optional) Bucket Bedrock writes offloaded prompts to. Granted `s3:GetObject` so the Lambda can inline large prompts. Leave blank to skip — offloaded records still ingest, just without tool-catalog metadata. |
 | `SlashIDEndpoint` | e.g. `https://api.slashid.com` |
 | `SlashIDPushToken` | Event-streaming bearer token for the connection (NoEcho) |
+| `IncludeRawContent` | (optional, default `false`) Opt-in to forwarding raw prompt/response JSON. When off, only content hash + mime type + byte length are sent. |
 
 The push token is the only credential the Lambda needs. SlashID derives the org and connection IDs from the token; identity creation and STS role-chain unrolling happen on the SlashID side.
 

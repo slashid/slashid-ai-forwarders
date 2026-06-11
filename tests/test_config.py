@@ -21,20 +21,21 @@ def test_config_reads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(cfg, Config)
     assert cfg.endpoint == "https://api.slashid.com/"
     assert cfg.push_token == "tok"
-    assert cfg.identity_source_type == "manual_import"  # default
-    assert cfg.request_timeout_seconds == 10.0  # default
-    assert cfg.max_retries == 3  # default
+    # Privacy defaults: opted out, no raw prompt/response text on the wire.
+    assert cfg.include_raw_content is False
+    assert cfg.request_timeout_seconds == 10.0
+    assert cfg.max_retries == 3
 
 
 def test_config_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SLASHID_ENDPOINT", "https://api.slashid.com")
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "tok")
-    monkeypatch.setenv("SLASHID_IDENTITY_SOURCE_TYPE", "aws_account")
+    monkeypatch.setenv("SLASHID_INCLUDE_RAW_CONTENT", "true")
     monkeypatch.setenv("SLASHID_REQUEST_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("SLASHID_MAX_RETRIES", "5")
 
     cfg = load_config()
-    assert cfg.identity_source_type == "aws_account"
+    assert cfg.include_raw_content is True
     assert cfg.request_timeout_seconds == 30.0
     assert cfg.max_retries == 5
 

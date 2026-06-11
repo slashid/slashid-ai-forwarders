@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 import pytest
@@ -33,7 +35,10 @@ def _mil_record(**overrides: Any) -> dict[str, Any]:
         "timestamp": "2026-06-01T12:00:00Z",
         "modelId": "us.anthropic.claude-sonnet-4-6",
         "accountId": "123456789012",
-        "identity": {"arn": "arn:aws:iam::123456789012:user/alice"},
+        "identity": {
+            "arn": "arn:aws:iam::123456789012:user/alice",
+            "accessKeyId": "AKIAEXAMPLE",
+        },
         "input": {"inputTokenCount": 100, "cacheReadInputTokenCount": 5},
         "output": {"outputTokenCount": 50, "outputBodyJson": {"stopReason": "end_turn"}},
     }
@@ -42,30 +47,38 @@ def _mil_record(**overrides: Any) -> dict[str, Any]:
 
 
 def test_build_event_minimal() -> None:
-    event = build_event(_mil_record(), identity_source_type="manual_import")
+    event = build_event(_mil_record())
     assert event is not None
     assert isinstance(event, AIInvocationObservedV1)
     assert event.request_id == "req-1"
-    assert event.identifier_from_source == "arn:aws:iam::123456789012:user/alice"
+    assert event.identity_details.principal_arn == "arn:aws:iam::123456789012:user/alice"
+    assert event.identity_details.access_key_id == "AKIAEXAMPLE"
     assert event.model.id == "us.anthropic.claude-sonnet-4-6"
     assert event.tokens.input == 100
     assert event.tokens.output == 50
     assert event.tokens.cache_read == 5
     assert event.tokens.cache_write == 0
     assert event.stop_reason == "end_turn"
-    # org_id and connection_id stay None — the server derives them from the push token.
-    assert event.org_id is None
-    assert event.connection_id is None
-    # Optional fields stay None when no tools are present.
+    # Optional fields stay None when not populated.
     assert event.available_tool_servers is None
     assert event.available_tools is None
     assert event.used_tool_ids is None
+    assert event.available_agents is None
+    assert event.used_agent_ids is None
 
 
 def test_build_event_skips_records_without_request_id() -> None:
     record = _mil_record()
     del record["requestId"]
-    assert build_event(record, identity_source_type="manual_import") is None
+    assert build_event(record) is None
+
+
+def test_build_event_omits_access_key_when_missing() -> None:
+    record = _mil_record(identity={"arn": "arn:aws:iam::123:user/bob"})
+    event = build_event(record)
+    assert event is not None
+    assert event.identity_details.principal_arn == "arn:aws:iam::123:user/bob"
+    assert event.identity_details.access_key_id is None
 
 
 def test_build_event_with_tools_and_used_ids() -> None:
@@ -106,7 +119,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
             },
         },
     )
-    event = build_event(record, identity_source_type="manual_import")
+    event = build_event(record)
     assert event is not None
     assert event.available_tool_servers is not None
     assert event.available_tools is not None
@@ -125,7 +138,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
 
 
 def test_build_event_populates_raw_model_id() -> None:
-    event = build_event(_mil_record(), identity_source_type="manual_import")
+    event = build_event(_mil_record())
     assert event is not None
     assert event.model.id == "us.anthropic.claude-sonnet-4-6"
     assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
@@ -134,7 +147,6 @@ def test_build_event_populates_raw_model_id() -> None:
 def test_unknown_stop_reason_falls_back_to_unknown() -> None:
     event = build_event(
         _mil_record(output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "wat"}}),
-        identity_source_type="manual_import",
     )
     assert event is not None
     assert event.stop_reason == "unknown"
@@ -144,31 +156,79 @@ def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
     """Pydantic Literal type rejects values outside the AIStopReason enum."""
     from pydantic import ValidationError
 
-    from slashid_bedrock_forwarder.events import AIInvocationObservedV1, AIModel
+    from slashid_bedrock_forwarder.events import AIInvocationObservedV1, AIModel, AWSIdentityDetails
 
     with pytest.raises(ValidationError):
         AIInvocationObservedV1(
             request_id="r",
             timestamp="t",
-            identifier_from_source="x",
-            identity_source_type="manual_import",
+            identity_details=AWSIdentityDetails(principal_arn="arn:aws:iam::1:user/x"),
             model=AIModel(id="m"),
             stop_reason="not-a-real-reason",  # ty: ignore[invalid-argument-type]
         )
 
 
-def test_build_event_wire_form_drops_none_optional_fields() -> None:
-    event = build_event(_mil_record(), identity_source_type="manual_import")
+def test_content_fields_default_to_hash_only() -> None:
+    """include_raw_content=False (default): hash + mime + bytes, no text."""
+    body = {"messages": [{"role": "user", "content": "secret prompt"}]}
+    record = _mil_record(
+        input={"inputTokenCount": 1, "inputBodyJson": body},
+        output={"outputTokenCount": 1, "outputBodyJson": {"stopReason": "end_turn"}},
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.input is not None
+
+    serialised = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    expected_hash = f"sha256:{hashlib.sha256(serialised).hexdigest()}"
+    assert event.input.content_hash == expected_hash
+    assert event.input.mime_type == "application/json"
+    assert event.input.byte_length == len(serialised)
+    # Crucially: no text.
+    assert event.input.redacted_text is None
+
+
+def test_content_fields_include_raw_when_opted_in() -> None:
+    body = {"messages": [{"role": "user", "content": "hello"}]}
+    record = _mil_record(
+        input={"inputTokenCount": 1, "inputBodyJson": body},
+        output={"outputTokenCount": 1, "outputBodyJson": {"stopReason": "end_turn"}},
+    )
+    event = build_event(record, include_raw_content=True)
+    assert event is not None
+    assert event.input is not None
+    assert event.input.redacted_text is not None
+    assert json.loads(event.input.redacted_text) == body
+
+
+def test_content_field_none_when_body_absent() -> None:
+    record = _mil_record(input={"inputTokenCount": 1}, output={"outputTokenCount": 1})
+    event = build_event(record)
+    assert event is not None
+    assert event.input is None
+    assert event.output is None
+
+
+def test_build_event_wire_form() -> None:
+    event = build_event(_mil_record())
     assert event is not None
     wire = event.model_dump(mode="json", exclude_none=True)
-    # The server derives org_id + connection_id from the token; we drop them.
+    # Spec dropped these; they must not show up in the JSON we send.
     assert "org_id" not in wire
     assert "connection_id" not in wire
-    # No empty None placeholders for the rest either.
+    assert "identifier_from_source" not in wire
+    assert "identity_source_type" not in wire
+    # The new identity shape.
+    assert wire["identity_details"] == {
+        "principal_arn": "arn:aws:iam::123456789012:user/alice",
+        "access_key_id": "AKIAEXAMPLE",
+    }
+    # No empty None placeholders for the rest.
     assert "available_tool_servers" not in wire
     assert "available_tools" not in wire
     assert "used_tool_ids" not in wire
-    # Tokens are always present (default 0s).
+    assert "available_agents" not in wire
+    # Tokens always present (default 0s).
     assert wire["tokens"] == {
         "input": 100,
         "output": 50,

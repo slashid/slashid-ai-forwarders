@@ -26,6 +26,17 @@ Parameters:
       the org and connection IDs from this token, so we don't pass them
       separately.
 
+  IncludeRawContent:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: |
+      Opt-in to sending raw prompt and response JSON bodies in
+      AIInvocationContent.redacted_text. When "false" (default) the
+      Lambda still sends content_hash, mime_type, and byte_length —
+      enough for the server to dedup and correlate — but no prompt text
+      leaves the customer account.
+
   BedrockBodyOffloadS3Bucket:
     Type: String
     Default: ""
@@ -119,6 +130,7 @@ Resources:
         Variables:
           SLASHID_ENDPOINT: !Ref SlashIDEndpoint
           SLASHID_PUSH_TOKEN: !Ref SlashIDPushToken
+          SLASHID_INCLUDE_RAW_CONTENT: !Ref IncludeRawContent
 
   # CloudWatch Logs needs explicit permission to invoke the Lambda. The
   # SourceArn is scoped to just the customer's MIL log group so other

@@ -120,27 +120,68 @@ class AIToolServer(_WireModel):
     capabilities: AIToolServerCapabilities | None = None
 
 
+class AWSIdentityDetails(_WireModel):
+    """AWS-source shape of AIInvocationObservedV1.identity_details.
+
+    `principal_arn` identifies the caller; `access_key_id` enables the
+    server's AssumeRole-chain unrolling when set.
+    """
+
+    principal_arn: str
+    access_key_id: str | None = None
+
+
+class AIAgentDetails(_WireModel):
+    """spec/openapi.yaml — AIAgentDetails.
+
+    Mirrors the tool/server pattern but for sub-agents. Bedrock MIL doesn't
+    expose this today; included for schema completeness.
+    """
+
+    id: str
+    name: str | None = None
+    provider: str | None = None
+    title: str | None = None
+    description: str | None = None
+    version: str | None = None
+    raw_agent_id: str | None = None
+
+
+class AIInvocationContent(_WireModel):
+    """spec/openapi.yaml — AIInvocationContent.
+
+    Carries the input or output body. `content_hash`, `mime_type`, and
+    `byte_length` are non-sensitive and always populated; `redacted_text`
+    only when the customer opts in via SLASHID_INCLUDE_RAW_CONTENT.
+    """
+
+    redacted_text: str | None = None
+    content_hash: str | None = None
+    mime_type: str | None = None
+    byte_length: int | None = None
+
+
 class AIInvocationObservedV1(_WireModel):
     """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations.
 
-    `org_id` and `connection_id` are spec-required but the server derives
-    both from the authenticated push token, so we omit them on the wire.
-    Kept as optional fields so the model still matches the schema shape.
+    `org_id`/`connection_id` aren't sent — server derives them from the
+    authenticated push token. Schema dropped them as required fields too.
     """
 
-    org_id: str | None = None
-    connection_id: str | None = None
     request_id: str
     timestamp: str
-    identifier_from_source: str
-    identity_source_type: str
+    identity_details: AWSIdentityDetails
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
+    available_agents: list[AIAgentDetails] | None = None
+    used_agent_ids: list[str] | None = None
     available_tool_servers: list[AIToolServer] | None = None
     available_tools: list[AITool] | None = None
     used_tool_ids: list[str] | None = None
     stop_reason: AIStopReason | None = None
     conversation_id: str | None = None
+    input: AIInvocationContent | None = None
+    output: AIInvocationContent | None = None
 
 
 # --- record parsing ---------------------------------------------------------
@@ -174,9 +215,36 @@ def _ts(record: dict[str, Any]) -> str:
     return str(raw)
 
 
-def _identifier(record: dict[str, Any]) -> str:
+def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails:
+    """Build identity_details from MIL's `identity` block.
+
+    MIL gives us the assumed-role ARN directly; we forward it raw and let
+    the server-side AssumeRole unroller resolve it to a human IAM user via
+    `access_key_id` when present.
+    """
     ident = record.get("identity") or {}
-    return ident.get("resolved_arn") or ident.get("arn") or ""
+    principal = ident.get("resolved_arn") or ident.get("arn") or ""
+    access_key = ident.get("accessKeyId") or None
+    return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
+
+
+def _build_content(body: Any, *, include_text: bool) -> AIInvocationContent | None:
+    """Hash + size + (optionally) raw text for an inputBodyJson / outputBodyJson.
+
+    The body is serialised canonically so the hash is stable across runs
+    regardless of dict-key ordering. `redacted_text` only gets set when
+    the caller has opted in — otherwise we send hash / mime / byte length,
+    which carry no prompt content but still let SlashID dedup + correlate.
+    """
+    if not isinstance(body, dict | list) or not body:
+        return None
+    serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    return AIInvocationContent(
+        content_hash=f"sha256:{hashlib.sha256(serialized).hexdigest()}",
+        mime_type="application/json",
+        byte_length=len(serialized),
+        redacted_text=serialized.decode() if include_text else None,
+    )
 
 
 def _stop_reason(record: dict[str, Any]) -> AIStopReason | None:
@@ -283,7 +351,7 @@ def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> li
 def build_event(
     record: dict[str, Any],
     *,
-    identity_source_type: str,
+    include_raw_content: bool = False,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -291,9 +359,9 @@ def build_event(
     objects share the listing prefix in some MIL layouts; they appear as
     pseudo-records with no identifying metadata).
 
-    `org_id` and `connection_id` are intentionally left unset — the server
-    derives both from the authenticated push token, and our pydantic model
-    makes them optional so `exclude_none=True` drops them from the wire.
+    `include_raw_content` defaults to off — by default we send hash, mime,
+    and byte length on `input`/`output` but no prompt text. Flip via the
+    SLASHID_INCLUDE_RAW_CONTENT env var (CFN parameter same name).
     """
     if not record.get("requestId"):
         return None
@@ -308,8 +376,7 @@ def build_event(
     return AIInvocationObservedV1(
         request_id=str(record["requestId"]),
         timestamp=_ts(record),
-        identifier_from_source=_identifier(record),
-        identity_source_type=identity_source_type,
+        identity_details=_identity_details(record),
         model=AIModel(id=model_id, raw_model_id=model_id or None),
         tokens=AIInvocationTokens(
             input=int(inp.get("inputTokenCount") or 0),
@@ -322,4 +389,6 @@ def build_event(
         available_tools=tools or None,
         used_tool_ids=used or None,
         stop_reason=_stop_reason(record),
+        input=_build_content(inp.get("inputBodyJson"), include_text=include_raw_content),
+        output=_build_content(out.get("outputBodyJson"), include_text=include_raw_content),
     )

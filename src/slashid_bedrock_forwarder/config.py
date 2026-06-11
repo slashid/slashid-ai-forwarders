@@ -27,7 +27,10 @@ class Config(BaseSettings):
 
     endpoint: str = Field(..., min_length=1)
     push_token: str = Field(..., min_length=1)
-    identity_source_type: str = "manual_import"
+    # When true, the full input/output JSON bodies travel in
+    # AIInvocationContent.redacted_text. Off by default — hash + mime +
+    # byte length still go out so the server can dedup / correlate.
+    include_raw_content: bool = False
     request_timeout_seconds: float = 10.0
     max_retries: int = 3
 
