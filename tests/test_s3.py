@@ -134,6 +134,6 @@ async def test_resolve_offloaded_bodies_caps_concurrency(
     await s3.resolve_offloaded_bodies(records)
 
     assert len(fetched) == 50  # everyone eventually runs
-    assert (
-        max_in_flight <= s3.MAX_PARALLEL_FETCHES
-    ), f"concurrency cap breached: peaked at {max_in_flight}, limit is {s3.MAX_PARALLEL_FETCHES}"
+    assert max_in_flight <= s3.MAX_PARALLEL_FETCHES, (
+        f"concurrency cap breached: peaked at {max_in_flight}, limit is {s3.MAX_PARALLEL_FETCHES}"
+    )
