@@ -151,10 +151,105 @@ def test_build_event_with_tools_and_used_ids() -> None:
     assert event.stop_reason == "tool_use"
 
 
+def test_tool_id_differs_for_different_schema() -> None:
+    """Same tool name with different input schemas → different tool IDs."""
+
+    def _record_with_schema(schema: dict[str, Any]) -> dict[str, Any]:
+        return _mil_record(
+            input={
+                "inputTokenCount": 1,
+                "inputBodyJson": {
+                    "toolConfig": {
+                        "tools": [
+                            {"toolSpec": {"name": "WebFetch", "inputSchema": {"json": schema}}}
+                        ]
+                    }
+                },
+            }
+        )
+
+    ev1 = build_event(
+        _record_with_schema({"type": "object", "properties": {"url": {"type": "string"}}})
+    )
+    ev2 = build_event(
+        _record_with_schema(
+            {
+                "type": "object",
+                "properties": {"url": {"type": "string"}, "depth": {"type": "integer"}},
+            }
+        )
+    )
+    assert ev1 is not None and ev2 is not None
+    assert ev1.available_tools is not None and ev2.available_tools is not None
+    assert ev1.available_tools[0].id != ev2.available_tools[0].id
+
+
+def test_tool_id_differs_for_different_description() -> None:
+    """Same tool name with different description → different tool IDs."""
+
+    def _record_with_desc(desc: str) -> dict[str, Any]:
+        return _mil_record(
+            input={
+                "inputTokenCount": 1,
+                "inputBodyJson": {
+                    "toolConfig": {"tools": [{"toolSpec": {"name": "Bash", "description": desc}}]}
+                },
+            }
+        )
+
+    ev1 = build_event(_record_with_desc("Run a shell command"))
+    ev2 = build_event(
+        _record_with_desc("Execute arbitrary shell commands with elevated privileges")
+    )
+    assert ev1 is not None and ev2 is not None
+    assert ev1.available_tools is not None and ev2.available_tools is not None
+    assert ev1.available_tools[0].id != ev2.available_tools[0].id
+
+
 def test_build_event_populates_raw_model_id() -> None:
+    # No region in base record → no catalog lookup → id falls back to raw
     event = build_event(_mil_record())
     assert event is not None
     assert event.model.id == "us.anthropic.claude-sonnet-4-6"
+    assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
+    assert event.model.name is None
+    assert event.model.provider is None
+
+
+def test_build_event_uses_arn_as_id_when_raw_is_arn() -> None:
+    arn = "arn:aws:bedrock:us-east-2:851725497009:inference-profile/us.anthropic.claude-sonnet-4-6"
+    record = _mil_record(modelId=arn, region="us-east-2")
+    event = build_event(record)
+    assert event is not None
+    # Raw is already an ARN → used directly, no catalog needed
+    assert event.model.id == arn
+    assert event.model.raw_model_id == arn
+
+
+def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    from slashid_bedrock_forwarder import model_catalog
+
+    monkeypatch.setattr(
+        model_catalog,
+        "_catalogs",
+        {
+            "us-east-2": {
+                "anthropic.claude-sonnet-4-6": model_catalog.ModelInfo(
+                    arn="arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6",
+                    name="Claude Sonnet 4.6",
+                    provider="Anthropic",
+                )
+            }
+        },
+    )
+    record = _mil_record(modelId="us.anthropic.claude-sonnet-4-6", region="us-east-2")
+    event = build_event(record)
+    assert event is not None
+    assert (
+        event.model.id == "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6"
+    )
+    assert event.model.name == "Claude Sonnet 4.6"
+    assert event.model.provider == "Anthropic"
     assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
 
 

@@ -20,15 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field
 # accepts and rejects values without dragging in a runtime Enum class.
 AIToolServerKind = Literal["mcp", "runtime"]
 
-AIModelProvider = Literal[
-    "anthropic",
-    "openai",
-    "google",
-    "meta",
-    "mistral",
-    "unknown",
-]
-
 AIStopReason = Literal[
     "end_turn",
     "max_tokens",
@@ -66,7 +57,7 @@ class AIModel(_WireModel):
 
     id: str
     name: str | None = None
-    provider: AIModelProvider | None = None
+    provider: str | None = None
     family: str | None = None
     version: str | None = None
     raw_model_id: str | None = None
@@ -286,8 +277,12 @@ def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
     return name, "builtin", "runtime"
 
 
-def _short_hash(s: str) -> str:
-    return hashlib.sha256(s.encode()).hexdigest()[:16]
+def _short_hash(obj: str | dict[str, object]) -> str:
+    if isinstance(obj, str):
+        data = obj.encode()
+    else:
+        data = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 def _available_tools(
@@ -310,10 +305,21 @@ def _available_tools(
 
         tool_name, server_name, server_kind = parse_tool_name(raw_name)
         schema = (spec.get("inputSchema") or {}).get("json") or {}
-        description = spec.get("description")
+        description = spec.get("description") or None
 
-        server_id = _short_hash(server_name)
-        tool_id = _short_hash(f"{server_name}__{tool_name}")
+        # Server ID: name + kind (servers carry no other distinguishing data).
+        server_id = _short_hash({"name": server_name, "kind": server_kind})
+
+        # Tool ID: full canonical spec — same name with different description,
+        # schema, or annotations is a different tool.
+        tool_id = _short_hash(
+            {
+                "server": server_name,
+                "name": tool_name,
+                "description": description,
+                "input_schema": schema or None,
+            }
+        )
 
         if server_id not in servers_by_id:
             servers_by_id[server_id] = AIToolServer(
@@ -327,7 +333,7 @@ def _available_tools(
                 id=tool_id,
                 name=tool_name,
                 tool_server_id=server_id,
-                description=description if description else None,
+                description=description,
                 input_schema=json.dumps(schema, separators=(",", ":")) if schema else None,
             )
         )
@@ -358,6 +364,7 @@ def build_event(
     record: dict[str, Any],
     *,
     include_raw_content: bool = False,
+    model_region: str | None = None,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -383,13 +390,32 @@ def build_event(
 
     inp = record.get("input") or {}
     out = record.get("output") or {}
-    model_id = str(record.get("modelId") or "")
+    raw_model_id = str(record.get("modelId") or "")
+
+    region = model_region or str(record.get("region") or "")
+    model_info = None
+    if raw_model_id and region:
+        from .model_catalog import get_model_info
+
+        model_info = get_model_info(raw_model_id, region)
+
+    # model.id: use raw when it's already an ARN, else catalog ARN, else raw
+    model_id = (
+        raw_model_id
+        if raw_model_id.startswith("arn:")
+        else (model_info["arn"] if model_info else raw_model_id)
+    )
 
     return AIInvocationObservedV1(
         request_id=str(record["requestId"]),
         timestamp=_ts(record),
         identity_details=identity,
-        model=AIModel(id=model_id, raw_model_id=model_id or None),
+        model=AIModel(
+            id=model_id,
+            name=model_info["name"] if model_info else None,
+            provider=model_info["provider"] if model_info else None,
+            raw_model_id=raw_model_id or None,
+        ),
         tokens=AIInvocationTokens(
             input=int(inp.get("inputTokenCount") or 0),
             output=int(out.get("outputTokenCount") or 0),
