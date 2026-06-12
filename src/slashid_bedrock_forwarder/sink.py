@@ -102,6 +102,15 @@ def _events_payload(events: list[AIInvocationObservedV1]) -> dict[str, list[dict
     }
 
 
+def _redact_content(event_dict: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy with redacted_text stripped from input/output."""
+    out = dict(event_dict)
+    for field in ("input", "output"):
+        if isinstance(out.get(field), dict) and "redacted_text" in out[field]:
+            out[field] = {k: v for k, v in out[field].items() if k != "redacted_text"}
+    return out
+
+
 async def push_invocations(
     client: httpx.AsyncClient,
     events: list[AIInvocationObservedV1],
@@ -118,14 +127,18 @@ async def push_invocations(
 
     sent = 0
     for batch in _batch_events(events):
+        payload = _events_payload(batch)
         await _request_with_retry(
             client,
             "POST",
             url,
             headers=headers,
-            json_body=_events_payload(batch),
+            json_body=payload,
             max_retries=max_retries,
         )
         sent += len(batch)
         log.info("push_invocations: batch of %d events posted (total=%d)", len(batch), sent)
+        if log.isEnabledFor(logging.DEBUG):
+            for ev in payload["events"]:
+                log.debug("push_invocations: event payload: %s", _redact_content(ev))
     return sent

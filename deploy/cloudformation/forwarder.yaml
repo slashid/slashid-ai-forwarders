@@ -77,6 +77,15 @@ Parameters:
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365, 400, 545, 731, 1827, 3653]
     Description: Retention for the forwarder Lambda's own log group.
 
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+    Description: |
+      Python log level for the forwarder Lambda. Set to DEBUG to emit the
+      full serialized event payload (minus raw prompt/response text) for
+      each event pushed to SlashID.
+
 Conditions:
   HasOffloadBucket: !Not [!Equals [!Ref BedrockBodyOffloadS3Bucket, ""]]
 
@@ -138,6 +147,7 @@ Resources:
           SLASHID_ENDPOINT: !Ref SlashIDEndpoint
           SLASHID_PUSH_TOKEN: !Ref SlashIDPushToken
           SLASHID_INCLUDE_RAW_CONTENT: !Ref IncludeRawContent
+          LOG_LEVEL: !Ref LogLevel
 
   # CloudWatch Logs needs explicit permission to invoke the Lambda. The
   # SourceArn is scoped to just the customer's MIL log group so other

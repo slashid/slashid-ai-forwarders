@@ -81,7 +81,8 @@ def get_model_info(raw_model_id: str, region: str) -> ModelInfo | None:
         _catalogs[region] = _load(region)
     catalog = _catalogs[region]
     canonical = _canonical_id(raw_model_id)
-    return catalog.get(canonical) or catalog.get(raw_model_id) or None
+    # Exact match first; fall back to canonical (geo-prefix stripped).
+    return catalog.get(raw_model_id) or catalog.get(canonical) or None
 
 
 def reset_catalog() -> None:

@@ -48,8 +48,33 @@ def test_get_model_info_hit(monkeypatch: pytest.MonkeyPatch) -> None:
         "slashid_bedrock_forwarder.model_catalog._catalogs",
         {"us-east-2": {"amazon.nova-micro-v1:0": info}},
     )
+    # canonical key → found via stripped fallback
     assert get_model_info("us.amazon.nova-micro-v1:0", "us-east-2") == info
     assert get_model_info("amazon.nova-micro-v1:0", "us-east-2") == info
+
+
+def test_get_model_info_raw_key_preferred(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the catalog has the raw key, it wins over the stripped canonical."""
+    info_raw = ModelInfo(
+        arn="arn:aws:bedrock:us-east-2::foundation-model/us.amazon.nova-micro-v1:0",
+        name="Nova Micro (raw key)",
+        provider="Amazon",
+    )
+    info_canonical = ModelInfo(
+        arn="arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-micro-v1:0",
+        name="Nova Micro (canonical key)",
+        provider="Amazon",
+    )
+    monkeypatch.setattr(
+        "slashid_bedrock_forwarder.model_catalog._catalogs",
+        {
+            "us-east-2": {
+                "us.amazon.nova-micro-v1:0": info_raw,
+                "amazon.nova-micro-v1:0": info_canonical,
+            }
+        },
+    )
+    assert get_model_info("us.amazon.nova-micro-v1:0", "us-east-2") == info_raw
 
 
 def test_get_model_info_miss(monkeypatch: pytest.MonkeyPatch) -> None:

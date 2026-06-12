@@ -27,6 +27,7 @@ import base64
 import gzip
 import json
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -39,7 +40,7 @@ from .s3 import resolve_offloaded_bodies
 from .sink import push_invocations
 
 log = logging.getLogger()
-log.setLevel(logging.INFO)
+log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 
 
 class CWLogsAwsLogs(BaseModel):
