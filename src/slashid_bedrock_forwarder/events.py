@@ -215,15 +215,21 @@ def _ts(record: dict[str, Any]) -> str:
     return str(raw)
 
 
-def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails:
+def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
     """Build identity_details from MIL's `identity` block.
 
     MIL gives us the assumed-role ARN directly; we forward it raw and let
     the server-side AssumeRole unroller resolve it to a human IAM user via
     `access_key_id` when present.
+
+    Returns None when neither `arn` nor `resolved_arn` is set — callers
+    should drop the event rather than ship `principal_arn = ""` and let
+    the server reject (or worse, accept) bad-data placeholders.
     """
     ident = record.get("identity") or {}
     principal = ident.get("resolved_arn") or ident.get("arn") or ""
+    if not principal:
+        return None
     access_key = ident.get("accessKeyId") or None
     return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
 
@@ -366,6 +372,12 @@ def build_event(
     if not record.get("requestId"):
         return None
 
+    identity = _identity_details(record)
+    if identity is None:
+        # No usable principal ARN — server would reject identity_details
+        # anyway, and a placeholder would pollute the AI subgraph.
+        return None
+
     servers, tools, raw_to_id = _available_tools(record)
     used = _used_tool_ids(record, raw_to_id)
 
@@ -376,7 +388,7 @@ def build_event(
     return AIInvocationObservedV1(
         request_id=str(record["requestId"]),
         timestamp=_ts(record),
-        identity_details=_identity_details(record),
+        identity_details=identity,
         model=AIModel(id=model_id, raw_model_id=model_id or None),
         tokens=AIInvocationTokens(
             input=int(inp.get("inputTokenCount") or 0),

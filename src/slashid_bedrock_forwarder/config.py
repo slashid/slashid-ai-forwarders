@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from functools import cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,14 @@ class Config(BaseSettings):
     include_raw_content: bool = False
     request_timeout_seconds: float = 10.0
     max_retries: int = 3
+
+    @field_validator("endpoint")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str) -> str:
+        # Customer-pasted base URLs often end in "/"; the sink builds
+        # `endpoint + "/nhi/events/..."` so a trailing slash produces a
+        # double slash. Normalise at the boundary.
+        return v.rstrip("/")
 
 
 @cache

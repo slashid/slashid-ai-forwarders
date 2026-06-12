@@ -81,6 +81,20 @@ def test_build_event_omits_access_key_when_missing() -> None:
     assert event.identity_details.access_key_id is None
 
 
+def test_build_event_skips_record_without_identity() -> None:
+    """Regression for R1: a record with no usable principal ARN should drop,
+    not ship as `identity_details.principal_arn = ""`."""
+    record = _mil_record()
+    record["identity"] = {}  # no arn, no resolved_arn
+    assert build_event(record) is None
+
+
+def test_build_event_skips_record_with_no_identity_block() -> None:
+    record = _mil_record()
+    del record["identity"]
+    assert build_event(record) is None
+
+
 def test_build_event_with_tools_and_used_ids() -> None:
     record = _mil_record(
         input={

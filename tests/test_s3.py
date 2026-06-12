@@ -100,3 +100,40 @@ async def test_resolve_offloaded_bodies_tolerates_missing(monkeypatch: pytest.Mo
     # Body stays None — downstream just sees an empty toolConfig and emits
     # an event with no available_tools, not a hard failure.
     assert records[0]["input"]["inputBodyJson"] is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_offloaded_bodies_caps_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for R2: a large CW Logs batch with many offloads must not
+    spawn unbounded S3 GETs — Lambda's thread pool and the boto3 connection
+    pool both top out around ~10."""
+    import asyncio
+
+    in_flight = 0
+    max_in_flight = 0
+    fetched: list[str] = []
+
+    async def fake_fetch(uri: str, *, max_attempts: int = 6) -> dict[str, Any] | None:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        # Yield so peers schedule and the counter actually piles up.
+        await asyncio.sleep(0.01)
+        fetched.append(uri)
+        in_flight -= 1
+        return {"ok": True}
+
+    monkeypatch.setattr(s3, "fetch_offloaded_body", fake_fetch)
+
+    # 50 offloaded records — uncapped, all 50 would race; capped, ≤ MAX_PARALLEL_FETCHES.
+    records = [
+        {"input": {"inputBodyJson": None, "inputBodyS3Path": f"s3://b/k{i}"}} for i in range(50)
+    ]
+    await s3.resolve_offloaded_bodies(records)
+
+    assert len(fetched) == 50  # everyone eventually runs
+    assert (
+        max_in_flight <= s3.MAX_PARALLEL_FETCHES
+    ), f"concurrency cap breached: peaked at {max_in_flight}, limit is {s3.MAX_PARALLEL_FETCHES}"

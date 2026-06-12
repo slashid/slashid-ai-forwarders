@@ -30,6 +30,13 @@ from tenacity import (
 log = logging.getLogger(__name__)
 
 
+# Cap concurrent S3 GETs within one Lambda invocation. CW Logs delivers
+# large batches that can carry dozens of offloaded records; left unbounded
+# we'd queue more parallel work than the default thread pool (~7 on a
+# 512 MB Lambda) or the boto3 connection pool (10) can handle.
+MAX_PARALLEL_FETCHES = 8
+
+
 class _OffloadedBodyNotReady(Exception):
     """Body object hasn't been written yet — retryable."""
 
@@ -162,8 +169,14 @@ async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:
     if not tasks:
         return
 
+    sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+
+    async def _guarded(path: str) -> dict[str, Any] | list[Any] | None:
+        async with sem:
+            return await fetch_offloaded_body(path)
+
     results = await asyncio.gather(
-        *(fetch_offloaded_body(path) for _, _, path in tasks),
+        *(_guarded(path) for _, _, path in tasks),
         return_exceptions=False,
     )
 

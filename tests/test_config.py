@@ -19,7 +19,8 @@ def test_config_reads_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     cfg = load_config()
     assert isinstance(cfg, Config)
-    assert cfg.endpoint == "https://api.slashid.com/"
+    # Trailing slash from the env var gets normalised away.
+    assert cfg.endpoint == "https://api.slashid.com"
     assert cfg.push_token == "tok"
     # Privacy defaults: opted out, no raw prompt/response text on the wire.
     assert cfg.include_raw_content is False
@@ -45,3 +46,13 @@ def test_config_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None
         monkeypatch.delenv(var, raising=False)
     with pytest.raises(ValidationError):
         load_config()
+
+
+def test_config_strips_trailing_slash_from_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression for B2: customer pasting `https://api.slashid.com/` should
+    not produce `https://api.slashid.com//nhi/events/ai-invocations` later."""
+    monkeypatch.setenv("SLASHID_ENDPOINT", "https://api.slashid.com/")
+    monkeypatch.setenv("SLASHID_PUSH_TOKEN", "tok")
+
+    cfg = load_config()
+    assert cfg.endpoint == "https://api.slashid.com"
