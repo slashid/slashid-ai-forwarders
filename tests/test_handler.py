@@ -153,9 +153,9 @@ def test_run_normalizes_after_offload_resolution(monkeypatch: pytest.MonkeyPatch
     assert "events" in captured, "push_invocations was not called"
     assert len(captured["events"]) == 1
     ev = captured["events"][0]
-    assert (
-        ev.available_tools is not None
-    ), "available_tools is None — normalize_record did not run after offload resolution"
+    assert ev.available_tools is not None, (
+        "available_tools is None — normalize_record did not run after offload resolution"
+    )
     assert len(ev.available_tools) == 1
     assert ev.available_tools[0].name == "WebFetch"
     assert ev.available_tool_servers is not None
