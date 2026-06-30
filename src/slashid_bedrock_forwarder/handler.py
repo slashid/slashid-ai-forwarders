@@ -78,9 +78,12 @@ def _decode_cw_payload(event: CWLogsEvent) -> CWLogsPayload:
 
 
 def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
-    """Pull MIL records out of `logEvents[].message`, normalize on the way through.
+    """Pull MIL records out of `logEvents[].message`.
 
-    `messageType=CONTROL_MESSAGE` heartbeats are skipped silently.
+    `messageType=CONTROL_MESSAGE` heartbeats are skipped silently. Body
+    normalization happens in `_run` after offloaded bodies are fetched
+    from S3 — running it here would no-op on offloaded records (the body
+    is `null` until S3 resolution lands).
     """
     if payload.messageType == "CONTROL_MESSAGE":
         return []
@@ -93,13 +96,15 @@ def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
             log.warning("skipping non-JSON log line: %r", entry.message[:120])
             continue
         if isinstance(record, dict):
-            records.append(normalize_record(record))
+            records.append(record)
     return records
 
 
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
-    """Resolve any offloaded MIL bodies, build events, push them in batches."""
+    """Resolve any offloaded MIL bodies, normalize, build events, push them in batches."""
     await resolve_offloaded_bodies(records)
+    for record in records:
+        normalize_record(record)
 
     events = [
         built
