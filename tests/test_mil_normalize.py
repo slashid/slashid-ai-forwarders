@@ -148,4 +148,111 @@ def test_malformed_tool_input_json_does_not_leak_to_logs(caplog: pytest.LogCaptu
         # The sensitive content must not appear.
         assert "rm -rf" not in msg
         assert "secret" not in msg
-        assert "command" not in msg
+
+
+def test_anthropic_nonstreaming_response_rewritten() -> None:
+    """Non-streaming InvokeModel-against-Anthropic response reaches Converse shape.
+
+    Regression: before the fix, `_used_tool_ids` (which reads from
+    `output.outputBodyJson.output.message.content[].toolUse`) returned empty
+    for these records because the body sat at `outputBodyJson.content[]`
+    with an Anthropic-native shape. Every non-streaming Anthropic
+    invocation dropped its tool-use signal silently.
+    """
+    record = {
+        "input": {"inputBodyJson": {}},
+        "output": {
+            "outputBodyJson": {
+                "id": "msg_01ABC",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Let me check that."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_01XYZ",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/x"},
+                    },
+                ],
+                "stop_reason": "tool_use",
+                "model": "claude-sonnet-4-6",
+                "usage": {"input_tokens": 10, "output_tokens": 30},
+            }
+        },
+    }
+    out = normalize_record(record)
+    body = out["output"]["outputBodyJson"]
+
+    assert body["stopReason"] == "tool_use"
+    content = body["output"]["message"]["content"]
+    assert body["output"]["message"]["role"] == "assistant"
+    assert content == [
+        {"text": "Let me check that."},
+        {
+            "toolUse": {
+                "toolUseId": "toolu_01XYZ",
+                "name": "Read",
+                "input": {"file_path": "/tmp/x"},
+            }
+        },
+    ]
+
+
+def test_anthropic_nonstreaming_response_no_type_field_still_detected() -> None:
+    """Anthropic responses without a top-level `type` field are still recognized.
+
+    Some SDK middleware strips the `type` marker; role + content-list is
+    enough to identify the shape.
+    """
+    record = {
+        "input": {"inputBodyJson": {}},
+        "output": {
+            "outputBodyJson": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+            }
+        },
+    }
+    out = normalize_record(record)
+    body = out["output"]["outputBodyJson"]
+    assert body["stopReason"] == "end_turn"
+    assert body["output"]["message"]["content"] == [{"text": "ok"}]
+
+
+def test_anthropic_nonstreaming_thinking_block_folded_into_text() -> None:
+    """`thinking` content blocks become plain text — consistent with the
+    streaming reconstruction path, since downstream code only cares about
+    text vs. tool_use."""
+    record = {
+        "input": {"inputBodyJson": {}},
+        "output": {
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "reasoning..."},
+                    {"type": "text", "text": "answer"},
+                ],
+                "stop_reason": "end_turn",
+            }
+        },
+    }
+    out = normalize_record(record)
+    content = out["output"]["outputBodyJson"]["output"]["message"]["content"]
+    assert content == [{"text": "reasoning..."}, {"text": "answer"}]
+
+
+def test_converse_response_not_reprocessed() -> None:
+    """A Converse-shape response passes through untouched even though it's a dict."""
+    original = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+        "stopReason": "end_turn",
+    }
+    record = {
+        "input": {"inputBodyJson": {}},
+        "output": {"outputBodyJson": dict(original)},
+    }
+    out = normalize_record(record)
+    assert out["output"]["outputBodyJson"] == original

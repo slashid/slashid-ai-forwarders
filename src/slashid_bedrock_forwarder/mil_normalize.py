@@ -5,9 +5,13 @@ caller's API uses:
 
 - **Converse / ConverseStream** — `input.inputBodyJson.toolConfig.tools[].toolSpec`,
   `output.outputBodyJson.output.message.content[]` (single dict response).
-- **InvokeModel / InvokeModelWithResponseStream against Anthropic models** —
-  Anthropic's native Messages API: `input.inputBodyJson.tools[]` (flat) and
+- **InvokeModelWithResponseStream against Anthropic models** — Anthropic's
+  native Messages API streamed: `input.inputBodyJson.tools[]` (flat) and
   `output.outputBodyJson` as a *list* of streaming events.
+- **InvokeModel (non-streaming) against Anthropic models** — Anthropic's
+  native Messages API single-shot: `input.inputBodyJson.tools[]` (flat) and
+  `output.outputBodyJson` as a *dict* with top-level `content: [...]` and
+  `stop_reason` in snake_case.
 
 Downstream code is written against the Converse shape, so this module
 rewrites Anthropic-shape records in place. Already-Converse records pass
@@ -35,8 +39,25 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
     out = (record.get("output") or {}).get("outputBodyJson")
     if isinstance(out, list):
         record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(out)
+    elif isinstance(out, dict) and _looks_like_anthropic_message(out):
+        record["output"]["outputBodyJson"] = _reconstruct_message_from_dict(out)
 
     return record
+
+
+def _looks_like_anthropic_message(body: dict[str, Any]) -> bool:
+    """Detect a non-streaming Anthropic Messages response.
+
+    Distinguishing marks: Anthropic returns `{"type": "message",
+    "role": "assistant", "content": [...], "stop_reason": "...", ...}`,
+    while Converse returns `{"output": {"message": ...}, "stopReason": ...}`.
+    The `output` key is the cheapest disambiguator.
+    """
+    if "output" in body:
+        return False
+    if body.get("type") == "message":
+        return True
+    return body.get("role") == "assistant" and isinstance(body.get("content"), list)
 
 
 def _normalize_tools_section(body: dict[str, Any]) -> None:
@@ -59,6 +80,47 @@ def _normalize_tools_section(body: dict[str, Any]) -> None:
             if isinstance(t, dict)
         ]
     }
+
+
+def _reconstruct_message_from_dict(body: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite a non-streaming Anthropic Messages response → Converse shape.
+
+    Anthropic:
+      {type: "message", role: "assistant",
+       content: [{type: "text", text}, {type: "tool_use", id, name, input},
+                 {type: "thinking", thinking}],
+       stop_reason: "..."}
+
+    Converse:
+      {output: {message: {role: "assistant",
+                          content: [{text}, {toolUse: {toolUseId, name, input}}]}},
+       stopReason: "..."}
+    """
+    content: list[dict[str, Any]] = []
+    for block in body.get("content", []) or []:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            content.append({"text": block.get("text", "")})
+        elif btype == "tool_use":
+            content.append(
+                {
+                    "toolUse": {
+                        "toolUseId": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("input") or {},
+                    }
+                }
+            )
+        elif btype == "thinking":
+            content.append({"text": block.get("thinking", "")})
+
+    result: dict[str, Any] = {"output": {"message": {"role": "assistant", "content": content}}}
+    stop_reason = body.get("stop_reason")
+    if isinstance(stop_reason, str) and stop_reason:
+        result["stopReason"] = stop_reason
+    return result
 
 
 def _reconstruct_message_from_stream(events: list[Any]) -> dict[str, Any]:
