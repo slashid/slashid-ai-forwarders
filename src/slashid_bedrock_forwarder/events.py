@@ -245,7 +245,11 @@ def _build_content(body: Any, *, include_text: bool) -> AIInvocationContent | No
 
 
 def _stop_reason(record: dict[str, Any]) -> AIStopReason | None:
-    obody = (record.get("output") or {}).get("outputBodyJson") or {}
+    obody = (record.get("output") or {}).get("outputBodyJson")
+    # Non-Anthropic streams reach us as raw lists (see mil_normalize.py — we
+    # only normalize shapes we own). Skip cleanly instead of crashing on .get().
+    if not isinstance(obody, dict):
+        return None
     raw = obody.get("stopReason")
     if not isinstance(raw, str) or not raw:
         return None
@@ -344,7 +348,11 @@ def _available_tools(
 
 def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[str]:
     """Extract tool IDs from the assistant response's `toolUse` blocks."""
-    obody = (record.get("output") or {}).get("outputBodyJson") or {}
+    obody = (record.get("output") or {}).get("outputBodyJson")
+    # Non-Anthropic streams reach us as raw lists (see mil_normalize.py — we
+    # only normalize shapes we own). Skip cleanly instead of crashing on .get().
+    if not isinstance(obody, dict):
+        return []
     message = (obody.get("output") or {}).get("message") or {}
     ids: list[str] = []
     seen: set[str] = set()

@@ -124,7 +124,15 @@ def test_run_normalizes_after_offload_resolution(monkeypatch: pytest.MonkeyPatch
         },
         "output": {
             "outputTokenCount": 5,
-            "outputBodyJson": {"stopReason": "tool_use"},
+            # Anthropic non-streaming response shape — matches the input's
+            # Anthropic Messages family, which is what triggers input-tool
+            # normalization in the new dispatch model.
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "tool_use",
+            },
         },
     }
 

@@ -5,9 +5,13 @@ caller's API uses:
 
 - **Converse / ConverseStream** — `input.inputBodyJson.toolConfig.tools[].toolSpec`,
   `output.outputBodyJson.output.message.content[]` (single dict response).
-- **InvokeModel / InvokeModelWithResponseStream against Anthropic models** —
-  Anthropic's native Messages API: `input.inputBodyJson.tools[]` (flat) and
+- **InvokeModelWithResponseStream against Anthropic models** — Anthropic's
+  native Messages API streamed: `input.inputBodyJson.tools[]` (flat) and
   `output.outputBodyJson` as a *list* of streaming events.
+- **InvokeModel (non-streaming) against Anthropic models** — Anthropic's
+  native Messages API single-shot: `input.inputBodyJson.tools[]` (flat) and
+  `output.outputBodyJson` as a *dict* with top-level `content: [...]` and
+  `stop_reason` in snake_case.
 
 Downstream code is written against the Converse shape, so this module
 rewrites Anthropic-shape records in place. Already-Converse records pass
@@ -23,23 +27,163 @@ from typing import Any, cast
 log = logging.getLogger(__name__)
 
 
+# Anthropic streaming events use a small closed vocabulary of `type` values.
+# Presence of any of these is the signature that says "this list is an
+# Anthropic Messages SSE decode." Non-Anthropic Bedrock streams (Nova,
+# Titan, Cohere, ...) use their own event vocabularies and won't match.
+_ANTHROPIC_STREAM_EVENT_TYPES = frozenset(
+    {
+        "message_start",
+        "message_delta",
+        "message_stop",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "ping",
+    }
+)
+
+
 def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Return `record` with Anthropic-shape inputs/outputs rewritten to Converse-shape.
+    """Dispatch on the record's API family and rewrite in place to Converse shape.
 
-    Mutates the record's nested dicts but returns the same outer object for chaining.
+    Each family-normalizer owns the full input+output rewrite for its
+    shape, because the caller's API family determines both. Unrecognized
+    shapes (Converse, other-vendor streams) are left untouched.
     """
-    body = (record.get("input") or {}).get("inputBodyJson")
-    if isinstance(body, dict):
-        _normalize_tools_section(body)
-
     out = (record.get("output") or {}).get("outputBodyJson")
-    if isinstance(out, list):
-        record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(out)
-
+    if _looks_like_anthropic_stream(out):
+        _normalize_anthropic_stream(record)
+    elif _looks_like_anthropic_message(out):
+        _normalize_anthropic_message(record)
     return record
 
 
-def _normalize_tools_section(body: dict[str, Any]) -> None:
+def _looks_like_anthropic_stream(out: Any) -> bool:
+    """Detect an Anthropic streaming Messages response by event-type markers.
+
+    Any list at `outputBodyJson` is a Bedrock streaming SSE decode, but
+    the event vocabulary is per-vendor — we only claim ownership of
+    Anthropic's. Non-Anthropic streams are left alone.
+    """
+    if not isinstance(out, list):
+        return False
+    return any(isinstance(e, dict) and e.get("type") in _ANTHROPIC_STREAM_EVENT_TYPES for e in out)
+
+
+def _looks_like_anthropic_message(out: Any) -> bool:
+    """Detect a non-streaming Anthropic Messages response by shape triad.
+
+    Anthropic's response envelope always carries all three markers:
+    `type: "message"`, `role: "assistant"`, and a `content` list.
+    Requiring all three avoids false-positives on unrelated shapes that
+    happen to reuse one of the fields (e.g. a future Bedrock envelope
+    that also uses `type: "message"`).
+
+    Also short-circuit on the presence of `output`, which is Converse's
+    top-level wrapper — cheapest possible negative check.
+    """
+    if not isinstance(out, dict) or "output" in out:
+        return False
+    return (
+        out.get("type") == "message"
+        and out.get("role") == "assistant"
+        and isinstance(out.get("content"), list)
+    )
+
+
+def _normalize_anthropic_stream(record: dict[str, Any]) -> None:
+    """Rewrite an Anthropic streaming record in place to Converse shape.
+
+    Owns both the input tools rewrite (`body.tools[]` → `body.toolConfig`)
+    and the streamed-response reconstruction. Precondition: dispatched
+    to only after `_looks_like_anthropic_stream` matched, which is the
+    only guarantor that `record["output"]["outputBodyJson"]` is a list —
+    bracket access below is safe post-detection.
+    """
+    input_body = (record.get("input") or {}).get("inputBodyJson")
+    if isinstance(input_body, dict):
+        _normalize_anthropic_tools(input_body)
+    events = record["output"]["outputBodyJson"]
+    _backfill_tokens_from_stream_usage(record, events)
+    record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(events)
+
+
+def _normalize_anthropic_message(record: dict[str, Any]) -> None:
+    """Rewrite an Anthropic non-streaming record in place to Converse shape.
+
+    Owns both the input tools rewrite (`body.tools[]` → `body.toolConfig`)
+    and the single-dict response rewrite. Precondition: dispatched to
+    only after `_looks_like_anthropic_message` matched, which is the only
+    guarantor that `record["output"]["outputBodyJson"]` is a dict —
+    bracket access below is safe post-detection.
+    """
+    input_body = (record.get("input") or {}).get("inputBodyJson")
+    if isinstance(input_body, dict):
+        _normalize_anthropic_tools(input_body)
+    body = record["output"]["outputBodyJson"]
+    _backfill_tokens_from_body_usage(record, body.get("usage"))
+    record["output"]["outputBodyJson"] = _reconstruct_message_from_dict(body)
+
+
+def _backfill_tokens_from_body_usage(record: dict[str, Any], usage: Any) -> None:
+    """Copy Anthropic `body.usage` counts to MIL top-level fields when missing.
+
+    Bedrock MIL populates `input.inputTokenCount` and `output.outputTokenCount`
+    at the record top level for non-streaming Anthropic InvokeModel responses,
+    but does NOT populate `input.cacheReadInputTokenCount` or
+    `cacheWriteInputTokenCount`. The counts are always inside `body.usage`,
+    so backfill before we discard the body during reconstruction. Downstream
+    (`build_event.tokens`) then reads all four fields uniformly at the top
+    level regardless of API family.
+
+    Idempotent — only sets fields that are currently None. MIL wins when set.
+    """
+    if not isinstance(usage, dict):
+        return
+    inp = record.setdefault("input", {})
+    out = record.setdefault("output", {})
+    _set_if_absent(inp, "inputTokenCount", usage.get("input_tokens"))
+    _set_if_absent(out, "outputTokenCount", usage.get("output_tokens"))
+    _set_if_absent(inp, "cacheReadInputTokenCount", usage.get("cache_read_input_tokens"))
+    _set_if_absent(inp, "cacheWriteInputTokenCount", usage.get("cache_creation_input_tokens"))
+
+
+def _backfill_tokens_from_stream_usage(record: dict[str, Any], events: list[Any]) -> None:
+    """Copy usage counts from Anthropic streaming events to MIL top-level fields
+    when missing. Same rationale as the non-streaming variant.
+
+    Streaming carries usage in `message_start.message.usage` (initial counts,
+    including cache) and `message_delta.usage` (final output count). Both are
+    also normally populated at the MIL top level for streaming Anthropic, so
+    this is defense-in-depth rather than fixing an observed gap.
+    """
+    stream_usage: dict[str, Any] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        if etype == "message_start":
+            m = event.get("message") or {}
+            usage = m.get("usage") or {}
+            if isinstance(usage, dict):
+                stream_usage.update(usage)
+        elif etype == "message_delta":
+            usage = event.get("usage") or {}
+            if isinstance(usage, dict):
+                stream_usage.update(usage)
+    if stream_usage:
+        _backfill_tokens_from_body_usage(record, stream_usage)
+
+
+def _set_if_absent(container: dict[str, Any], key: str, value: Any) -> None:
+    """Set `container[key] = value` only when the key is missing / None and
+    the value is a non-None int (the shape Anthropic uses for token counts)."""
+    if container.get(key) is None and isinstance(value, int):
+        container[key] = value
+
+
+def _normalize_anthropic_tools(body: dict[str, Any]) -> None:
     """Rewrite `body.tools[]` (Anthropic) → `body.toolConfig.tools[].toolSpec` (Converse)."""
     if "toolConfig" in body:
         return
@@ -59,6 +203,55 @@ def _normalize_tools_section(body: dict[str, Any]) -> None:
             if isinstance(t, dict)
         ]
     }
+
+
+def _reconstruct_message_from_dict(body: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite a non-streaming Anthropic Messages response → Converse shape.
+
+    Anthropic:
+      {type: "message", role: "assistant",
+       content: [{type: "text", text}, {type: "tool_use", id, name, input},
+                 {type: "thinking", thinking}],
+       stop_reason: "..."}
+
+    Converse:
+      {output: {message: {role: "assistant",
+                          content: [{text}, {toolUse: {toolUseId, name, input}}]}},
+       stopReason: "..."}
+    """
+    content: list[dict[str, Any]] = []
+    for block in body.get("content", []) or []:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            content.append({"text": block.get("text", "")})
+        elif btype == "tool_use":
+            content.append(
+                {
+                    "toolUse": {
+                        "toolUseId": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("input") or {},
+                    }
+                }
+            )
+        elif btype == "thinking":
+            # Thinking / reasoning content gets folded into a plain text block
+            # so it lands in the input/output content hash the same as any
+            # other assistant-visible text. Matches the streaming path
+            # (`_reconstruct_message_from_stream`) — downstream code doesn't
+            # need a separate concept for reasoning vs. reply text. Note:
+            # when SLASHID_INCLUDE_RAW_CONTENT=true this text does travel to
+            # SlashID; product policy is that reasoning is part of the model
+            # output surface, not privileged internal state.
+            content.append({"text": block.get("thinking", "")})
+
+    result: dict[str, Any] = {"output": {"message": {"role": "assistant", "content": content}}}
+    stop_reason = body.get("stop_reason")
+    if isinstance(stop_reason, str) and stop_reason:
+        result["stopReason"] = stop_reason
+    return result
 
 
 def _reconstruct_message_from_stream(events: list[Any]) -> dict[str, Any]:
