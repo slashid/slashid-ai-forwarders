@@ -100,7 +100,7 @@ def _normalize_anthropic_stream(record: dict[str, Any]) -> None:
     """
     input_body = (record.get("input") or {}).get("inputBodyJson")
     if isinstance(input_body, dict):
-        _normalize_tools_section(input_body)
+        _normalize_anthropic_tools(input_body)
     events = record["output"]["outputBodyJson"]
     record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(events)
 
@@ -113,12 +113,12 @@ def _normalize_anthropic_message(record: dict[str, Any]) -> None:
     """
     input_body = (record.get("input") or {}).get("inputBodyJson")
     if isinstance(input_body, dict):
-        _normalize_tools_section(input_body)
+        _normalize_anthropic_tools(input_body)
     body = record["output"]["outputBodyJson"]
     record["output"]["outputBodyJson"] = _reconstruct_message_from_dict(body)
 
 
-def _normalize_tools_section(body: dict[str, Any]) -> None:
+def _normalize_anthropic_tools(body: dict[str, Any]) -> None:
     """Rewrite `body.tools[]` (Anthropic) → `body.toolConfig.tools[].toolSpec` (Converse)."""
     if "toolConfig" in body:
         return
