@@ -27,26 +27,52 @@ from typing import Any, cast
 log = logging.getLogger(__name__)
 
 
+# Anthropic streaming events use a small closed vocabulary of `type` values.
+# Presence of any of these is the signature that says "this list is an
+# Anthropic Messages SSE decode." Non-Anthropic Bedrock streams (Nova,
+# Titan, Cohere, ...) use their own event vocabularies and won't match.
+_ANTHROPIC_STREAM_EVENT_TYPES = frozenset(
+    {
+        "message_start",
+        "message_delta",
+        "message_stop",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "ping",
+    }
+)
+
+
 def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Return `record` with Anthropic-shape inputs/outputs rewritten to Converse-shape.
+    """Dispatch on the record's API family and rewrite in place to Converse shape.
 
-    Mutates the record's nested dicts but returns the same outer object for chaining.
+    Each family-normalizer owns the full input+output rewrite for its
+    shape, because the caller's API family determines both. Unrecognized
+    shapes (Converse, other-vendor streams) are left untouched.
     """
-    body = (record.get("input") or {}).get("inputBodyJson")
-    if isinstance(body, dict):
-        _normalize_tools_section(body)
-
     out = (record.get("output") or {}).get("outputBodyJson")
-    if isinstance(out, list):
-        record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(out)
-    elif isinstance(out, dict) and _looks_like_anthropic_message(out):
-        record["output"]["outputBodyJson"] = _reconstruct_message_from_dict(out)
-
+    if _looks_like_anthropic_stream(out):
+        _normalize_anthropic_stream(record)
+    elif _looks_like_anthropic_message(out):
+        _normalize_anthropic_message(record)
     return record
 
 
-def _looks_like_anthropic_message(body: dict[str, Any]) -> bool:
-    """Detect a non-streaming Anthropic Messages response.
+def _looks_like_anthropic_stream(out: Any) -> bool:
+    """Detect an Anthropic streaming Messages response by event-type markers.
+
+    Any list at `outputBodyJson` is a Bedrock streaming SSE decode, but
+    the event vocabulary is per-vendor — we only claim ownership of
+    Anthropic's. Non-Anthropic streams are left alone.
+    """
+    if not isinstance(out, list):
+        return False
+    return any(isinstance(e, dict) and e.get("type") in _ANTHROPIC_STREAM_EVENT_TYPES for e in out)
+
+
+def _looks_like_anthropic_message(out: Any) -> bool:
+    """Detect a non-streaming Anthropic Messages response by shape triad.
 
     Anthropic's response envelope always carries all three markers:
     `type: "message"`, `role: "assistant"`, and a `content` list.
@@ -57,13 +83,39 @@ def _looks_like_anthropic_message(body: dict[str, Any]) -> bool:
     Also short-circuit on the presence of `output`, which is Converse's
     top-level wrapper — cheapest possible negative check.
     """
-    if "output" in body:
+    if not isinstance(out, dict) or "output" in out:
         return False
     return (
-        body.get("type") == "message"
-        and body.get("role") == "assistant"
-        and isinstance(body.get("content"), list)
+        out.get("type") == "message"
+        and out.get("role") == "assistant"
+        and isinstance(out.get("content"), list)
     )
+
+
+def _normalize_anthropic_stream(record: dict[str, Any]) -> None:
+    """Rewrite an Anthropic streaming record in place to Converse shape.
+
+    Owns both the input tools rewrite (`body.tools[]` → `body.toolConfig`)
+    and the streamed-response reconstruction.
+    """
+    input_body = (record.get("input") or {}).get("inputBodyJson")
+    if isinstance(input_body, dict):
+        _normalize_tools_section(input_body)
+    events = record["output"]["outputBodyJson"]
+    record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(events)
+
+
+def _normalize_anthropic_message(record: dict[str, Any]) -> None:
+    """Rewrite an Anthropic non-streaming record in place to Converse shape.
+
+    Owns both the input tools rewrite (`body.tools[]` → `body.toolConfig`)
+    and the single-dict response rewrite.
+    """
+    input_body = (record.get("input") or {}).get("inputBodyJson")
+    if isinstance(input_body, dict):
+        _normalize_tools_section(input_body)
+    body = record["output"]["outputBodyJson"]
+    record["output"]["outputBodyJson"] = _reconstruct_message_from_dict(body)
 
 
 def _normalize_tools_section(body: dict[str, Any]) -> None:

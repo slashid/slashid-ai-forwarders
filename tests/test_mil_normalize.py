@@ -20,6 +20,9 @@ def test_already_converse_shape_passes_through() -> None:
 
 
 def test_anthropic_tools_rewritten_to_toolconfig() -> None:
+    """Tools normalization runs when the output shape identifies the record
+    as Anthropic — either the non-streaming dict here, or a streaming
+    events list (covered by the stream tests below)."""
     record = {
         "input": {
             "inputBodyJson": {
@@ -32,7 +35,14 @@ def test_anthropic_tools_rewritten_to_toolconfig() -> None:
                 ],
             }
         },
-        "output": {"outputBodyJson": {}},
+        "output": {
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+            }
+        },
     }
     out = normalize_record(record)
     tools = out["input"]["inputBodyJson"]["toolConfig"]["tools"]
@@ -253,3 +263,59 @@ def test_converse_response_not_reprocessed() -> None:
     }
     out = normalize_record(record)
     assert out["output"]["outputBodyJson"] == original
+
+
+def test_non_anthropic_stream_list_left_alone() -> None:
+    """A list of stream events that doesn't use Anthropic's event vocabulary
+    is left in place. Non-Anthropic Bedrock streams (Nova, Titan, Cohere)
+    use different `type` values; we don't own their normalization yet."""
+    nova_stream = [
+        {"type": "chunk", "output": {"partial": "hello"}},
+        {"type": "chunk", "output": {"partial": " world"}},
+        {"type": "chunk", "output": {"stopReason": "COMPLETE"}},
+    ]
+    record = {
+        "input": {"inputBodyJson": {"tools": [{"name": "x"}]}},
+        "output": {"outputBodyJson": list(nova_stream)},
+    }
+    out = normalize_record(record)
+    # Output is untouched — we don't claim ownership of this shape.
+    assert out["output"]["outputBodyJson"] == nova_stream
+    # Input tools are also untouched (dispatch is family-scoped: no Anthropic
+    # output → no Anthropic input tools rewrite).
+    assert "toolConfig" not in out["input"]["inputBodyJson"]
+
+
+def test_anthropic_stream_input_tools_rewritten_with_output() -> None:
+    """Input tools are normalized as part of the Anthropic-stream dispatch,
+    not as an independent step. Verifies the family-scoped ownership."""
+    record = {
+        "input": {
+            "inputBodyJson": {
+                "tools": [
+                    {"name": "search", "description": "d", "input_schema": {"type": "object"}}
+                ],
+            }
+        },
+        "output": {
+            "outputBodyJson": [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "ok"},
+                },
+                {"type": "content_block_stop", "index": 0},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+            ]
+        },
+    }
+    out = normalize_record(record)
+    # Input tools rewritten because output identified as Anthropic stream.
+    assert "toolConfig" in out["input"]["inputBodyJson"]
+    # Output reconstructed from stream events.
+    assert out["output"]["outputBodyJson"]["stopReason"] == "end_turn"
