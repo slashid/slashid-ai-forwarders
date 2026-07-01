@@ -48,16 +48,22 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
 def _looks_like_anthropic_message(body: dict[str, Any]) -> bool:
     """Detect a non-streaming Anthropic Messages response.
 
-    Distinguishing marks: Anthropic returns `{"type": "message",
-    "role": "assistant", "content": [...], "stop_reason": "...", ...}`,
-    while Converse returns `{"output": {"message": ...}, "stopReason": ...}`.
-    The `output` key is the cheapest disambiguator.
+    Anthropic's response envelope always carries all three markers:
+    `type: "message"`, `role: "assistant"`, and a `content` list.
+    Requiring all three avoids false-positives on unrelated shapes that
+    happen to reuse one of the fields (e.g. a future Bedrock envelope
+    that also uses `type: "message"`).
+
+    Also short-circuit on the presence of `output`, which is Converse's
+    top-level wrapper — cheapest possible negative check.
     """
     if "output" in body:
         return False
-    if body.get("type") == "message":
-        return True
-    return body.get("role") == "assistant" and isinstance(body.get("content"), list)
+    return (
+        body.get("type") == "message"
+        and body.get("role") == "assistant"
+        and isinstance(body.get("content"), list)
+    )
 
 
 def _normalize_tools_section(body: dict[str, Any]) -> None:

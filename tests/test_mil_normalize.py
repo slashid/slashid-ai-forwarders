@@ -199,26 +199,23 @@ def test_anthropic_nonstreaming_response_rewritten() -> None:
     ]
 
 
-def test_anthropic_nonstreaming_response_no_type_field_still_detected() -> None:
-    """Anthropic responses without a top-level `type` field are still recognized.
+def test_anthropic_nonstreaming_missing_type_field_not_touched() -> None:
+    """A dict without the full `type` + `role` + `content` triad is left alone.
 
-    Some SDK middleware strips the `type` marker; role + content-list is
-    enough to identify the shape.
+    Detection requires all three markers together — otherwise we risk
+    misclassifying unrelated dict shapes as Anthropic responses.
     """
+    ambiguous = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+    }
     record = {
         "input": {"inputBodyJson": {}},
-        "output": {
-            "outputBodyJson": {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "ok"}],
-                "stop_reason": "end_turn",
-            }
-        },
+        "output": {"outputBodyJson": dict(ambiguous)},
     }
     out = normalize_record(record)
-    body = out["output"]["outputBodyJson"]
-    assert body["stopReason"] == "end_turn"
-    assert body["output"]["message"]["content"] == [{"text": "ok"}]
+    assert out["output"]["outputBodyJson"] == ambiguous
 
 
 def test_anthropic_nonstreaming_thinking_block_folded_into_text() -> None:
