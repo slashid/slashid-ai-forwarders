@@ -96,7 +96,10 @@ def _normalize_anthropic_stream(record: dict[str, Any]) -> None:
     """Rewrite an Anthropic streaming record in place to Converse shape.
 
     Owns both the input tools rewrite (`body.tools[]` → `body.toolConfig`)
-    and the streamed-response reconstruction.
+    and the streamed-response reconstruction. Precondition: dispatched
+    to only after `_looks_like_anthropic_stream` matched, which is the
+    only guarantor that `record["output"]["outputBodyJson"]` is a list —
+    bracket access below is safe post-detection.
     """
     input_body = (record.get("input") or {}).get("inputBodyJson")
     if isinstance(input_body, dict):
@@ -110,7 +113,10 @@ def _normalize_anthropic_message(record: dict[str, Any]) -> None:
     """Rewrite an Anthropic non-streaming record in place to Converse shape.
 
     Owns both the input tools rewrite (`body.tools[]` → `body.toolConfig`)
-    and the single-dict response rewrite.
+    and the single-dict response rewrite. Precondition: dispatched to
+    only after `_looks_like_anthropic_message` matched, which is the only
+    guarantor that `record["output"]["outputBodyJson"]` is a dict —
+    bracket access below is safe post-detection.
     """
     input_body = (record.get("input") or {}).get("inputBodyJson")
     if isinstance(input_body, dict):
