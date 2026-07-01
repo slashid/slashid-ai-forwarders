@@ -102,6 +102,7 @@ def _normalize_anthropic_stream(record: dict[str, Any]) -> None:
     if isinstance(input_body, dict):
         _normalize_anthropic_tools(input_body)
     events = record["output"]["outputBodyJson"]
+    _backfill_tokens_from_stream_usage(record, events)
     record["output"]["outputBodyJson"] = _reconstruct_message_from_stream(events)
 
 
@@ -115,7 +116,65 @@ def _normalize_anthropic_message(record: dict[str, Any]) -> None:
     if isinstance(input_body, dict):
         _normalize_anthropic_tools(input_body)
     body = record["output"]["outputBodyJson"]
+    _backfill_tokens_from_body_usage(record, body.get("usage"))
     record["output"]["outputBodyJson"] = _reconstruct_message_from_dict(body)
+
+
+def _backfill_tokens_from_body_usage(record: dict[str, Any], usage: Any) -> None:
+    """Copy Anthropic `body.usage` counts to MIL top-level fields when missing.
+
+    Bedrock MIL populates `input.inputTokenCount` and `output.outputTokenCount`
+    at the record top level for non-streaming Anthropic InvokeModel responses,
+    but does NOT populate `input.cacheReadInputTokenCount` or
+    `cacheWriteInputTokenCount`. The counts are always inside `body.usage`,
+    so backfill before we discard the body during reconstruction. Downstream
+    (`build_event.tokens`) then reads all four fields uniformly at the top
+    level regardless of API family.
+
+    Idempotent — only sets fields that are currently None. MIL wins when set.
+    """
+    if not isinstance(usage, dict):
+        return
+    inp = record.setdefault("input", {})
+    out = record.setdefault("output", {})
+    _set_if_absent(inp, "inputTokenCount", usage.get("input_tokens"))
+    _set_if_absent(out, "outputTokenCount", usage.get("output_tokens"))
+    _set_if_absent(inp, "cacheReadInputTokenCount", usage.get("cache_read_input_tokens"))
+    _set_if_absent(inp, "cacheWriteInputTokenCount", usage.get("cache_creation_input_tokens"))
+
+
+def _backfill_tokens_from_stream_usage(record: dict[str, Any], events: list[Any]) -> None:
+    """Copy usage counts from Anthropic streaming events to MIL top-level fields
+    when missing. Same rationale as the non-streaming variant.
+
+    Streaming carries usage in `message_start.message.usage` (initial counts,
+    including cache) and `message_delta.usage` (final output count). Both are
+    also normally populated at the MIL top level for streaming Anthropic, so
+    this is defense-in-depth rather than fixing an observed gap.
+    """
+    stream_usage: dict[str, Any] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        etype = event.get("type")
+        if etype == "message_start":
+            m = event.get("message") or {}
+            usage = m.get("usage") or {}
+            if isinstance(usage, dict):
+                stream_usage.update(usage)
+        elif etype == "message_delta":
+            usage = event.get("usage") or {}
+            if isinstance(usage, dict):
+                stream_usage.update(usage)
+    if stream_usage:
+        _backfill_tokens_from_body_usage(record, stream_usage)
+
+
+def _set_if_absent(container: dict[str, Any], key: str, value: Any) -> None:
+    """Set `container[key] = value` only when the key is missing / None and
+    the value is a non-None int (the shape Anthropic uses for token counts)."""
+    if container.get(key) is None and isinstance(value, int):
+        container[key] = value
 
 
 def _normalize_anthropic_tools(body: dict[str, Any]) -> None:
@@ -172,6 +231,14 @@ def _reconstruct_message_from_dict(body: dict[str, Any]) -> dict[str, Any]:
                 }
             )
         elif btype == "thinking":
+            # Thinking / reasoning content gets folded into a plain text block
+            # so it lands in the input/output content hash the same as any
+            # other assistant-visible text. Matches the streaming path
+            # (`_reconstruct_message_from_stream`) — downstream code doesn't
+            # need a separate concept for reasoning vs. reply text. Note:
+            # when SLASHID_INCLUDE_RAW_CONTENT=true this text does travel to
+            # SlashID; product policy is that reasoning is part of the model
+            # output surface, not privileged internal state.
             content.append({"text": block.get("thinking", "")})
 
     result: dict[str, Any] = {"output": {"message": {"role": "assistant", "content": content}}}

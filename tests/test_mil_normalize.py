@@ -286,6 +286,126 @@ def test_non_anthropic_stream_list_left_alone() -> None:
     assert "toolConfig" not in out["input"]["inputBodyJson"]
 
 
+def test_anthropic_message_backfills_missing_top_level_tokens() -> None:
+    """Non-streaming Anthropic MIL records omit cache-token counts at the top
+    level; the numbers are only in `body.usage`. Verified by live inspection
+    of an InvokeModel call against `us.anthropic.claude-sonnet-4-6` on
+    2026-07-01: `input.cacheReadInputTokenCount` and
+    `cacheWriteInputTokenCount` were null while `body.usage` had them.
+
+    The normalizer must copy the missing fields over from `body.usage`
+    before discarding the body, so downstream extraction reads a uniform
+    top-level shape.
+    """
+    record: dict[str, Any] = {
+        "input": {
+            "inputBodyJson": {},
+            # MIL fills inputTokenCount but not the cache fields for InvokeModel
+            "inputTokenCount": 600,
+        },
+        "output": {
+            "outputTokenCount": 76,
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": 600,
+                    "output_tokens": 76,
+                    "cache_read_input_tokens": 42,
+                    "cache_creation_input_tokens": 17,
+                },
+            },
+        },
+    }
+    normalize_record(record)
+    # Original MIL-populated fields untouched
+    assert record["input"]["inputTokenCount"] == 600
+    assert record["output"]["outputTokenCount"] == 76
+    # Cache fields backfilled from body.usage
+    assert record["input"]["cacheReadInputTokenCount"] == 42
+    assert record["input"]["cacheWriteInputTokenCount"] == 17
+
+
+def test_anthropic_message_backfill_never_overrides_existing_mil_value() -> None:
+    """When MIL provides a top-level token count, it wins over `body.usage`."""
+    record: dict[str, Any] = {
+        "input": {
+            "inputBodyJson": {},
+            "inputTokenCount": 111,
+            "cacheReadInputTokenCount": 222,
+        },
+        "output": {
+            "outputTokenCount": 333,
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                # These would rewrite everything if backfill wasn't idempotent
+                "usage": {
+                    "input_tokens": 999,
+                    "output_tokens": 999,
+                    "cache_read_input_tokens": 999,
+                    "cache_creation_input_tokens": 999,
+                },
+            },
+        },
+    }
+    normalize_record(record)
+    assert record["input"]["inputTokenCount"] == 111
+    assert record["input"]["cacheReadInputTokenCount"] == 222
+    assert record["output"]["outputTokenCount"] == 333
+    # Only the absent field gets backfilled
+    assert record["input"]["cacheWriteInputTokenCount"] == 999
+
+
+def test_anthropic_stream_backfills_tokens_from_usage_events() -> None:
+    """Streaming carries usage in `message_start` and `message_delta`; if
+    MIL top-level counts happen to be missing on some record, we recover
+    from the events. Defense-in-depth (streaming top-level fields are
+    normally populated) but covers the same conceptual gap symmetrically."""
+    record: dict[str, Any] = {
+        "input": {"inputBodyJson": {}},
+        "output": {
+            "outputBodyJson": [
+                {
+                    "type": "message_start",
+                    "message": {
+                        "usage": {
+                            "input_tokens": 50,
+                            "cache_read_input_tokens": 100,
+                            "cache_creation_input_tokens": 25,
+                        }
+                    },
+                },
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "hi"},
+                },
+                {"type": "content_block_stop", "index": 0},
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"},
+                    "usage": {"output_tokens": 3},
+                },
+            ]
+        },
+    }
+    normalize_record(record)
+    assert record["input"]["inputTokenCount"] == 50
+    assert record["input"]["cacheReadInputTokenCount"] == 100
+    assert record["input"]["cacheWriteInputTokenCount"] == 25
+    assert record["output"]["outputTokenCount"] == 3
+
+
 def test_anthropic_stream_input_tools_rewritten_with_output() -> None:
     """Input tools are normalized as part of the Anthropic-stream dispatch,
     not as an independent step. Verifies the family-scoped ownership."""
