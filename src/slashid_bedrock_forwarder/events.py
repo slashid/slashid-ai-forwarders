@@ -478,7 +478,9 @@ async def _accessed_files(
             if raw_bytes is not None:
                 redacted = truncate_middle(raw_bytes.decode(errors="replace"), max_content_size)
             elif partial_head is not None and partial_tail is not None:
-                combined = (partial_head + partial_tail).decode(errors="replace")
+                head_str = partial_head.decode(errors="replace")
+                tail_str = partial_tail.decode(errors="replace")
+                combined = head_str + "…" + tail_str
                 redacted = truncate_middle(combined, max_content_size)
             else:
                 redacted = None
