@@ -388,6 +388,22 @@ async def _accessed_files(
 
     from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
 
+    # Bedrock Converse document formats → IANA media types.
+    # Formats not listed fall back to "application/{fmt}" for documents
+    # and "image/{fmt}" for images (most image formats are correct as-is).
+    _DOC_MIME: dict[str, str] = {
+        "pdf": "application/pdf",
+        "csv": "text/csv",
+        "tsv": "text/tab-separated-values",
+        "txt": "text/plain",
+        "md": "text/markdown",
+        "html": "text/html",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls": "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+
     body = (record.get("input") or {}).get("inputBodyJson")
     if not isinstance(body, dict):
         return []
@@ -471,7 +487,7 @@ async def _accessed_files(
                     raw_bytes = _decode_b64(source["bytes"])
                     _add(
                         name=doc.get("name") or None,
-                        media_type=f"application/{fmt}" if fmt else None,
+                        media_type=_DOC_MIME.get(fmt, f"application/{fmt}") if fmt else None,
                         raw_bytes=raw_bytes,
                     )
                 else:
@@ -483,7 +499,7 @@ async def _accessed_files(
                     else:
                         # Use Converse format first; fall back to ContentType from HeadObject.
                         media_type = (
-                            f"application/{fmt}"
+                            _DOC_MIME.get(fmt, f"application/{fmt}")
                             if fmt
                             else source.get("_resolved_content_type") or None
                         )
