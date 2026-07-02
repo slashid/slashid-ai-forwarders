@@ -34,7 +34,7 @@ class Config(BaseSettings):
     # File attachments (document/image blocks) with S3 sources: HEAD the
     # object to get size; GET it for hashing if size ≤ this limit. Empty
     # files (size == 0) are always inlined without a GET.
-    file_attachment_max_inline_bytes: int = 10 * 1024 * 1024  # 10 MB
+    file_attachment_max_fetch_bytes: int = 10 * 1024 * 1024  # 10 MB
     # Maximum characters of raw content stored in redacted_text / redacted_content.
     # Excess is elided with middle truncation ("first…last") to preserve both
     # the header and the tail of large bodies. Applies to input, output, and

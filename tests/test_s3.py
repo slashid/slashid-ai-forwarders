@@ -182,7 +182,7 @@ async def test_resolve_s3_attachment_head_fails_no_keys_set(
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10 * 1024 * 1024)
+    await s3._resolve_s3_attachment(source, max_fetch_bytes=10 * 1024 * 1024)
     assert "_resolved_byte_length" not in source
     assert "_resolved_bytes" not in source
 
@@ -197,7 +197,7 @@ async def test_resolve_s3_attachment_above_threshold_no_get(
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10)  # 20 > 10
+    await s3._resolve_s3_attachment(source, max_fetch_bytes=10)  # 20 > 10
 
     assert source["_resolved_byte_length"] == 20
     assert source["_resolved_content_type"] == "application/pdf"
@@ -217,7 +217,7 @@ async def test_resolve_s3_attachment_within_threshold_fetches_bytes(
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10 * 1024 * 1024)
+    await s3._resolve_s3_attachment(source, max_fetch_bytes=10 * 1024 * 1024)
 
     assert source["_resolved_byte_length"] == len(content)
     assert source["_resolved_content_type"] == "text/plain"
@@ -232,7 +232,7 @@ async def test_resolve_s3_attachment_empty_file_no_get(monkeypatch: pytest.Monke
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/empty"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10 * 1024 * 1024)
+    await s3._resolve_s3_attachment(source, max_fetch_bytes=10 * 1024 * 1024)
 
     assert source["_resolved_byte_length"] == 0
     assert source["_resolved_bytes"] == b""

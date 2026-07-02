@@ -123,13 +123,13 @@ async def fetch_offloaded_body(
     return None  # unreachable but ty wants the explicit return
 
 
-async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+async def _resolve_s3_attachment(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
     """HEAD + optional GET a Converse s3Location source block.
 
     Stashes on the source dict:
       `_resolved_byte_length`   — ContentLength from HeadObject
       `_resolved_content_type`  — ContentType from HeadObject (media_type fallback)
-      `_resolved_bytes`         — raw body when size == 0 or size <= max_inline_bytes
+      `_resolved_bytes`         — raw body when size == 0 or size <= max_fetch_bytes
 
     All keys are read by `_accessed_files` in events.py.
     """
@@ -155,7 +155,7 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: in
 
         if size == 0:
             source["_resolved_bytes"] = b""
-        elif size <= max_inline_bytes:
+        elif size <= max_fetch_bytes:
             try:
                 resp = await s3.get_object(Bucket=bucket, Key=key)
                 source["_resolved_bytes"] = await resp["Body"].read()

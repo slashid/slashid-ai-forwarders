@@ -75,7 +75,6 @@ def _truncate_middle(text: str, max_chars: int) -> str:
     return text[:head_end] + "…" + text[tail_start:]
 
 
-
 def _strip_cat_n(text: str) -> str | None:
     """Strip Claude Code's `cat -n` line-number prefixes if every non-empty line has one.
 
@@ -460,7 +459,7 @@ async def _accessed_files(
     record: dict[str, Any],
     *,
     include_raw_content: bool,
-    max_inline_bytes: int,
+    max_fetch_bytes: int,
     max_content_size: int,
 ) -> list[AIAccessedFile]:
     """Extract document and image attachments from Converse-shape input messages.
@@ -475,7 +474,7 @@ async def _accessed_files(
     earlier turns were already reported in prior invocations.
 
     S3-sourced attachments are resolved inline via HeadObject + optional
-    GetObject (gated by max_inline_bytes). Files are deduplicated by
+    GetObject (gated by max_fetch_bytes). Files are deduplicated by
     (name, content_hash).
     """
     import asyncio
@@ -577,7 +576,7 @@ async def _accessed_files(
 
         async def _guarded(src: dict[str, Any]) -> None:
             async with sem:
-                await _resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes)
+                await _resolve_s3_attachment(src, max_fetch_bytes=max_fetch_bytes)
 
         await asyncio.gather(*(_guarded(src) for src in s3_sources))
 
@@ -766,7 +765,7 @@ async def build_event(
     *,
     include_raw_content: bool = False,
     model_region: str | None = None,
-    max_inline_bytes: int = 10 * 1024 * 1024,
+    max_fetch_bytes: int = 10 * 1024 * 1024,
     max_content_size: int = 100_000,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
@@ -843,7 +842,7 @@ async def build_event(
         accessed_files=await _accessed_files(
             record,
             include_raw_content=include_raw_content,
-            max_inline_bytes=max_inline_bytes,
+            max_fetch_bytes=max_fetch_bytes,
             max_content_size=max_content_size,
         )
         or None,
