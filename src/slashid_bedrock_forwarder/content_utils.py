@@ -8,7 +8,6 @@ _CAT_N_LINE = re.compile(r"^\s*\d+\t", re.MULTILINE)
 
 _WORD_BOUNDARY = re.compile(r"\b")
 # Max chars we'll give up to land on a word boundary when truncating.
-# Must match s3._SNAP_TOLERANCE.
 SNAP_TOLERANCE = 10
 
 

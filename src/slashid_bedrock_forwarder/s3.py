@@ -31,15 +31,13 @@ from tenacity import (
     wait_fixed,
 )
 
+from .content_utils import SNAP_TOLERANCE
+
 log = logging.getLogger(__name__)
 
 
 # Cap concurrent S3 calls within one Lambda invocation.
 MAX_PARALLEL_FETCHES = 8
-
-# Extra bytes fetched beyond each half of max_content_size so _truncate_middle
-# has room to snap to a word boundary. Must match events._SNAP_TOLERANCE.
-_SNAP_TOLERANCE = 10
 
 
 @cache
@@ -173,7 +171,7 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_content_size: in
                 pass
         else:
             # Fetch head and tail chunks — enough for _truncate_middle with snap tolerance.
-            chunk = max_content_size // 2 + _SNAP_TOLERANCE
+            chunk = max_content_size // 2 + SNAP_TOLERANCE
             try:
                 head_resp = await s3.get_object(
                     Bucket=bucket, Key=key, Range=f"bytes=0-{chunk - 1}"
