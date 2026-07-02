@@ -10,9 +10,9 @@ from slashid_bedrock_forwarder import s3
 
 
 @pytest.fixture(autouse=True)
-def _reset_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make sure no test leaks the cached boto3 client into another."""
-    monkeypatch.setattr(s3, "_s3_client", None)
+def _reset_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make sure no test leaks the cached aioboto3 session into another."""
+    monkeypatch.setattr(s3, "_session", None)
 
 
 def test_parse_s3_uri_happy() -> None:
@@ -137,3 +137,158 @@ async def test_resolve_offloaded_bodies_caps_concurrency(
     assert max_in_flight <= s3.MAX_PARALLEL_FETCHES, (
         f"concurrency cap breached: peaked at {max_in_flight}, limit is {s3.MAX_PARALLEL_FETCHES}"
     )
+
+
+def _record_with_s3_doc(uri: str) -> dict[str, Any]:
+    return {
+        "input": {
+            "inputBodyJson": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "document": {
+                                    "name": "report.pdf",
+                                    "format": "pdf",
+                                    "source": {"s3Location": {"uri": uri}},
+                                }
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_attachments_populates_size_and_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"PDF content here"
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        source["_resolved_byte_length"] = len(content)
+        if max_inline_bytes >= len(content):
+            source["_resolved_bytes"] = content
+
+    monkeypatch.setattr(s3, "_resolve_s3_attachment", fake_resolve)
+
+    records = [_record_with_s3_doc("s3://bucket/report.pdf")]
+    await s3.resolve_file_attachments(records, max_inline_bytes=10 * 1024 * 1024)
+
+    src = records[0]["input"]["inputBodyJson"]["messages"][0]["content"][0]["document"]["source"]
+    assert src["_resolved_byte_length"] == len(content)
+    assert src["_resolved_bytes"] == content
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_attachments_skips_inline_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inline (bytes) sources have no s3Location — nothing should be fetched."""
+    called: list[Any] = []
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        called.append(source)
+
+    monkeypatch.setattr(s3, "_resolve_s3_attachment", fake_resolve)
+
+    records = [
+        {
+            "input": {
+                "inputBodyJson": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "document": {
+                                        "name": "f.txt",
+                                        "format": "txt",
+                                        "source": {"bytes": "aGk="},
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+    await s3.resolve_file_attachments(records, max_inline_bytes=10 * 1024 * 1024)
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_attachments_only_current_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S3 attachments before the last assistant message are not fetched."""
+    called_uris: list[str] = []
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        uri = (source.get("s3Location") or {}).get("uri", "")
+        called_uris.append(uri)
+
+    monkeypatch.setattr(s3, "_resolve_s3_attachment", fake_resolve)
+
+    records = [
+        {
+            "input": {
+                "inputBodyJson": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "document": {
+                                        "name": "old.pdf",
+                                        "format": "pdf",
+                                        "source": {"s3Location": {"uri": "s3://b/old.pdf"}},
+                                    }
+                                }
+                            ],
+                        },
+                        {"role": "assistant", "content": [{"text": "ok"}]},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "document": {
+                                        "name": "new.pdf",
+                                        "format": "pdf",
+                                        "source": {"s3Location": {"uri": "s3://b/new.pdf"}},
+                                    }
+                                }
+                            ],
+                        },
+                    ]
+                }
+            }
+        }
+    ]
+    await s3.resolve_file_attachments(records, max_inline_bytes=10 * 1024 * 1024)
+    assert called_uris == ["s3://b/new.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_file_attachments_skips_already_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sources with `_resolved_byte_length` already set are not re-fetched."""
+    called: list[Any] = []
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        called.append(source)
+
+    monkeypatch.setattr(s3, "_resolve_s3_attachment", fake_resolve)
+
+    records = [_record_with_s3_doc("s3://bucket/report.pdf")]
+    # Pre-populate
+    src = records[0]["input"]["inputBodyJson"]["messages"][0]["content"][0]["document"]["source"]
+    src["_resolved_byte_length"] = 42
+
+    await s3.resolve_file_attachments(records, max_inline_bytes=10 * 1024 * 1024)
+    assert called == []

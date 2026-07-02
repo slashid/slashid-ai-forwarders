@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .config import Config, load_config
 from .events import build_event
 from .mil_normalize import normalize_record
-from .s3 import resolve_offloaded_bodies
+from .s3 import resolve_file_attachments, resolve_offloaded_bodies
 from .sink import push_invocations
 
 log = logging.getLogger()
@@ -101,10 +101,13 @@ def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
 
 
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
-    """Resolve any offloaded MIL bodies, normalize, build events, push them in batches."""
+    """Resolve offloaded MIL bodies, normalize, resolve file attachments, build + push events."""
     await resolve_offloaded_bodies(records)
     for record in records:
         normalize_record(record)
+    await resolve_file_attachments(
+        records, max_inline_bytes=config.file_attachment_max_inline_bytes
+    )
 
     events = [
         built

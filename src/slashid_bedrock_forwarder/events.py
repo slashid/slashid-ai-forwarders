@@ -152,6 +152,16 @@ class AIInvocationContent(_WireModel):
     byte_length: int | None = None
 
 
+class AIAccessedFile(_WireModel):
+    """spec/openapi.yaml — AIAccessedFile."""
+
+    name: str | None = None
+    content_hash: str | None = None
+    mime_type: str | None = None
+    byte_length: int | None = None
+    redacted_content: str | None = None
+
+
 class AIInvocationObservedV1(_WireModel):
     """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations.
 
@@ -173,6 +183,7 @@ class AIInvocationObservedV1(_WireModel):
     conversation_id: str | None = None
     input: AIInvocationContent | None = None
     output: AIInvocationContent | None = None
+    accessed_files: list[AIAccessedFile] | None = None
 
 
 # --- record parsing ---------------------------------------------------------
@@ -346,6 +357,120 @@ def _available_tools(
     return list(servers_by_id.values()), tools, raw_to_id
 
 
+def _accessed_files(
+    record: dict[str, Any],
+    *,
+    include_raw_content: bool,
+) -> list[AIAccessedFile]:
+    """Extract document and image attachments from Converse-shape input messages.
+
+    Converse document block:
+      messages[].content[]{document:{name, format, source:{bytes:<base64>}}}
+    Converse image block:
+      messages[].content[]{image:{format, source:{bytes:<base64>}}}
+      (images carry no name)
+
+    Files are deduplicated by (name, content_hash) — the same attachment
+    in multiple turns is counted once.
+    """
+    import base64 as _b64
+
+    body = (record.get("input") or {}).get("inputBodyJson") or {}
+    files: list[AIAccessedFile] = []
+    seen: set[tuple[str | None, str | None]] = set()
+
+    def _decode_b64(val: Any) -> bytes | None:
+        if not val:
+            return None
+        try:
+            return _b64.b64decode(val)
+        except Exception:
+            return None
+
+    def _add(
+        name: str | None,
+        mime_type: str | None,
+        raw_bytes: bytes | None,
+        s3_byte_length: int | None = None,
+    ) -> None:
+        content_hash = (
+            f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}" if raw_bytes is not None else None
+        )
+        key = (name, content_hash)
+        if key in seen:
+            return
+        seen.add(key)
+        files.append(
+            AIAccessedFile(
+                name=name,
+                content_hash=content_hash,
+                mime_type=mime_type,
+                byte_length=len(raw_bytes) if raw_bytes is not None else s3_byte_length,
+                redacted_content=(
+                    raw_bytes.decode(errors="replace")
+                    if include_raw_content and raw_bytes is not None
+                    else None
+                ),
+            )
+        )
+
+    def _resolve_source(source: dict[str, Any]) -> tuple[str | None, bytes | None, int | None]:
+        """Return (name_hint, raw_bytes, s3_byte_length) from a Converse source block.
+
+        Inline bytes: source={bytes: "<b64>"}
+        S3 pointer:   source={s3Location: {uri: "s3://...", ...}}
+          — `_resolved_bytes` / `_resolved_byte_length` may be present if
+            resolve_file_attachments already ran (s3.py stashes them there).
+        """
+        if "bytes" in source:
+            return None, _decode_b64(source["bytes"]), None
+        s3 = source.get("s3Location") or {}
+        uri = s3.get("uri") or None
+        raw = source.get("_resolved_bytes")
+        size = source.get("_resolved_byte_length")
+        return uri, raw, size
+
+    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+
+    # Only consider attachments from the most recent user turn — messages
+    # after the last assistant message. Files in earlier turns were already
+    # reported in prior invocations.
+    last_assistant = max(
+        (i for i, m in enumerate(messages) if m.get("role") == "assistant"),
+        default=-1,
+    )
+    messages = messages[last_assistant + 1 :]
+
+    for msg in messages:
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+
+            if "document" in block:
+                doc = block["document"] or {}
+                fmt = doc.get("format") or None
+                s3_hint, raw_bytes, s3_size = _resolve_source(doc.get("source") or {})
+                _add(
+                    name=doc.get("name") or s3_hint,
+                    mime_type=f"application/{fmt}" if fmt else None,
+                    raw_bytes=raw_bytes,
+                    s3_byte_length=s3_size,
+                )
+
+            elif "image" in block:
+                img = block["image"] or {}
+                fmt = img.get("format") or None
+                s3_hint, raw_bytes, s3_size = _resolve_source(img.get("source") or {})
+                _add(
+                    name=s3_hint,
+                    mime_type=f"image/{fmt}" if fmt else None,
+                    raw_bytes=raw_bytes,
+                    s3_byte_length=s3_size,
+                )
+
+    return files
+
+
 def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[str]:
     """Extract tool IDs from the assistant response's `toolUse` blocks."""
     obody = (record.get("output") or {}).get("outputBodyJson")
@@ -437,4 +562,5 @@ def build_event(
         stop_reason=_stop_reason(record),
         input=_build_content(inp.get("inputBodyJson"), include_text=include_raw_content),
         output=_build_content(out.get("outputBodyJson"), include_text=include_raw_content),
+        accessed_files=_accessed_files(record, include_raw_content=include_raw_content) or None,
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from typing import Any
@@ -316,6 +317,190 @@ def test_content_field_none_when_body_absent() -> None:
     assert event is not None
     assert event.input is None
     assert event.output is None
+
+
+def _record_with_messages(messages: list[Any]) -> dict[str, Any]:
+    return _mil_record(
+        input={
+            "inputTokenCount": 10,
+            "inputBodyJson": {
+                "messages": messages,
+            },
+        },
+        output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "end_turn"}},
+    )
+
+
+def test_accessed_files_document_inline() -> None:
+    content = b"hello world"
+    b64 = base64.b64encode(content).decode()
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"document": {"name": "notes.txt", "format": "txt", "source": {"bytes": b64}}}
+                ],
+            }
+        ]
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1
+    f = event.accessed_files[0]
+    assert f.name == "notes.txt"
+    assert f.mime_type == "application/txt"
+    assert f.byte_length == len(content)
+    assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
+    assert f.redacted_content is None  # raw content opt-in off
+
+
+def test_accessed_files_document_raw_content_opt_in() -> None:
+    content = b"secret data"
+    b64 = base64.b64encode(content).decode()
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"document": {"name": "secret.txt", "format": "txt", "source": {"bytes": b64}}}
+                ],
+            }
+        ]
+    )
+    event = build_event(record, include_raw_content=True)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert event.accessed_files[0].redacted_content == "secret data"
+
+
+def test_accessed_files_image_inline() -> None:
+    content = b"\x89PNG\r\n\x1a\n"  # PNG magic bytes
+    b64 = base64.b64encode(content).decode()
+    record = _record_with_messages(
+        [{"role": "user", "content": [{"image": {"format": "png", "source": {"bytes": b64}}}]}]
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1
+    f = event.accessed_files[0]
+    assert f.name is None  # images have no name
+    assert f.mime_type == "image/png"
+    assert f.byte_length == len(content)
+    assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+def test_accessed_files_s3_source_uses_uri_as_name() -> None:
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "document": {
+                            "name": "report.pdf",
+                            "format": "pdf",
+                            "source": {"s3Location": {"uri": "s3://my-bucket/report.pdf"}},
+                        }
+                    },
+                    {
+                        "image": {
+                            "format": "jpeg",
+                            "source": {"s3Location": {"uri": "s3://my-bucket/photo.jpg"}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 2
+    doc, img = event.accessed_files
+    # document: name from the doc.name field (s3 hint is fallback)
+    assert doc.name == "report.pdf"
+    assert doc.content_hash is None  # no bytes available
+    assert doc.byte_length is None
+    # image: name from s3 URI (images have no name field)
+    assert img.name == "s3://my-bucket/photo.jpg"
+    assert img.content_hash is None
+
+
+def test_accessed_files_deduplicates_across_turns() -> None:
+    content = b"same file"
+    b64 = base64.b64encode(content).decode()
+    block = {"document": {"name": "dup.txt", "format": "txt", "source": {"bytes": b64}}}
+    record = _record_with_messages(
+        [
+            {"role": "user", "content": [block]},
+            {"role": "user", "content": [block]},  # same file in second turn
+        ]
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1
+
+
+def test_accessed_files_only_from_last_user_turn() -> None:
+    """Files in earlier turns (before the last assistant message) are ignored."""
+    content_old = b"old file"
+    content_new = b"new file"
+    b64_old = base64.b64encode(content_old).decode()
+    b64_new = base64.b64encode(content_new).decode()
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"document": {"name": "old.txt", "format": "txt", "source": {"bytes": b64_old}}}
+                ],
+            },
+            {"role": "assistant", "content": [{"text": "ok"}]},
+            {
+                "role": "user",
+                "content": [
+                    {"document": {"name": "new.txt", "format": "txt", "source": {"bytes": b64_new}}}
+                ],
+            },
+        ]
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    names = [f.name for f in event.accessed_files]
+    assert "new.txt" in names
+    assert "old.txt" not in names
+
+
+def test_accessed_files_all_included_when_no_prior_assistant_turn() -> None:
+    """With no assistant message yet (first turn), all user files are included."""
+    content = b"first turn file"
+    b64 = base64.b64encode(content).decode()
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"document": {"name": "first.txt", "format": "txt", "source": {"bytes": b64}}}
+                ],
+            }
+        ]
+    )
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert event.accessed_files[0].name == "first.txt"
+
+
+def test_accessed_files_none_when_no_attachments() -> None:
+    record = _record_with_messages([{"role": "user", "content": [{"text": "just a text message"}]}])
+    event = build_event(record)
+    assert event is not None
+    assert event.accessed_files is None
 
 
 def test_build_event_wire_form() -> None:

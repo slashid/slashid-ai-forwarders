@@ -31,6 +31,10 @@ class Config(BaseSettings):
     # AIInvocationContent.redacted_text. Off by default — hash + mime +
     # byte length still go out so the server can dedup / correlate.
     include_raw_content: bool = False
+    # File attachments (document/image blocks) with S3 sources: HEAD the
+    # object to get size; GET it for hashing if size ≤ this limit. 0 disables
+    # fetching entirely (size still comes from HeadObject).
+    file_attachment_max_inline_bytes: int = 10 * 1024 * 1024  # 10 MB
     request_timeout_seconds: float = 10.0
     max_retries: int = 3
 

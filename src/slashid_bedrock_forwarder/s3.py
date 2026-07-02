@@ -1,4 +1,4 @@
-"""Fetch MIL body-offload objects from S3.
+"""Fetch MIL body-offload objects and file attachments from S3.
 
 For large invocations (Claude Code's system prompt is the canonical case)
 MIL writes the main record to CloudWatch Logs with `inputBodyJson: null`
@@ -7,19 +7,22 @@ that follows ~30-60s later. This module fetches the offloaded bodies
 and merges them back into the record so downstream code can read the
 `toolConfig` / tool definitions uniformly.
 
-Boto3 is sync; we wrap each call with `asyncio.to_thread` so a batch of
-records can fetch their bodies concurrently from the same event loop the
-push pipeline already runs on.
+For document/image blocks with S3 sources (Converse `s3Location`), this
+module issues HeadObject to get byte length and, when the object is within
+the configured inline threshold, GetObject to populate content hash and
+optionally raw bytes.
+
+All S3 calls use aioboto3 for native async I/O.
 """
 
 from __future__ import annotations
 
-import asyncio
 import gzip
 import json
 import logging
 from typing import Any
 
+import aioboto3
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -30,32 +33,17 @@ from tenacity import (
 log = logging.getLogger(__name__)
 
 
-# Cap concurrent S3 GETs within one Lambda invocation. CW Logs delivers
-# large batches that can carry dozens of offloaded records; left unbounded
-# we'd queue more parallel work than the default thread pool (~7 on a
-# 512 MB Lambda) or the boto3 connection pool (10) can handle.
+# Cap concurrent S3 calls within one Lambda invocation.
 MAX_PARALLEL_FETCHES = 8
 
-
-class _OffloadedBodyNotReady(Exception):
-    """Body object hasn't been written yet — retryable."""
+_session: aioboto3.Session | None = None
 
 
-_s3_client: Any | None = None
-
-
-def _client() -> Any:
-    """Lazily build and cache a module-scope S3 client.
-
-    Lambda execution-context reuse keeps the connection pool warm across
-    invocations; the first cold start pays the boto3 import + signing.
-    """
-    global _s3_client
-    if _s3_client is None:
-        import boto3
-
-        _s3_client = boto3.client("s3")
-    return _s3_client
+def _get_session() -> aioboto3.Session:
+    global _session
+    if _session is None:
+        _session = aioboto3.Session()
+    return _session
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
@@ -85,18 +73,8 @@ def _decode_body(raw: bytes, key: str) -> dict[str, Any] | list[Any] | None:
     return parsed if isinstance(parsed, dict | list) else None
 
 
-def _sync_get(bucket: str, key: str) -> bytes:
-    """Sync S3 GetObject call. Raises _OffloadedBodyNotReady on NoSuchKey."""
-    from botocore.exceptions import ClientError
-
-    try:
-        resp = _client().get_object(Bucket=bucket, Key=key)
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "")
-        if code in ("NoSuchKey", "NotFound", "404"):
-            raise _OffloadedBodyNotReady(f"s3://{bucket}/{key} not yet available") from e
-        raise
-    return resp["Body"].read()
+class _OffloadedBodyNotReady(Exception):
+    """Body object hasn't been written yet — retryable."""
 
 
 async def fetch_offloaded_body(
@@ -109,16 +87,14 @@ async def fetch_offloaded_body(
     (~90s total window) to cover the worst-case lag. Returns None on
     permanent failure — callers should treat that as "body unavailable"
     rather than abort.
-
-    The body is either a dict (Converse / Anthropic Messages) or a list
-    of SSE events (Anthropic streaming) — both shapes are recognised by
-    `mil_normalize.normalize_record`.
     """
     parsed = _parse_s3_uri(s3_uri)
     if parsed is None:
         log.warning("malformed inputBodyS3Path / outputBodyS3Path: %r", s3_uri)
         return None
     bucket, key = parsed
+
+    from botocore.exceptions import ClientError
 
     retrying = AsyncRetrying(
         stop=stop_after_attempt(max_attempts),
@@ -129,15 +105,108 @@ async def fetch_offloaded_body(
     try:
         async for attempt in retrying:
             with attempt:
-                raw = await asyncio.to_thread(_sync_get, bucket, key)
-                return _decode_body(raw, key)
+                async with _get_session().client("s3") as s3:
+                    try:
+                        resp = await s3.get_object(Bucket=bucket, Key=key)
+                    except ClientError as e:
+                        code = e.response.get("Error", {}).get("Code", "")
+                        if code in ("NoSuchKey", "NotFound", "404"):
+                            raise _OffloadedBodyNotReady(
+                                f"s3://{bucket}/{key} not yet available"
+                            ) from e
+                        raise
+                    raw = await resp["Body"].read()
+                    return _decode_body(raw, key)
     except _OffloadedBodyNotReady as e:
         log.warning("offloaded body still missing after %d attempts: %s", max_attempts, e)
         return None
     except Exception as e:
         log.warning("failed to fetch offloaded body %s: %s", s3_uri, e)
         return None
-    return None  # unreachable but mypy/ty wants the explicit return
+    return None  # unreachable but ty wants the explicit return
+
+
+async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+    """HEAD + optional GET a Converse s3Location source block.
+
+    Adds `_resolved_byte_length` from HeadObject. When the object is within
+    the inline threshold, also adds `_resolved_bytes` from GetObject.
+    Both keys are read by `_accessed_files` in events.py.
+    """
+    from botocore.exceptions import ClientError
+
+    s3_loc = source.get("s3Location") or {}
+    parsed = _parse_s3_uri(s3_loc.get("uri") or "")
+    if parsed is None:
+        return
+    bucket, key = parsed
+
+    async with _get_session().client("s3") as s3:
+        try:
+            head = await s3.head_object(Bucket=bucket, Key=key)
+        except ClientError:
+            return
+        size = int(head["ContentLength"])
+        source["_resolved_byte_length"] = size
+
+        if max_inline_bytes > 0 and size <= max_inline_bytes:
+            try:
+                resp = await s3.get_object(Bucket=bucket, Key=key)
+                source["_resolved_bytes"] = await resp["Body"].read()
+            except ClientError:
+                pass
+
+
+def _iter_attachment_sources(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collect S3-sourced document/image source blocks from the current turn.
+
+    Only looks at messages after the last assistant message — files from
+    earlier turns were already reported in prior invocations.
+    """
+    sources: list[dict[str, Any]] = []
+    for record in records:
+        body = (record.get("input") or {}).get("inputBodyJson")
+        if not isinstance(body, dict):
+            continue
+        messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+        last_assistant = max(
+            (i for i, m in enumerate(messages) if m.get("role") == "assistant"),
+            default=-1,
+        )
+        for msg in messages[last_assistant + 1 :]:
+            for block in msg.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                for key in ("document", "image"):
+                    item = block.get(key)
+                    if not isinstance(item, dict):
+                        continue
+                    src = item.get("source") or {}
+                    if "s3Location" in src and "_resolved_byte_length" not in src:
+                        sources.append(src)
+    return sources
+
+
+async def resolve_file_attachments(records: list[dict[str, Any]], *, max_inline_bytes: int) -> None:
+    """HEAD (and optionally GET) every S3-sourced document/image block.
+
+    Results are stashed as `_resolved_byte_length` / `_resolved_bytes` on
+    the source block. Runs concurrently under the same MAX_PARALLEL_FETCHES
+    cap as body offloads.
+    """
+    import asyncio
+
+    sources = _iter_attachment_sources(records)
+    if not sources:
+        return
+
+    sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+
+    async def _guarded(src: dict[str, Any]) -> None:
+        async with sem:
+            await _resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes)
+
+    await asyncio.gather(*(_guarded(s) for s in sources))
 
 
 async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:
@@ -151,6 +220,8 @@ async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:
     All fetches run concurrently — for a batch of N records with offloads,
     one event loop turn issues N parallel S3 GETs.
     """
+    import asyncio
+
     tasks: list[tuple[dict[str, Any], str, str]] = []  # (input/output dict, field, s3 path)
 
     for record in records:
