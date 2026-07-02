@@ -566,6 +566,91 @@ async def _accessed_files(
                             length=source.get("_resolved_byte_length"),
                         )
 
+    # --- tool-result files ---------------------------------------------------
+    # Known "read file" tools from AI coding agents.
+    # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
+    # Other agents observed in the wild (OpenCode, Amazon Q Developer, etc.)
+    # share the same or similar tool names.
+    _READ_TOOLS: dict[str, str] = {
+        # tool name → input key that holds the file path
+        "Read": "file_path",  # Claude Code
+        "ReadFile": "path",  # OpenCode, Amazon Q Developer, Gemini CLI
+        "read_file": "path",  # snake_case variants
+        "view_file": "path",  # some agents
+        "str_replace_based_edit_tool": "path",  # Claude computer-use text editor view
+    }
+
+    # Build a lookup of tool_use_id → {name, input} from all assistant messages.
+    tool_use_by_id: dict[str, dict[str, Any]] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            # Anthropic shape: {type: "tool_use", id, name, input}
+            # Converse shape:  {toolUse: {toolUseId, name, input}}
+            if block.get("type") == "tool_use":
+                uid = block.get("id")
+                if uid:
+                    tool_use_by_id[uid] = {
+                        "name": block.get("name"),
+                        "input": block.get("input") or {},
+                    }
+            elif "toolUse" in block:
+                tu = block["toolUse"] or {}
+                uid = tu.get("toolUseId")
+                if uid:
+                    tool_use_by_id[uid] = {
+                        "name": tu.get("name"),
+                        "input": tu.get("input") or {},
+                    }
+
+    for msg in messages[last_assistant + 1 :]:
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            # Anthropic shape: {type: "tool_result", tool_use_id, content}
+            # Converse shape:  {toolResult: {toolUseId, content}}
+            if block.get("type") == "tool_result":
+                uid = block.get("tool_use_id")
+                raw_content = block.get("content")
+            elif "toolResult" in block:
+                tr = block["toolResult"] or {}
+                uid = tr.get("toolUseId")
+                raw_content = tr.get("content")
+            else:
+                continue
+
+            tu = tool_use_by_id.get(uid or "")
+            if not tu:
+                continue
+            tool_name = tu.get("name") or ""
+            path_key = _READ_TOOLS.get(tool_name)
+            if not path_key:
+                continue
+
+            path = (tu["input"] or {}).get(path_key) or None
+            if not path:
+                continue
+
+            # Hash the returned content when available.
+            content_bytes: bytes | None = None
+            if isinstance(raw_content, str):
+                content_bytes = raw_content.encode()
+            elif isinstance(raw_content, list):
+                # Converse content array — concatenate text blocks
+                text = "".join(b.get("text", "") for b in raw_content if isinstance(b, dict))
+                if text:
+                    content_bytes = text.encode()
+
+            _add(
+                name=path,
+                media_type=_mime_from_name(path),
+                raw_bytes=content_bytes,
+                length=len(content_bytes) if content_bytes is not None else None,
+            )
+
     return files
 
 

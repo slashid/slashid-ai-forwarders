@@ -697,6 +697,207 @@ async def test_accessed_files_none_when_no_attachments() -> None:
     assert event.accessed_files is None
 
 
+def _record_with_tool_call(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    tool_result_content: str,
+    prior_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a MIL record with one tool_use/tool_result pair in the last round."""
+    tool_use_id = "tu_001"
+    messages: list[dict[str, Any]] = list(prior_messages or [])
+    messages += [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": tool_use_id, "name": tool_name, "input": tool_input}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": tool_result_content,
+                }
+            ],
+        },
+    ]
+    return _record_with_messages(messages)
+
+
+async def test_accessed_files_tool_result_read() -> None:
+    """Claude Code's Read tool result is extracted as an accessed file."""
+    content = "line1\nline2\n"
+    record = _record_with_tool_call(
+        tool_name="Read",
+        tool_input={"file_path": "/repo/src/main.py"},
+        tool_result_content=content,
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1
+    f = event.accessed_files[0]
+    assert f.name == "/repo/src/main.py"
+    assert f.media_type == "text/x-python"
+    assert f.byte_length == len(content.encode())
+    assert f.content_hash == f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+    assert f.redacted_content is None  # raw content opt-in off
+
+
+async def test_accessed_files_tool_result_raw_content_opt_in() -> None:
+    content = "secret source"
+    record = _record_with_tool_call(
+        tool_name="Read",
+        tool_input={"file_path": "/repo/secret.py"},
+        tool_result_content=content,
+    )
+    event = await build_event(record, include_raw_content=True)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert event.accessed_files[0].redacted_content == content
+
+
+async def test_accessed_files_tool_result_readfile_variant() -> None:
+    """ReadFile (OpenCode/Q Developer) with 'path' input key is also recognised."""
+    content = "data"
+    record = _record_with_tool_call(
+        tool_name="ReadFile",
+        tool_input={"path": "/repo/config.json"},
+        tool_result_content=content,
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    f = event.accessed_files[0]
+    assert f.name == "/repo/config.json"
+    assert f.media_type == "application/json"
+    assert f.byte_length == len(content.encode())
+
+
+async def test_accessed_files_unknown_tool_ignored() -> None:
+    """Non-read tools (Bash, WebFetch, etc.) do not produce accessed_files entries."""
+    record = _record_with_tool_call(
+        tool_name="Bash",
+        tool_input={"command": "ls -la"},
+        tool_result_content="total 8\n...",
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is None
+
+
+async def test_accessed_files_tool_result_only_last_turn() -> None:
+    """Tool results from before the last assistant message are ignored."""
+    content_old = "old file content"
+    content_new = "new file content"
+    tool_use_id_old = "tu_old"
+    tool_use_id_new = "tu_new"
+    record = _record_with_messages(
+        [
+            # First round — should be ignored
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id_old,
+                        "name": "Read",
+                        "input": {"file_path": "/old.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id_old,
+                        "content": content_old,
+                    }
+                ],
+            },
+            # Second round — should be captured
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id_new,
+                        "name": "Read",
+                        "input": {"file_path": "/new.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id_new,
+                        "content": content_new,
+                    }
+                ],
+            },
+        ]
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1
+    assert event.accessed_files[0].name == "/new.py"
+
+
+async def test_accessed_files_dedup_tool_and_attachment() -> None:
+    """Same file from both a document block and a Read tool result is deduplicated."""
+    content = b"shared content"
+    b64 = base64.b64encode(content).decode()
+    tool_use_id = "tu_dup"
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "document": {
+                            "name": "shared.txt",
+                            "format": "txt",
+                            "source": {"bytes": b64},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id,
+                        "name": "Read",
+                        "input": {"file_path": "shared.txt"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": content.decode(),
+                    }
+                ],
+            },
+        ]
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1  # deduped by (name, content_hash)
+
+
 async def test_build_event_wire_form() -> None:
     event = await build_event(_mil_record())
     assert event is not None
