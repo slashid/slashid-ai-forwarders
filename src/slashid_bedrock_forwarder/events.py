@@ -12,12 +12,49 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 log = logging.getLogger(__name__)
+
+_CAT_N_LINE = re.compile(r"^\s*\d+\t", re.MULTILINE)
+
+
+def _strip_cat_n(text: str) -> str | None:
+    """Strip Claude Code's `cat -n` line-number prefixes if every non-empty line has one.
+
+    Returns the stripped text, or None if the format doesn't match (so the
+    caller falls back to hashing the raw content).
+    """
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return text
+    if not all(_CAT_N_LINE.match(ln) for ln in lines if ln.strip()):
+        return None
+    return _CAT_N_LINE.sub("", text)
+
+
+class _ToolSpec(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    field_name: str
+    cleanup: Callable[[str], str | None] | None = None
+
+
+# Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
+_READ_TOOLS: dict[str, _ToolSpec] = {
+    "Read": _ToolSpec(field_name="file_path", cleanup=_strip_cat_n),  # Claude Code (cat-n output)
+    "ReadFile": _ToolSpec(field_name="path"),  # OpenCode, Amazon Q Developer, Gemini CLI
+    "read_file": _ToolSpec(field_name="path"),  # snake_case variants
+    "view_file": _ToolSpec(field_name="path"),  # some agents
+    "str_replace_based_edit_tool": _ToolSpec(
+        field_name="path"
+    ),  # Claude computer-use text editor view
+}
+
 
 # Enum mirrors of the OpenAPI schema. Kept as Literal so pydantic both
 # accepts and rejects values without dragging in a runtime Enum class.
@@ -567,18 +604,6 @@ async def _accessed_files(
                         )
 
     # --- tool-result files ---------------------------------------------------
-    # Known "read file" tools from AI coding agents.
-    # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
-    # Other agents observed in the wild (OpenCode, Amazon Q Developer, etc.)
-    # share the same or similar tool names.
-    _READ_TOOLS: dict[str, str] = {
-        # tool name → input key that holds the file path
-        "Read": "file_path",  # Claude Code
-        "ReadFile": "path",  # OpenCode, Amazon Q Developer, Gemini CLI
-        "read_file": "path",  # snake_case variants
-        "view_file": "path",  # some agents
-        "str_replace_based_edit_tool": "path",  # Claude computer-use text editor view
-    }
 
     # Build a lookup of tool_use_id → {name, input} from all assistant messages.
     tool_use_by_id: dict[str, dict[str, Any]] = {}
@@ -625,24 +650,26 @@ async def _accessed_files(
             tu = tool_use_by_id.get(uid or "")
             if not tu:
                 continue
-            tool_name = tu.get("name") or ""
-            path_key = _READ_TOOLS.get(tool_name)
-            if not path_key:
+            spec = _READ_TOOLS.get(tu.get("name") or "")
+            if not spec:
                 continue
 
-            path = (tu["input"] or {}).get(path_key) or None
+            path = (tu["input"] or {}).get(spec.field_name) or None
             if not path:
                 continue
+
+            def _apply_cleanup(text: str, _spec: _ToolSpec = spec) -> str:
+                return (_spec.cleanup(text) or text) if _spec.cleanup else text
 
             # Hash the returned content when available.
             content_bytes: bytes | None = None
             if isinstance(raw_content, str):
-                content_bytes = raw_content.encode()
+                content_bytes = _apply_cleanup(raw_content).encode()
             elif isinstance(raw_content, list):
                 # Converse content array — concatenate text blocks
                 text = "".join(b.get("text", "") for b in raw_content if isinstance(b, dict))
                 if text:
-                    content_bytes = text.encode()
+                    content_bytes = _apply_cleanup(text).encode()
 
             _add(
                 name=path,

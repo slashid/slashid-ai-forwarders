@@ -728,12 +728,13 @@ def _record_with_tool_call(
 
 
 async def test_accessed_files_tool_result_read() -> None:
-    """Claude Code's Read tool result is extracted as an accessed file."""
-    content = "line1\nline2\n"
+    """Claude Code's Read tool returns cat-n formatted content; hash matches raw file bytes."""
+    raw_content = "line1\nline2\n"
+    cat_n_content = "     1\tline1\n     2\tline2\n"
     record = _record_with_tool_call(
         tool_name="Read",
         tool_input={"file_path": "/repo/src/main.py"},
-        tool_result_content=content,
+        tool_result_content=cat_n_content,
     )
     event = await build_event(record)
     assert event is not None
@@ -742,9 +743,25 @@ async def test_accessed_files_tool_result_read() -> None:
     f = event.accessed_files[0]
     assert f.name == "/repo/src/main.py"
     assert f.media_type == "text/x-python"
-    assert f.byte_length == len(content.encode())
-    assert f.content_hash == f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+    assert f.byte_length == len(raw_content.encode())
+    assert f.content_hash == f"sha256:{hashlib.sha256(raw_content.encode()).hexdigest()}"
     assert f.redacted_content is None  # raw content opt-in off
+
+
+async def test_accessed_files_tool_result_read_no_prefix_falls_back() -> None:
+    """If Read content lacks cat-n prefixes on any line, hash the content as-is."""
+    content = "line1\nline2\n"  # no line-number prefixes
+    record = _record_with_tool_call(
+        tool_name="Read",
+        tool_input={"file_path": "/repo/src/main.py"},
+        tool_result_content=content,
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    f = event.accessed_files[0]
+    assert f.content_hash == f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+    assert f.byte_length == len(content.encode())
 
 
 async def test_accessed_files_tool_result_raw_content_opt_in() -> None:
