@@ -21,51 +21,23 @@ from slashid_bedrock_forwarder.content_utils import strip_cat_n, truncate_middle
         ("abcde", 3, "a…e"),
         # Even max_chars
         ("abcdef", 4, "ab…f"),
-        # Long string
+        # Hard cut when no word boundaries within tolerance
         ("a" * 200, 11, "aaaaa…aaaaa"),
         # Unicode: multi-byte codepoints are never split
         ("αβγδεζηθ", 5, "αβ…ηθ"),
         # Emoji (each is one codepoint in Python str)
         ("😀😁😂😃😄", 3, "😀…😄"),
+        # Large unicode string — valid UTF-8, no surrogate halves
+        ("αβγδ" * 3, 9, "αβγδ…αβγδ"),
+        # Word-boundary snapping: cuts land on whitespace, not mid-word
+        ("hello world foo bar baz qux quux corge grault garply", 20, "hello … garply"),
     ],
 )
 def test_truncate_middle(text: str, max_chars: int, expected: str) -> None:
     result = truncate_middle(text, max_chars)
-    assert result == expected
+    result.encode("utf-8")  # must not raise — no surrogate halves
     assert len(result) <= max_chars
-
-
-def test_truncate_middle_result_is_valid_str() -> None:
-    """Result encodes cleanly to UTF-8 — no surrogate halves."""
-    text = "αβγδ" * 1000
-    result = truncate_middle(text, 101)
-    result.encode("utf-8")  # must not raise
-    assert "…" in result
-    assert len(result) <= 101
-
-
-def test_truncate_middle_snaps_to_word_boundary() -> None:
-    """Cuts are nudged to the nearest word boundary within tolerance."""
-    text = "hello world foo bar baz qux quux corge grault garply"
-    result = truncate_middle(text, 20)
-    assert "…" in result
-    assert len(result) <= 20
-    head, _, tail = result.partition("…")
-    # Head should end at a word boundary (space or start of word)
-    assert (
-        head == ""
-        or not head[-1].isalnum()
-        or (len(head) < len(text) and not text[len(head)].isalnum())
-    )
-    # Tail should start at a word boundary
-    assert tail == "" or not tail[0].isalnum() or (not text[len(text) - len(tail) - 1].isalnum())
-
-
-def test_truncate_middle_hard_cut_when_no_boundary_in_tolerance() -> None:
-    """Falls back to hard cut when no word boundary is within tolerance."""
-    text = "a" * 200  # no word boundaries at all
-    result = truncate_middle(text, 11)
-    assert result == "aaaaa…aaaaa"  # exact hard cut
+    assert result == expected
 
 
 # ---------------------------------------------------------------------------
