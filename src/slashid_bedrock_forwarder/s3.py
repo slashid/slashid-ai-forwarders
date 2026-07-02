@@ -149,64 +149,14 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: in
         size = int(head["ContentLength"])
         source["_resolved_byte_length"] = size
 
-        if max_inline_bytes > 0 and size <= max_inline_bytes:
+        if size == 0:
+            source["_resolved_bytes"] = b""
+        elif size <= max_inline_bytes:
             try:
                 resp = await s3.get_object(Bucket=bucket, Key=key)
                 source["_resolved_bytes"] = await resp["Body"].read()
             except ClientError:
                 pass
-
-
-def _iter_attachment_sources(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collect S3-sourced document/image source blocks from the current turn.
-
-    Only looks at messages after the last assistant message — files from
-    earlier turns were already reported in prior invocations.
-    """
-    sources: list[dict[str, Any]] = []
-    for record in records:
-        body = (record.get("input") or {}).get("inputBodyJson")
-        if not isinstance(body, dict):
-            continue
-        messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
-        last_assistant = max(
-            (i for i, m in enumerate(messages) if m.get("role") == "assistant"),
-            default=-1,
-        )
-        for msg in messages[last_assistant + 1 :]:
-            for block in msg.get("content") or []:
-                if not isinstance(block, dict):
-                    continue
-                for key in ("document", "image"):
-                    item = block.get(key)
-                    if not isinstance(item, dict):
-                        continue
-                    src = item.get("source") or {}
-                    if "s3Location" in src and "_resolved_byte_length" not in src:
-                        sources.append(src)
-    return sources
-
-
-async def resolve_file_attachments(records: list[dict[str, Any]], *, max_inline_bytes: int) -> None:
-    """HEAD (and optionally GET) every S3-sourced document/image block.
-
-    Results are stashed as `_resolved_byte_length` / `_resolved_bytes` on
-    the source block. Runs concurrently under the same MAX_PARALLEL_FETCHES
-    cap as body offloads.
-    """
-    import asyncio
-
-    sources = _iter_attachment_sources(records)
-    if not sources:
-        return
-
-    sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
-
-    async def _guarded(src: dict[str, Any]) -> None:
-        async with sem:
-            await _resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes)
-
-    await asyncio.gather(*(_guarded(s) for s in sources))
 
 
 async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:

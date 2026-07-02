@@ -357,10 +357,11 @@ def _available_tools(
     return list(servers_by_id.values()), tools, raw_to_id
 
 
-def _accessed_files(
+async def _accessed_files(
     record: dict[str, Any],
     *,
     include_raw_content: bool,
+    max_inline_bytes: int,
 ) -> list[AIAccessedFile]:
     """Extract document and image attachments from Converse-shape input messages.
 
@@ -370,10 +371,17 @@ def _accessed_files(
       messages[].content[]{image:{format, source:{bytes:<base64>}}}
       (images carry no name)
 
-    Files are deduplicated by (name, content_hash) — the same attachment
-    in multiple turns is counted once.
+    Only considers messages after the last assistant message — files in
+    earlier turns were already reported in prior invocations.
+
+    S3-sourced attachments are resolved inline via HeadObject + optional
+    GetObject (gated by max_inline_bytes). Files are deduplicated by
+    (name, content_hash).
     """
+    import asyncio
     import base64 as _b64
+
+    from .s3 import _resolve_s3_attachment
 
     body = (record.get("input") or {}).get("inputBodyJson") or {}
     files: list[AIAccessedFile] = []
@@ -391,7 +399,7 @@ def _accessed_files(
         name: str | None,
         mime_type: str | None,
         raw_bytes: bytes | None,
-        s3_byte_length: int | None = None,
+        length: int | None = None,
     ) -> None:
         content_hash = (
             f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}" if raw_bytes is not None else None
@@ -405,7 +413,7 @@ def _accessed_files(
                 name=name,
                 content_hash=content_hash,
                 mime_type=mime_type,
-                byte_length=len(raw_bytes) if raw_bytes is not None else s3_byte_length,
+                byte_length=len(raw_bytes) if raw_bytes is not None else length,
                 redacted_content=(
                     raw_bytes.decode(errors="replace")
                     if include_raw_content and raw_bytes is not None
@@ -414,34 +422,32 @@ def _accessed_files(
             )
         )
 
-    def _resolve_source(source: dict[str, Any]) -> tuple[str | None, bytes | None, int | None]:
-        """Return (name_hint, raw_bytes, s3_byte_length) from a Converse source block.
-
-        Inline bytes: source={bytes: "<b64>"}
-        S3 pointer:   source={s3Location: {uri: "s3://...", ...}}
-          — `_resolved_bytes` / `_resolved_byte_length` may be present if
-            resolve_file_attachments already ran (s3.py stashes them there).
-        """
-        if "bytes" in source:
-            return None, _decode_b64(source["bytes"]), None
-        s3 = source.get("s3Location") or {}
-        uri = s3.get("uri") or None
-        raw = source.get("_resolved_bytes")
-        size = source.get("_resolved_byte_length")
-        return uri, raw, size
-
     messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
-
-    # Only consider attachments from the most recent user turn — messages
-    # after the last assistant message. Files in earlier turns were already
-    # reported in prior invocations.
     last_assistant = max(
         (i for i, m in enumerate(messages) if m.get("role") == "assistant"),
         default=-1,
     )
-    messages = messages[last_assistant + 1 :]
 
-    for msg in messages:
+    # Collect all S3 source blocks from the current turn so we can resolve
+    # them concurrently before building the file list.
+    s3_sources: list[dict[str, Any]] = []
+    for msg in messages[last_assistant + 1 :]:
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            for key in ("document", "image"):
+                item = block.get(key)
+                if isinstance(item, dict):
+                    src = item.get("source") or {}
+                    if "s3Location" in src:
+                        s3_sources.append(src)
+
+    if s3_sources:
+        await asyncio.gather(
+            *(_resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes) for src in s3_sources)
+        )
+
+    for msg in messages[last_assistant + 1 :]:
         for block in msg.get("content") or []:
             if not isinstance(block, dict):
                 continue
@@ -449,24 +455,38 @@ def _accessed_files(
             if "document" in block:
                 doc = block["document"] or {}
                 fmt = doc.get("format") or None
-                s3_hint, raw_bytes, s3_size = _resolve_source(doc.get("source") or {})
-                _add(
-                    name=doc.get("name") or s3_hint,
-                    mime_type=f"application/{fmt}" if fmt else None,
-                    raw_bytes=raw_bytes,
-                    s3_byte_length=s3_size,
-                )
+                source = doc.get("source") or {}
+                if "bytes" in source:
+                    raw_bytes = _decode_b64(source["bytes"])
+                    _add(
+                        name=doc.get("name") or None,
+                        mime_type=f"application/{fmt}" if fmt else None,
+                        raw_bytes=raw_bytes,
+                    )
+                else:
+                    uri = (source.get("s3Location") or {}).get("uri") or None
+                    _add(
+                        name=doc.get("name") or uri,
+                        mime_type=f"application/{fmt}" if fmt else None,
+                        raw_bytes=source.get("_resolved_bytes"),
+                        length=source.get("_resolved_byte_length"),
+                    )
 
             elif "image" in block:
                 img = block["image"] or {}
                 fmt = img.get("format") or None
-                s3_hint, raw_bytes, s3_size = _resolve_source(img.get("source") or {})
-                _add(
-                    name=s3_hint,
-                    mime_type=f"image/{fmt}" if fmt else None,
-                    raw_bytes=raw_bytes,
-                    s3_byte_length=s3_size,
-                )
+                source = img.get("source") or {}
+                if "bytes" in source:
+                    raw_bytes = _decode_b64(source["bytes"])
+                    _add(name=None, mime_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
+                else:
+                    uri = (source.get("s3Location") or {}).get("uri") or None
+                    _add(
+                        name=uri,
+                        mime_type=f"image/{fmt}" if fmt else None,
+                        raw_bytes=source.get("_resolved_bytes"),
+                        length=source.get("_resolved_byte_length"),
+                    )
 
     return files
 
@@ -493,11 +513,12 @@ def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> li
     return ids
 
 
-def build_event(
+async def build_event(
     record: dict[str, Any],
     *,
     include_raw_content: bool = False,
     model_region: str | None = None,
+    max_inline_bytes: int = 10 * 1024 * 1024,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -562,5 +583,8 @@ def build_event(
         stop_reason=_stop_reason(record),
         input=_build_content(inp.get("inputBodyJson"), include_text=include_raw_content),
         output=_build_content(out.get("outputBodyJson"), include_text=include_raw_content),
-        accessed_files=_accessed_files(record, include_raw_content=include_raw_content) or None,
+        accessed_files=await _accessed_files(
+            record, include_raw_content=include_raw_content, max_inline_bytes=max_inline_bytes
+        )
+        or None,
     )

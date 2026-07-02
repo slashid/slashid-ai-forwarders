@@ -26,7 +26,7 @@ from slashid_bedrock_forwarder.events import (
         ("mcp__foo", ("foo", "builtin", "runtime")),
     ],
 )
-def test_parse_tool_name(name: str, expected: tuple[str, str, str]) -> None:
+async def test_parse_tool_name(name: str, expected: tuple[str, str, str]) -> None:
     assert parse_tool_name(name) == expected
 
 
@@ -47,8 +47,8 @@ def _mil_record(**overrides: Any) -> dict[str, Any]:
     return base
 
 
-def test_build_event_minimal() -> None:
-    event = build_event(_mil_record())
+async def test_build_event_minimal() -> None:
+    event = await build_event(_mil_record())
     assert event is not None
     assert isinstance(event, AIInvocationObservedV1)
     assert event.request_id == "req-1"
@@ -68,35 +68,35 @@ def test_build_event_minimal() -> None:
     assert event.used_agent_ids is None
 
 
-def test_build_event_skips_records_without_request_id() -> None:
+async def test_build_event_skips_records_without_request_id() -> None:
     record = _mil_record()
     del record["requestId"]
-    assert build_event(record) is None
+    assert await build_event(record) is None
 
 
-def test_build_event_omits_access_key_when_missing() -> None:
+async def test_build_event_omits_access_key_when_missing() -> None:
     record = _mil_record(identity={"arn": "arn:aws:iam::123:user/bob"})
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.identity_details.principal_arn == "arn:aws:iam::123:user/bob"
     assert event.identity_details.access_key_id is None
 
 
-def test_build_event_skips_record_without_identity() -> None:
+async def test_build_event_skips_record_without_identity() -> None:
     """Regression for R1: a record with no usable principal ARN should drop,
     not ship as `identity_details.principal_arn = ""`."""
     record = _mil_record()
     record["identity"] = {}  # no arn, no resolved_arn
-    assert build_event(record) is None
+    assert await build_event(record) is None
 
 
-def test_build_event_skips_record_with_no_identity_block() -> None:
+async def test_build_event_skips_record_with_no_identity_block() -> None:
     record = _mil_record()
     del record["identity"]
-    assert build_event(record) is None
+    assert await build_event(record) is None
 
 
-def test_build_event_with_tools_and_used_ids() -> None:
+async def test_build_event_with_tools_and_used_ids() -> None:
     record = _mil_record(
         input={
             "inputTokenCount": 100,
@@ -134,7 +134,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
             },
         },
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.available_tool_servers is not None
     assert event.available_tools is not None
@@ -152,7 +152,7 @@ def test_build_event_with_tools_and_used_ids() -> None:
     assert event.stop_reason == "tool_use"
 
 
-def test_tool_id_differs_for_different_schema() -> None:
+async def test_tool_id_differs_for_different_schema() -> None:
     """Same tool name with different input schemas → different tool IDs."""
 
     def _record_with_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -169,10 +169,10 @@ def test_tool_id_differs_for_different_schema() -> None:
             }
         )
 
-    ev1 = build_event(
+    ev1 = await build_event(
         _record_with_schema({"type": "object", "properties": {"url": {"type": "string"}}})
     )
-    ev2 = build_event(
+    ev2 = await build_event(
         _record_with_schema(
             {
                 "type": "object",
@@ -185,7 +185,7 @@ def test_tool_id_differs_for_different_schema() -> None:
     assert ev1.available_tools[0].id != ev2.available_tools[0].id
 
 
-def test_tool_id_differs_for_different_description() -> None:
+async def test_tool_id_differs_for_different_description() -> None:
     """Same tool name with different description → different tool IDs."""
 
     def _record_with_desc(desc: str) -> dict[str, Any]:
@@ -198,8 +198,8 @@ def test_tool_id_differs_for_different_description() -> None:
             }
         )
 
-    ev1 = build_event(_record_with_desc("Run a shell command"))
-    ev2 = build_event(
+    ev1 = await build_event(_record_with_desc("Run a shell command"))
+    ev2 = await build_event(
         _record_with_desc("Execute arbitrary shell commands with elevated privileges")
     )
     assert ev1 is not None and ev2 is not None
@@ -207,9 +207,9 @@ def test_tool_id_differs_for_different_description() -> None:
     assert ev1.available_tools[0].id != ev2.available_tools[0].id
 
 
-def test_build_event_populates_raw_model_id() -> None:
+async def test_build_event_populates_raw_model_id() -> None:
     # No region in base record → no catalog lookup → id falls back to raw
-    event = build_event(_mil_record())
+    event = await build_event(_mil_record())
     assert event is not None
     assert event.model.id == "us.anthropic.claude-sonnet-4-6"
     assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
@@ -217,17 +217,17 @@ def test_build_event_populates_raw_model_id() -> None:
     assert event.model.provider is None
 
 
-def test_build_event_uses_arn_as_id_when_raw_is_arn() -> None:
+async def test_build_event_uses_arn_as_id_when_raw_is_arn() -> None:
     arn = "arn:aws:bedrock:us-east-2:851725497009:inference-profile/us.anthropic.claude-sonnet-4-6"
     record = _mil_record(modelId=arn, region="us-east-2")
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     # Raw is already an ARN → used directly, no catalog needed
     assert event.model.id == arn
     assert event.model.raw_model_id == arn
 
 
-def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     from slashid_bedrock_forwarder import model_catalog
 
     monkeypatch.setattr(
@@ -244,7 +244,7 @@ def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch
         },
     )
     record = _mil_record(modelId="us.anthropic.claude-sonnet-4-6", region="us-east-2")
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert (
         event.model.id == "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6"
@@ -254,15 +254,15 @@ def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch
     assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
 
 
-def test_unknown_stop_reason_falls_back_to_unknown() -> None:
-    event = build_event(
+async def test_unknown_stop_reason_falls_back_to_unknown() -> None:
+    event = await build_event(
         _mil_record(output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "wat"}}),
     )
     assert event is not None
     assert event.stop_reason == "unknown"
 
 
-def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
+async def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
     """Pydantic Literal type rejects values outside the AIStopReason enum."""
     from pydantic import ValidationError
 
@@ -278,14 +278,14 @@ def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
         )
 
 
-def test_content_fields_default_to_hash_only() -> None:
+async def test_content_fields_default_to_hash_only() -> None:
     """include_raw_content=False (default): hash + mime + bytes, no text."""
     body = {"messages": [{"role": "user", "content": "secret prompt"}]}
     record = _mil_record(
         input={"inputTokenCount": 1, "inputBodyJson": body},
         output={"outputTokenCount": 1, "outputBodyJson": {"stopReason": "end_turn"}},
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.input is not None
 
@@ -298,22 +298,22 @@ def test_content_fields_default_to_hash_only() -> None:
     assert event.input.redacted_text is None
 
 
-def test_content_fields_include_raw_when_opted_in() -> None:
+async def test_content_fields_include_raw_when_opted_in() -> None:
     body = {"messages": [{"role": "user", "content": "hello"}]}
     record = _mil_record(
         input={"inputTokenCount": 1, "inputBodyJson": body},
         output={"outputTokenCount": 1, "outputBodyJson": {"stopReason": "end_turn"}},
     )
-    event = build_event(record, include_raw_content=True)
+    event = await build_event(record, include_raw_content=True)
     assert event is not None
     assert event.input is not None
     assert event.input.redacted_text is not None
     assert json.loads(event.input.redacted_text) == body
 
 
-def test_content_field_none_when_body_absent() -> None:
+async def test_content_field_none_when_body_absent() -> None:
     record = _mil_record(input={"inputTokenCount": 1}, output={"outputTokenCount": 1})
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.input is None
     assert event.output is None
@@ -331,7 +331,7 @@ def _record_with_messages(messages: list[Any]) -> dict[str, Any]:
     )
 
 
-def test_accessed_files_document_inline() -> None:
+async def test_accessed_files_document_inline() -> None:
     content = b"hello world"
     b64 = base64.b64encode(content).decode()
     record = _record_with_messages(
@@ -344,7 +344,7 @@ def test_accessed_files_document_inline() -> None:
             }
         ]
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is not None
     assert len(event.accessed_files) == 1
@@ -356,7 +356,7 @@ def test_accessed_files_document_inline() -> None:
     assert f.redacted_content is None  # raw content opt-in off
 
 
-def test_accessed_files_document_raw_content_opt_in() -> None:
+async def test_accessed_files_document_raw_content_opt_in() -> None:
     content = b"secret data"
     b64 = base64.b64encode(content).decode()
     record = _record_with_messages(
@@ -369,19 +369,19 @@ def test_accessed_files_document_raw_content_opt_in() -> None:
             }
         ]
     )
-    event = build_event(record, include_raw_content=True)
+    event = await build_event(record, include_raw_content=True)
     assert event is not None
     assert event.accessed_files is not None
     assert event.accessed_files[0].redacted_content == "secret data"
 
 
-def test_accessed_files_image_inline() -> None:
+async def test_accessed_files_image_inline() -> None:
     content = b"\x89PNG\r\n\x1a\n"  # PNG magic bytes
     b64 = base64.b64encode(content).decode()
     record = _record_with_messages(
         [{"role": "user", "content": [{"image": {"format": "png", "source": {"bytes": b64}}}]}]
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is not None
     assert len(event.accessed_files) == 1
@@ -392,7 +392,14 @@ def test_accessed_files_image_inline() -> None:
     assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
 
 
-def test_accessed_files_s3_source_uses_uri_as_name() -> None:
+async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    from slashid_bedrock_forwarder import s3 as s3_mod
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        pass  # no AWS calls — leave source without _resolved_* keys
+
+    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+
     record = _record_with_messages(
         [
             {
@@ -415,7 +422,7 @@ def test_accessed_files_s3_source_uses_uri_as_name() -> None:
             }
         ]
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is not None
     assert len(event.accessed_files) == 2
@@ -429,7 +436,7 @@ def test_accessed_files_s3_source_uses_uri_as_name() -> None:
     assert img.content_hash is None
 
 
-def test_accessed_files_deduplicates_across_turns() -> None:
+async def test_accessed_files_deduplicates_across_turns() -> None:
     content = b"same file"
     b64 = base64.b64encode(content).decode()
     block = {"document": {"name": "dup.txt", "format": "txt", "source": {"bytes": b64}}}
@@ -439,13 +446,13 @@ def test_accessed_files_deduplicates_across_turns() -> None:
             {"role": "user", "content": [block]},  # same file in second turn
         ]
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is not None
     assert len(event.accessed_files) == 1
 
 
-def test_accessed_files_only_from_last_user_turn() -> None:
+async def test_accessed_files_only_from_last_user_turn() -> None:
     """Files in earlier turns (before the last assistant message) are ignored."""
     content_old = b"old file"
     content_new = b"new file"
@@ -468,7 +475,7 @@ def test_accessed_files_only_from_last_user_turn() -> None:
             },
         ]
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is not None
     names = [f.name for f in event.accessed_files]
@@ -476,7 +483,7 @@ def test_accessed_files_only_from_last_user_turn() -> None:
     assert "old.txt" not in names
 
 
-def test_accessed_files_all_included_when_no_prior_assistant_turn() -> None:
+async def test_accessed_files_all_included_when_no_prior_assistant_turn() -> None:
     """With no assistant message yet (first turn), all user files are included."""
     content = b"first turn file"
     b64 = base64.b64encode(content).decode()
@@ -490,21 +497,21 @@ def test_accessed_files_all_included_when_no_prior_assistant_turn() -> None:
             }
         ]
     )
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is not None
     assert event.accessed_files[0].name == "first.txt"
 
 
-def test_accessed_files_none_when_no_attachments() -> None:
+async def test_accessed_files_none_when_no_attachments() -> None:
     record = _record_with_messages([{"role": "user", "content": [{"text": "just a text message"}]}])
-    event = build_event(record)
+    event = await build_event(record)
     assert event is not None
     assert event.accessed_files is None
 
 
-def test_build_event_wire_form() -> None:
-    event = build_event(_mil_record())
+async def test_build_event_wire_form() -> None:
+    event = await build_event(_mil_record())
     assert event is not None
     wire = event.model_dump(mode="json", exclude_none=True)
     # Spec dropped these; they must not show up in the JSON we send.
