@@ -350,7 +350,7 @@ async def test_accessed_files_document_inline() -> None:
     assert len(event.accessed_files) == 1
     f = event.accessed_files[0]
     assert f.name == "notes.txt"
-    assert f.mime_type == "application/txt"
+    assert f.media_type == "application/txt"
     assert f.byte_length == len(content)
     assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
     assert f.redacted_content is None  # raw content opt-in off
@@ -387,7 +387,7 @@ async def test_accessed_files_image_inline() -> None:
     assert len(event.accessed_files) == 1
     f = event.accessed_files[0]
     assert f.name is None  # images have no name
-    assert f.mime_type == "image/png"
+    assert f.media_type == "image/png"
     assert f.byte_length == len(content)
     assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
 

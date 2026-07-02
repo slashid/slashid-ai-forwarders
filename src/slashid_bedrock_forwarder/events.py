@@ -157,7 +157,7 @@ class AIAccessedFile(_WireModel):
 
     name: str | None = None
     content_hash: str | None = None
-    mime_type: str | None = None
+    media_type: str | None = None
     byte_length: int | None = None
     redacted_content: str | None = None
 
@@ -397,7 +397,7 @@ async def _accessed_files(
 
     def _add(
         name: str | None,
-        mime_type: str | None,
+        media_type: str | None,
         raw_bytes: bytes | None,
         length: int | None = None,
     ) -> None:
@@ -412,7 +412,7 @@ async def _accessed_files(
             AIAccessedFile(
                 name=name,
                 content_hash=content_hash,
-                mime_type=mime_type,
+                media_type=media_type,
                 byte_length=len(raw_bytes) if raw_bytes is not None else length,
                 redacted_content=(
                     raw_bytes.decode(errors="replace")
@@ -460,14 +460,14 @@ async def _accessed_files(
                     raw_bytes = _decode_b64(source["bytes"])
                     _add(
                         name=doc.get("name") or None,
-                        mime_type=f"application/{fmt}" if fmt else None,
+                        media_type=f"application/{fmt}" if fmt else None,
                         raw_bytes=raw_bytes,
                     )
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or None
                     _add(
                         name=doc.get("name") or uri,
-                        mime_type=f"application/{fmt}" if fmt else None,
+                        media_type=f"application/{fmt}" if fmt else None,
                         raw_bytes=source.get("_resolved_bytes"),
                         length=source.get("_resolved_byte_length"),
                     )
@@ -478,12 +478,12 @@ async def _accessed_files(
                 source = img.get("source") or {}
                 if "bytes" in source:
                     raw_bytes = _decode_b64(source["bytes"])
-                    _add(name=None, mime_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
+                    _add(name=None, media_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or None
                     _add(
                         name=uri,
-                        mime_type=f"image/{fmt}" if fmt else None,
+                        media_type=f"image/{fmt}" if fmt else None,
                         raw_bytes=source.get("_resolved_bytes"),
                         length=source.get("_resolved_byte_length"),
                     )
