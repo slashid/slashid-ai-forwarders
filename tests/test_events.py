@@ -290,8 +290,11 @@ async def test_content_fields_default_to_hash_only() -> None:
     assert event.input is not None
 
     serialised = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    expected_hash = f"sha256:{hashlib.sha256(serialised).hexdigest()}"
-    assert event.input.content_hash == expected_hash
+    assert event.input.content_hashes == {
+        "sha256": hashlib.sha256(serialised).hexdigest(),
+        "sha1": hashlib.sha1(serialised).hexdigest(),
+        "md5": hashlib.md5(serialised).hexdigest(),
+    }
     assert event.input.mime_type == "application/json"
     assert event.input.byte_length == len(serialised)
     # Crucially: no text.
@@ -352,7 +355,11 @@ async def test_accessed_files_document_inline() -> None:
     assert f.name == "notes.txt"
     assert f.media_type == "text/plain"
     assert f.byte_length == len(content)
-    assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
+    assert f.content_hashes == {
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "sha1": hashlib.sha1(content).hexdigest(),
+        "md5": hashlib.md5(content).hexdigest(),
+    }
     assert f.redacted_content is None  # raw content opt-in off
 
 
@@ -389,7 +396,11 @@ async def test_accessed_files_image_inline() -> None:
     assert f.name is None  # images have no name
     assert f.media_type == "image/png"
     assert f.byte_length == len(content)
-    assert f.content_hash == f"sha256:{hashlib.sha256(content).hexdigest()}"
+    assert f.content_hashes == {
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "sha1": hashlib.sha1(content).hexdigest(),
+        "md5": hashlib.md5(content).hexdigest(),
+    }
 
 
 async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -430,12 +441,12 @@ async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.Mon
     # document: name from doc.name, media_type from format, no bytes
     assert doc.name == "report.pdf"
     assert doc.media_type == "application/pdf"
-    assert doc.content_hash is None
+    assert doc.content_hashes is None
     assert doc.byte_length is None
     # image: name from s3 URI, media_type from format
     assert img.name == "s3://my-bucket/photo.jpg"
     assert img.media_type == "image/jpeg"
-    assert img.content_hash is None
+    assert img.content_hashes is None
 
 
 async def test_accessed_files_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -606,7 +617,7 @@ async def test_accessed_files_stub_has_media_type_from_filename(
     assert f.name == "s3://bucket/photo.png"
     assert f.media_type == "image/png"
     assert f.byte_length is None
-    assert f.content_hash is None
+    assert f.content_hashes is None
 
 
 async def test_accessed_files_non_dict_input_body_returns_empty() -> None:
@@ -744,7 +755,11 @@ async def test_accessed_files_tool_result_read() -> None:
     assert f.name == "/repo/src/main.py"
     assert f.media_type == "text/x-python"
     assert f.byte_length == len(raw_content.encode())
-    assert f.content_hash == f"sha256:{hashlib.sha256(raw_content.encode()).hexdigest()}"
+    assert f.content_hashes == {
+        "sha256": hashlib.sha256(raw_content.encode()).hexdigest(),
+        "sha1": hashlib.sha1(raw_content.encode()).hexdigest(),
+        "md5": hashlib.md5(raw_content.encode()).hexdigest(),
+    }
     assert f.redacted_content is None  # raw content opt-in off
 
 
@@ -760,7 +775,11 @@ async def test_accessed_files_tool_result_read_no_prefix_falls_back() -> None:
     assert event is not None
     assert event.accessed_files is not None
     f = event.accessed_files[0]
-    assert f.content_hash == f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+    assert f.content_hashes == {
+        "sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "sha1": hashlib.sha1(content.encode()).hexdigest(),
+        "md5": hashlib.md5(content.encode()).hexdigest(),
+    }
     assert f.byte_length == len(content.encode())
 
 

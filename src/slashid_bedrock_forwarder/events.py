@@ -166,13 +166,13 @@ class AIAgentDetails(_WireModel):
 class AIInvocationContent(_WireModel):
     """spec/openapi.yaml — AIInvocationContent.
 
-    Carries the input or output body. `content_hash`, `mime_type`, and
+    Carries the input or output body. `content_hashes`, `mime_type`, and
     `byte_length` are non-sensitive and always populated; `redacted_text`
     only when the customer opts in via SLASHID_INCLUDE_RAW_CONTENT.
     """
 
     redacted_text: str | None = None
-    content_hash: str | None = None
+    content_hashes: dict[str, str] | None = None
     mime_type: str | None = None
     byte_length: int | None = None
 
@@ -181,7 +181,7 @@ class AIAccessedFile(_WireModel):
     """spec/openapi.yaml — AIAccessedFile."""
 
     name: str | None = None
-    content_hash: str | None = None
+    content_hashes: dict[str, str] | None = None
     media_type: str | None = None
     byte_length: int | None = None
     redacted_content: str | None = None
@@ -278,7 +278,11 @@ def _build_content(
     if include_text:
         redacted_text = truncate_middle(serialized.decode(), max_content_size)
     return AIInvocationContent(
-        content_hash=f"sha256:{hashlib.sha256(serialized).hexdigest()}",
+        content_hashes={
+            "sha256": hashlib.sha256(serialized).hexdigest(),
+            "sha1": hashlib.sha1(serialized).hexdigest(),
+            "md5": hashlib.md5(serialized).hexdigest(),
+        },
         mime_type="application/json",
         byte_length=len(serialized),
         redacted_text=redacted_text,
@@ -465,12 +469,16 @@ async def _accessed_files(
         partial_head: bytes | None = None,
         partial_tail: bytes | None = None,
     ) -> None:
-        # Full bytes → stable hash. Partial fetch → no hash (bytes are incomplete).
+        # Full bytes → stable hashes. Partial fetch → no hashes (bytes are incomplete).
         if raw_bytes is not None:
-            content_hash: str | None = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"
+            content_hashes: dict[str, str] | None = {
+                "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                "sha1": hashlib.sha1(raw_bytes).hexdigest(),
+                "md5": hashlib.md5(raw_bytes).hexdigest(),
+            }
         else:
-            content_hash = None
-        key = (name, content_hash)
+            content_hashes = None
+        key = (name, content_hashes["sha256"] if content_hashes else None)
         if key in seen:
             return
         seen.add(key)
@@ -489,7 +497,7 @@ async def _accessed_files(
         files.append(
             AIAccessedFile(
                 name=name,
-                content_hash=content_hash,
+                content_hashes=content_hashes,
                 media_type=media_type,
                 byte_length=len(raw_bytes) if raw_bytes is not None else length,
                 redacted_content=redacted,
