@@ -510,12 +510,14 @@ async def _accessed_files(
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
                     file_name = name or uri
+                    # Guess from URI when name has no extension (e.g. "report" vs "report.pdf").
+                    mime_hint = _mime_from_name(file_name) or _mime_from_name(uri)
                     if "_resolved_byte_length" not in source:
                         # HEAD failed (permissions, object missing, etc.) — emit
                         # a stub so callers know the file was referenced.
                         _add(
                             name=file_name,
-                            media_type=_mime_from_name(file_name),
+                            media_type=mime_hint,
                             raw_bytes=None,
                         )
                     else:
@@ -523,7 +525,7 @@ async def _accessed_files(
                         media_type = (
                             _DOC_MIME.get(fmt, f"application/{fmt}")
                             if fmt
-                            else source.get("_resolved_content_type") or _mime_from_name(file_name)
+                            else source.get("_resolved_content_type") or mime_hint
                         )
                         _add(
                             name=file_name,

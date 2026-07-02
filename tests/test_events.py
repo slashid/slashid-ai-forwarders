@@ -427,12 +427,14 @@ async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.Mon
     assert event.accessed_files is not None
     assert len(event.accessed_files) == 2
     doc, img = event.accessed_files
-    # document: name from the doc.name field (s3 hint is fallback)
+    # document: name from doc.name, media_type from format, no bytes
     assert doc.name == "report.pdf"
-    assert doc.content_hash is None  # no bytes available
+    assert doc.media_type == "application/pdf"
+    assert doc.content_hash is None
     assert doc.byte_length is None
-    # image: name from s3 URI (images have no name field)
+    # image: name from s3 URI, media_type from format
     assert img.name == "s3://my-bucket/photo.jpg"
+    assert img.media_type == "image/jpeg"
     assert img.content_hash is None
 
 
@@ -502,6 +504,109 @@ async def test_accessed_files_s3_content_type_used_as_media_type_fallback(
     assert event is not None
     assert event.accessed_files is not None
     assert event.accessed_files[0].media_type == "image/webp"
+
+
+@pytest.mark.parametrize(
+    "fmt,expected_mime",
+    [
+        ("pdf", "application/pdf"),
+        ("csv", "text/csv"),
+        ("txt", "text/plain"),
+        ("md", "text/markdown"),
+        ("html", "text/html"),
+        ("doc", "application/msword"),
+        ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        ("xls", "application/vnd.ms-excel"),
+        ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ("png", "image/png"),
+        ("jpeg", "image/jpeg"),
+        ("gif", "image/gif"),
+        ("webp", "image/webp"),
+    ],
+)
+async def test_accessed_files_mime_map(fmt: str, expected_mime: str) -> None:
+    """Every Bedrock format string maps to a correct IANA media type."""
+    content = b"data"
+    b64 = base64.b64encode(content).decode()
+    key = "image" if fmt in ("png", "jpeg", "gif", "webp") else "document"
+    block: dict[str, Any] = {
+        key: {"format": fmt, "source": {"bytes": b64}},
+    }
+    if key == "document":
+        block[key]["name"] = f"file.{fmt}"
+    record = _record_with_messages([{"role": "user", "content": [block]}])
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert event.accessed_files[0].media_type == expected_mime
+
+
+async def test_accessed_files_media_type_from_filename_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When format is absent and HeadObject returns no ContentType, guess from URI extension."""
+    from slashid_bedrock_forwarder import s3 as s3_mod
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        source["_resolved_byte_length"] = 200
+        # deliberately no _resolved_content_type
+
+    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"image": {"source": {"s3Uri": "s3://bucket/photo.jpeg"}}},
+                    {
+                        "document": {
+                            "name": "report",
+                            "source": {"s3Uri": "s3://bucket/report.pdf"},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 2
+    img, doc = event.accessed_files
+    assert img.media_type == "image/jpeg"  # guessed from .jpeg in URI
+    assert doc.media_type == "application/pdf"  # guessed from .pdf in URI
+
+
+async def test_accessed_files_stub_has_media_type_from_filename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HEAD-failed stub still gets media_type from the filename."""
+    from slashid_bedrock_forwarder import s3 as s3_mod
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        pass  # HEAD failed — no _resolved_* keys
+
+    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"image": {"source": {"s3Uri": "s3://bucket/photo.png"}}},
+                ],
+            }
+        ]
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    f = event.accessed_files[0]
+    assert f.name == "s3://bucket/photo.png"
+    assert f.media_type == "image/png"
+    assert f.byte_length is None
+    assert f.content_hash is None
 
 
 async def test_accessed_files_non_dict_input_body_returns_empty() -> None:
