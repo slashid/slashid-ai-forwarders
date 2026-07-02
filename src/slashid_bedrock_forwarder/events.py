@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+log = logging.getLogger(__name__)
 
 # Enum mirrors of the OpenAPI schema. Kept as Literal so pydantic both
 # accepts and rejects values without dragging in a runtime Enum class.
@@ -443,6 +446,14 @@ async def _accessed_files(
                 item = block.get(key)
                 if isinstance(item, dict):
                     src = item.get("source") or {}
+                    log.info(
+                        "attachment: type=%s fmt=%s name=%s source_keys=%s s3=%s",
+                        key,
+                        item.get("format"),
+                        item.get("name"),
+                        list(src.keys()),
+                        (src.get("s3Location") or {}).get("uri"),
+                    )
                     if "s3Location" in src:
                         s3_sources.append(src)
 
