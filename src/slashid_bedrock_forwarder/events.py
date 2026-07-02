@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 class _ToolSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
     field_name: str
-    cleanup: Callable[[str], str | None] | None = None
+    cleanup: Callable[[str], str] | None = None
 
 
 # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
@@ -663,7 +663,7 @@ async def _accessed_files(
                 continue
 
             def _apply_cleanup(text: str, _spec: _ToolSpec = spec) -> str:
-                return (_spec.cleanup(text) or text) if _spec.cleanup else text
+                return _spec.cleanup(text) if _spec.cleanup else text
 
             # Hash the returned content when available.
             content_bytes: bytes | None = None

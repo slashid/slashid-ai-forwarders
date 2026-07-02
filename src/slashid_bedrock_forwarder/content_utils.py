@@ -59,15 +59,15 @@ def truncate_middle(text: str, max_chars: int) -> str:
     return text[:head_end] + "…" + text[tail_start:]
 
 
-def strip_cat_n(text: str) -> str | None:
+def strip_cat_n(text: str) -> str:
     """Strip Claude Code's ``cat -n`` line-number prefixes if every non-empty line has one.
 
-    Returns the stripped text, or None if the format doesn't match (so the
-    caller falls back to hashing the raw content).
+    Returns the stripped text when all non-empty lines carry the prefix,
+    or the original text unchanged when the format doesn't match.
     """
     lines = text.splitlines(keepends=True)
     if not lines:
         return text
     if not all(_CAT_N_LINE.match(ln) for ln in lines if ln.strip()):
-        return None
+        return text
     return _CAT_N_LINE.sub("", text)

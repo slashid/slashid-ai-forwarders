@@ -65,17 +65,18 @@ def test_strip_cat_n(raw: str, expected: str) -> None:
     assert result == expected
 
 
-def test_strip_cat_n_no_prefix_returns_none() -> None:
-    """Mixed content (some lines without prefix) returns None."""
+def test_strip_cat_n_no_prefix_returns_input() -> None:
+    """Mixed content (some lines without prefix) returns input unchanged."""
     text = "foo\n     2\tbar\n"
-    assert strip_cat_n(text) is None
+    assert strip_cat_n(text) == text
 
 
-def test_strip_cat_n_plain_text_returns_none() -> None:
-    assert strip_cat_n("just plain text\nno prefixes\n") is None
+def test_strip_cat_n_plain_text_returns_input() -> None:
+    text = "just plain text\nno prefixes\n"
+    assert strip_cat_n(text) == text
 
 
-def test_strip_cat_n_partial_prefix_returns_none() -> None:
-    """Only some lines have the prefix — return None (no stripping)."""
+def test_strip_cat_n_partial_prefix_returns_input() -> None:
+    """Only some lines have the prefix — return input unchanged."""
     text = "     1\twith prefix\nwithout prefix\n"
-    assert strip_cat_n(text) is None
+    assert strip_cat_n(text) == text
