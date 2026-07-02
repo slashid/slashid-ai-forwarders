@@ -34,7 +34,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Config, load_config
-from .events import build_event
+from .events import AIInvocationObservedV1, build_event
 from .mil_normalize import normalize_record
 from .s3 import resolve_offloaded_bodies
 from .sink import push_invocations
@@ -100,6 +100,23 @@ def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
     return records
 
 
+_REDACTED_FIELDS = {"redacted_text", "redacted_content"}
+
+
+def _log_event(event: AIInvocationObservedV1) -> None:
+    """Log the event as JSON, stripping redacted_text / redacted_content."""
+    raw = event.model_dump(mode="json", exclude_none=True)
+
+    def _strip(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: _strip(v) for k, v in obj.items() if k not in _REDACTED_FIELDS}
+        if isinstance(obj, list):
+            return [_strip(i) for i in obj]
+        return obj
+
+    log.info("event: %s", json.dumps(_strip(raw), separators=(",", ":")))
+
+
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
     """Resolve offloaded MIL bodies, normalize, build + push events."""
     await resolve_offloaded_bodies(records)
@@ -117,6 +134,8 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
         )
     )
     events = [e for e in built_or_none if e is not None]
+    for e in events:
+        _log_event(e)
 
     timeout = httpx.Timeout(config.request_timeout_seconds)
     async with httpx.AsyncClient(timeout=timeout) as client:
