@@ -10,9 +10,9 @@ from slashid_bedrock_forwarder import s3
 
 
 @pytest.fixture(autouse=True)
-def _reset_session(monkeypatch: pytest.MonkeyPatch) -> None:
+def _reset_session() -> None:
     """Make sure no test leaks the cached aioboto3 session into another."""
-    monkeypatch.setattr(s3, "_session", None)
+    s3._get_session.cache_clear()
 
 
 def test_parse_s3_uri_happy() -> None:

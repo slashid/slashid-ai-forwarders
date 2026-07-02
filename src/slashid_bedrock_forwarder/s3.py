@@ -20,6 +20,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+from functools import cache
 from typing import Any
 
 import aioboto3
@@ -36,14 +37,10 @@ log = logging.getLogger(__name__)
 # Cap concurrent S3 calls within one Lambda invocation.
 MAX_PARALLEL_FETCHES = 8
 
-_session: aioboto3.Session | None = None
 
-
+@cache
 def _get_session() -> aioboto3.Session:
-    global _session
-    if _session is None:
-        _session = aioboto3.Session()
-    return _session
+    return aioboto3.Session()
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
