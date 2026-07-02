@@ -980,7 +980,31 @@ def test_truncate_middle_result_is_valid_str() -> None:
     result = _truncate_middle(text, 101)
     result.encode("utf-8")  # must not raise
     assert "…" in result
-    assert len(result) == 101
+    assert len(result) <= 101
+
+
+def test_truncate_middle_snaps_to_word_boundary() -> None:
+    """Cuts are nudged to the nearest word boundary within tolerance."""
+    text = "hello world foo bar baz qux quux corge grault garply"
+    result = _truncate_middle(text, 20)
+    assert "…" in result
+    assert len(result) <= 20
+    head, _, tail = result.partition("…")
+    # Head should end at a word boundary (space or start of word)
+    assert (
+        head == ""
+        or not head[-1].isalnum()
+        or (len(head) < len(text) and not text[len(head)].isalnum())
+    )
+    # Tail should start at a word boundary
+    assert tail == "" or not tail[0].isalnum() or (not text[len(text) - len(tail) - 1].isalnum())
+
+
+def test_truncate_middle_hard_cut_when_no_boundary_in_tolerance() -> None:
+    """Falls back to hard cut when no word boundary is within tolerance."""
+    text = "a" * 200  # no word boundaries at all
+    result = _truncate_middle(text, 11)
+    assert result == "aaaaa…aaaaa"  # exact hard cut
 
 
 @pytest.mark.asyncio
