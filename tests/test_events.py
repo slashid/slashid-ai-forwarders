@@ -395,7 +395,7 @@ async def test_accessed_files_image_inline() -> None:
 async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # no AWS calls — leave source without _resolved_* keys
 
     monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
@@ -442,7 +442,7 @@ async def test_accessed_files_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> No
     """Bedrock Playground sends source.s3Uri instead of source.s3Location.uri."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 50000
         source["_resolved_content_type"] = "image/png"
 
@@ -479,7 +479,7 @@ async def test_accessed_files_s3_content_type_used_as_media_type_fallback(
     """When Converse format is absent, ContentType from HeadObject is used as media_type."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 100
         source["_resolved_content_type"] = "image/webp"
 
@@ -547,7 +547,7 @@ async def test_accessed_files_media_type_from_filename_fallback(
     """When format is absent and HeadObject returns no ContentType, guess from URI extension."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 200
         # deliberately no _resolved_content_type
 
@@ -584,7 +584,7 @@ async def test_accessed_files_stub_has_media_type_from_filename(
     """HEAD-failed stub still gets media_type from the filename."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # HEAD failed — no _resolved_* keys
 
     monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
@@ -942,3 +942,41 @@ async def test_build_event_wire_form() -> None:
         "cache_write": 0,
         "reasoning": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_build_event_truncates_redacted_text() -> None:
+    """redacted_text is capped to max_content_size characters."""
+    record = _mil_record(
+        input={
+            "inputTokenCount": 10,
+            "inputBodyJson": {"messages": [{"role": "user", "content": "x" * 200}]},
+        }
+    )
+    event = await build_event(record, include_raw_content=True, max_content_size=20)
+    assert event is not None
+    assert event.input is not None
+    assert event.input.redacted_text is not None
+    assert len(event.input.redacted_text) <= 20
+    assert "…" in event.input.redacted_text
+
+
+@pytest.mark.asyncio
+async def test_build_event_truncates_file_redacted_content() -> None:
+    """redacted_content on accessed files is capped to max_content_size."""
+    raw = "line1\nline2\nline3\n" * 50  # 900 chars, 150 lines
+    cat_n = "".join(f"     {i + 1}\t{line}\n" for i, line in enumerate(raw.splitlines()))
+    record = _record_with_tool_call(
+        tool_name="Read",
+        tool_input={"file_path": "/repo/big.txt"},
+        tool_result_content=cat_n,
+    )
+    event = await build_event(record, include_raw_content=True, max_content_size=50)
+    assert event is not None
+    assert event.accessed_files is not None
+    f = event.accessed_files[0]
+    assert f.redacted_content is not None
+    assert len(f.redacted_content) <= 50
+    assert "…" in f.redacted_content
+    # hash and byte_length reflect the full stripped content, not the truncated string
+    assert f.byte_length == len(raw.encode())

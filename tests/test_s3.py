@@ -182,27 +182,37 @@ async def test_resolve_s3_attachment_head_fails_no_keys_set(
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10 * 1024 * 1024)
+    await s3._resolve_s3_attachment(source, max_content_size=10 * 1024 * 1024)
     assert "_resolved_byte_length" not in source
     assert "_resolved_bytes" not in source
 
 
 @pytest.mark.asyncio
-async def test_resolve_s3_attachment_above_threshold_no_get(
+async def test_resolve_s3_attachment_above_threshold_range_gets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Files larger than max_content_size trigger two Range GETs (head + tail)."""
+    chunk = b"x" * 15  # each Range GET returns this
     cm, client = _make_mock_s3_client(
-        head_response={"ContentLength": 20, "ContentType": "application/pdf"}
+        head_response={"ContentLength": 200, "ContentType": "application/pdf"},
+        get_body=chunk,
     )
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10)  # 20 > 10
+    await s3._resolve_s3_attachment(source, max_content_size=20)  # 200 > 20
 
-    assert source["_resolved_byte_length"] == 20
+    assert source["_resolved_byte_length"] == 200
     assert source["_resolved_content_type"] == "application/pdf"
     assert "_resolved_bytes" not in source
-    client.get_object.assert_not_called()
+    assert source["_resolved_head_bytes"] == chunk
+    assert source["_resolved_tail_bytes"] == chunk
+    assert client.get_object.call_count == 2
+    # First call is a head Range, second is a tail Range
+    calls = client.get_object.call_args_list
+    assert "Range" in calls[0].kwargs
+    assert calls[0].kwargs["Range"].startswith("bytes=0-")
+    assert "Range" in calls[1].kwargs
 
 
 @pytest.mark.asyncio
@@ -217,7 +227,7 @@ async def test_resolve_s3_attachment_within_threshold_fetches_bytes(
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10 * 1024 * 1024)
+    await s3._resolve_s3_attachment(source, max_content_size=10 * 1024 * 1024)
 
     assert source["_resolved_byte_length"] == len(content)
     assert source["_resolved_content_type"] == "text/plain"
@@ -232,7 +242,7 @@ async def test_resolve_s3_attachment_empty_file_no_get(monkeypatch: pytest.Monke
     monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/empty"}}
-    await s3._resolve_s3_attachment(source, max_inline_bytes=10 * 1024 * 1024)
+    await s3._resolve_s3_attachment(source, max_content_size=10 * 1024 * 1024)
 
     assert source["_resolved_byte_length"] == 0
     assert source["_resolved_bytes"] == b""

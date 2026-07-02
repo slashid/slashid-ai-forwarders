@@ -128,7 +128,7 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
             build_event(
                 r,
                 include_raw_content=config.include_raw_content,
-                max_inline_bytes=config.file_attachment_max_inline_bytes,
+                max_content_size=config.max_content_size,
             )
             for r in records
         )

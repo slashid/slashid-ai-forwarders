@@ -12,41 +12,26 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .content_utils import strip_cat_n, truncate_middle
+
 log = logging.getLogger(__name__)
-
-_CAT_N_LINE = re.compile(r"^\s*\d+\t", re.MULTILINE)
-
-
-def _strip_cat_n(text: str) -> str | None:
-    """Strip Claude Code's `cat -n` line-number prefixes if every non-empty line has one.
-
-    Returns the stripped text, or None if the format doesn't match (so the
-    caller falls back to hashing the raw content).
-    """
-    lines = text.splitlines(keepends=True)
-    if not lines:
-        return text
-    if not all(_CAT_N_LINE.match(ln) for ln in lines if ln.strip()):
-        return None
-    return _CAT_N_LINE.sub("", text)
 
 
 class _ToolSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
     field_name: str
-    cleanup: Callable[[str], str | None] | None = None
+    cleanup: Callable[[str], str] | None = None
 
 
 # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
 _READ_TOOLS: dict[str, _ToolSpec] = {
-    "Read": _ToolSpec(field_name="file_path", cleanup=_strip_cat_n),  # Claude Code (cat-n output)
+    "Read": _ToolSpec(field_name="file_path", cleanup=strip_cat_n),  # Claude Code (cat-n output)
     "ReadFile": _ToolSpec(field_name="path"),  # OpenCode, Amazon Q Developer, Gemini CLI
     "read_file": _ToolSpec(field_name="path"),  # snake_case variants
     "view_file": _ToolSpec(field_name="path"),  # some agents
@@ -276,7 +261,9 @@ def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
     return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
 
 
-def _build_content(body: Any, *, include_text: bool) -> AIInvocationContent | None:
+def _build_content(
+    body: Any, *, include_text: bool, max_content_size: int
+) -> AIInvocationContent | None:
     """Hash + size + (optionally) raw text for an inputBodyJson / outputBodyJson.
 
     The body is serialised canonically so the hash is stable across runs
@@ -287,11 +274,14 @@ def _build_content(body: Any, *, include_text: bool) -> AIInvocationContent | No
     if not isinstance(body, dict | list) or not body:
         return None
     serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    redacted_text: str | None = None
+    if include_text:
+        redacted_text = truncate_middle(serialized.decode(), max_content_size)
     return AIInvocationContent(
         content_hash=f"sha256:{hashlib.sha256(serialized).hexdigest()}",
         mime_type="application/json",
         byte_length=len(serialized),
-        redacted_text=serialized.decode() if include_text else None,
+        redacted_text=redacted_text,
     )
 
 
@@ -403,7 +393,7 @@ async def _accessed_files(
     record: dict[str, Any],
     *,
     include_raw_content: bool,
-    max_inline_bytes: int,
+    max_content_size: int,
 ) -> list[AIAccessedFile]:
     """Extract document and image attachments from Converse-shape input messages.
 
@@ -417,7 +407,7 @@ async def _accessed_files(
     earlier turns were already reported in prior invocations.
 
     S3-sourced attachments are resolved inline via HeadObject + optional
-    GetObject (gated by max_inline_bytes). Files are deduplicated by
+    GetObject (gated by max_fetch_bytes). Files are deduplicated by
     (name, content_hash).
     """
     import asyncio
@@ -472,25 +462,37 @@ async def _accessed_files(
         media_type: str | None,
         raw_bytes: bytes | None,
         length: int | None = None,
+        partial_head: bytes | None = None,
+        partial_tail: bytes | None = None,
     ) -> None:
-        content_hash = (
-            f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}" if raw_bytes is not None else None
-        )
+        # Full bytes → stable hash. Partial fetch → no hash (bytes are incomplete).
+        if raw_bytes is not None:
+            content_hash: str | None = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"
+        else:
+            content_hash = None
         key = (name, content_hash)
         if key in seen:
             return
         seen.add(key)
+        if include_raw_content:
+            if raw_bytes is not None:
+                redacted = truncate_middle(raw_bytes.decode(errors="replace"), max_content_size)
+            elif partial_head is not None and partial_tail is not None:
+                head_str = partial_head.decode(errors="replace")
+                tail_str = partial_tail.decode(errors="replace")
+                combined = head_str + "…" + tail_str
+                redacted = truncate_middle(combined, max_content_size)
+            else:
+                redacted = None
+        else:
+            redacted = None
         files.append(
             AIAccessedFile(
                 name=name,
                 content_hash=content_hash,
                 media_type=media_type,
                 byte_length=len(raw_bytes) if raw_bytes is not None else length,
-                redacted_content=(
-                    raw_bytes.decode(errors="replace")
-                    if include_raw_content and raw_bytes is not None
-                    else None
-                ),
+                redacted_content=redacted,
             )
         )
 
@@ -519,7 +521,7 @@ async def _accessed_files(
 
         async def _guarded(src: dict[str, Any]) -> None:
             async with sem:
-                await _resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes)
+                await _resolve_s3_attachment(src, max_content_size=max_content_size)
 
         await asyncio.gather(*(_guarded(src) for src in s3_sources))
 
@@ -569,6 +571,8 @@ async def _accessed_files(
                             media_type=media_type,
                             raw_bytes=source.get("_resolved_bytes"),
                             length=source.get("_resolved_byte_length"),
+                            partial_head=source.get("_resolved_head_bytes"),
+                            partial_tail=source.get("_resolved_tail_bytes"),
                         )
 
             elif "image" in block:
@@ -601,6 +605,8 @@ async def _accessed_files(
                             media_type=media_type,
                             raw_bytes=source.get("_resolved_bytes"),
                             length=source.get("_resolved_byte_length"),
+                            partial_head=source.get("_resolved_head_bytes"),
+                            partial_tail=source.get("_resolved_tail_bytes"),
                         )
 
     # --- tool-result files ---------------------------------------------------
@@ -659,7 +665,7 @@ async def _accessed_files(
                 continue
 
             def _apply_cleanup(text: str, _spec: _ToolSpec = spec) -> str:
-                return (_spec.cleanup(text) or text) if _spec.cleanup else text
+                return _spec.cleanup(text) if _spec.cleanup else text
 
             # Hash the returned content when available.
             content_bytes: bytes | None = None
@@ -708,7 +714,7 @@ async def build_event(
     *,
     include_raw_content: bool = False,
     model_region: str | None = None,
-    max_inline_bytes: int = 10 * 1024 * 1024,
+    max_content_size: int = 100_000,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -771,10 +777,20 @@ async def build_event(
         available_tools=tools or None,
         used_tool_ids=used or None,
         stop_reason=_stop_reason(record),
-        input=_build_content(inp.get("inputBodyJson"), include_text=include_raw_content),
-        output=_build_content(out.get("outputBodyJson"), include_text=include_raw_content),
+        input=_build_content(
+            inp.get("inputBodyJson"),
+            include_text=include_raw_content,
+            max_content_size=max_content_size,
+        ),
+        output=_build_content(
+            out.get("outputBodyJson"),
+            include_text=include_raw_content,
+            max_content_size=max_content_size,
+        ),
         accessed_files=await _accessed_files(
-            record, include_raw_content=include_raw_content, max_inline_bytes=max_inline_bytes
+            record,
+            include_raw_content=include_raw_content,
+            max_content_size=max_content_size,
         )
         or None,
     )
