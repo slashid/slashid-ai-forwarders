@@ -24,6 +24,23 @@ log = logging.getLogger(__name__)
 _CAT_N_LINE = re.compile(r"^\s*\d+\t", re.MULTILINE)
 
 
+def _truncate_middle(text: str, max_chars: int) -> str:
+    """Truncate `text` to at most `max_chars` unicode characters using middle elision.
+
+    Splits on character (unicode scalar) boundaries — never mid-codepoint.
+    Python str indexing always operates on codepoints, so slicing is safe.
+    The ellipsis character (U+2026) occupies one slot, so each half gets
+    (max_chars - 1) // 2 characters.
+    """
+    if len(text) <= max_chars:
+        return text
+    # head gets the larger half when max_chars-1 is odd.
+    tail_len = (max_chars - 1) // 2
+    head_len = max_chars - 1 - tail_len
+    return text[:head_len] + "…" + text[len(text) - tail_len :]
+
+
+
 def _strip_cat_n(text: str) -> str | None:
     """Strip Claude Code's `cat -n` line-number prefixes if every non-empty line has one.
 
@@ -276,7 +293,9 @@ def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
     return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
 
 
-def _build_content(body: Any, *, include_text: bool) -> AIInvocationContent | None:
+def _build_content(
+    body: Any, *, include_text: bool, max_content_size: int
+) -> AIInvocationContent | None:
     """Hash + size + (optionally) raw text for an inputBodyJson / outputBodyJson.
 
     The body is serialised canonically so the hash is stable across runs
@@ -287,11 +306,14 @@ def _build_content(body: Any, *, include_text: bool) -> AIInvocationContent | No
     if not isinstance(body, dict | list) or not body:
         return None
     serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    redacted_text: str | None = None
+    if include_text:
+        redacted_text = _truncate_middle(serialized.decode(), max_content_size)
     return AIInvocationContent(
         content_hash=f"sha256:{hashlib.sha256(serialized).hexdigest()}",
         mime_type="application/json",
         byte_length=len(serialized),
-        redacted_text=serialized.decode() if include_text else None,
+        redacted_text=redacted_text,
     )
 
 
@@ -404,6 +426,7 @@ async def _accessed_files(
     *,
     include_raw_content: bool,
     max_inline_bytes: int,
+    max_content_size: int,
 ) -> list[AIAccessedFile]:
     """Extract document and image attachments from Converse-shape input messages.
 
@@ -487,7 +510,7 @@ async def _accessed_files(
                 media_type=media_type,
                 byte_length=len(raw_bytes) if raw_bytes is not None else length,
                 redacted_content=(
-                    raw_bytes.decode(errors="replace")
+                    _truncate_middle(raw_bytes.decode(errors="replace"), max_content_size)
                     if include_raw_content and raw_bytes is not None
                     else None
                 ),
@@ -709,6 +732,7 @@ async def build_event(
     include_raw_content: bool = False,
     model_region: str | None = None,
     max_inline_bytes: int = 10 * 1024 * 1024,
+    max_content_size: int = 100_000,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -771,10 +795,21 @@ async def build_event(
         available_tools=tools or None,
         used_tool_ids=used or None,
         stop_reason=_stop_reason(record),
-        input=_build_content(inp.get("inputBodyJson"), include_text=include_raw_content),
-        output=_build_content(out.get("outputBodyJson"), include_text=include_raw_content),
+        input=_build_content(
+            inp.get("inputBodyJson"),
+            include_text=include_raw_content,
+            max_content_size=max_content_size,
+        ),
+        output=_build_content(
+            out.get("outputBodyJson"),
+            include_text=include_raw_content,
+            max_content_size=max_content_size,
+        ),
         accessed_files=await _accessed_files(
-            record, include_raw_content=include_raw_content, max_inline_bytes=max_inline_bytes
+            record,
+            include_raw_content=include_raw_content,
+            max_inline_bytes=max_inline_bytes,
+            max_content_size=max_content_size,
         )
         or None,
     )

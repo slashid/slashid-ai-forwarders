@@ -11,6 +11,7 @@ import pytest
 
 from slashid_bedrock_forwarder.events import (
     AIInvocationObservedV1,
+    _truncate_middle,
     build_event,
     parse_tool_name,
 )
@@ -942,3 +943,79 @@ async def test_build_event_wire_form() -> None:
         "cache_write": 0,
         "reasoning": 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# _truncate_middle
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "max_chars", "expected"),
+    [
+        # No truncation needed
+        ("hello", 10, "hello"),
+        ("hello", 5, "hello"),
+        # Exact boundary: odd max_chars
+        ("abcde", 3, "a…e"),
+        # Even max_chars
+        ("abcdef", 4, "ab…f"),
+        # Long string
+        ("a" * 200, 11, "aaaaa…aaaaa"),
+        # Unicode: multi-byte codepoints are never split
+        ("αβγδεζηθ", 5, "αβ…ηθ"),
+        # Emoji (each is one codepoint in Python str)
+        ("😀😁😂😃😄", 3, "😀…😄"),
+    ],
+)
+def test_truncate_middle(text: str, max_chars: int, expected: str) -> None:
+    result = _truncate_middle(text, max_chars)
+    assert result == expected
+    assert len(result) <= max_chars
+
+
+def test_truncate_middle_result_is_valid_str() -> None:
+    """Result encodes cleanly to UTF-8 — no surrogate halves."""
+    text = "αβγδ" * 1000
+    result = _truncate_middle(text, 101)
+    result.encode("utf-8")  # must not raise
+    assert "…" in result
+    assert len(result) == 101
+
+
+@pytest.mark.asyncio
+async def test_build_event_truncates_redacted_text() -> None:
+    """redacted_text is capped to max_content_size characters."""
+    record = _mil_record(
+        input={
+            "inputTokenCount": 10,
+            "inputBodyJson": {"messages": [{"role": "user", "content": "x" * 200}]},
+        }
+    )
+    event = await build_event(record, include_raw_content=True, max_content_size=20)
+    assert event is not None
+    assert event.input is not None
+    assert event.input.redacted_text is not None
+    assert len(event.input.redacted_text) <= 20
+    assert "…" in event.input.redacted_text
+
+
+@pytest.mark.asyncio
+async def test_build_event_truncates_file_redacted_content() -> None:
+    """redacted_content on accessed files is capped to max_content_size."""
+    raw = "line1\nline2\nline3\n" * 50  # 900 chars, 150 lines
+    cat_n = "".join(f"     {i + 1}\t{line}\n" for i, line in enumerate(raw.splitlines()))
+    record = _record_with_tool_call(
+        tool_name="Read",
+        tool_input={"file_path": "/repo/big.txt"},
+        tool_result_content=cat_n,
+    )
+    event = await build_event(record, include_raw_content=True, max_content_size=50)
+    assert event is not None
+    assert event.accessed_files is not None
+    f = event.accessed_files[0]
+    assert f.redacted_content is not None
+    assert len(f.redacted_content) <= 50
+    assert "…" in f.redacted_content
+    # hash and byte_length reflect the full stripped content, not the truncated string
+    assert f.byte_length == len(raw.encode())
