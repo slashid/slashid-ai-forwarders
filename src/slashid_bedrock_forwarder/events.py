@@ -152,6 +152,16 @@ class AIInvocationContent(_WireModel):
     byte_length: int | None = None
 
 
+class AIAccessedFile(_WireModel):
+    """spec/openapi.yaml — AIAccessedFile."""
+
+    name: str | None = None
+    content_hash: str | None = None
+    media_type: str | None = None
+    byte_length: int | None = None
+    redacted_content: str | None = None
+
+
 class AIInvocationObservedV1(_WireModel):
     """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations.
 
@@ -173,6 +183,7 @@ class AIInvocationObservedV1(_WireModel):
     conversation_id: str | None = None
     input: AIInvocationContent | None = None
     output: AIInvocationContent | None = None
+    accessed_files: list[AIAccessedFile] | None = None
 
 
 # --- record parsing ---------------------------------------------------------
@@ -294,6 +305,8 @@ def _available_tools(
 ) -> tuple[list[AIToolServer], list[AITool], dict[str, str]]:
     """Return (tool_servers, tools, raw_name_to_tool_id) from the record's toolConfig."""
     body = (record.get("input") or {}).get("inputBodyJson") or {}
+    if not isinstance(body, dict):
+        return [], [], {}
     tool_config = body.get("toolConfig") or {}
     raw_tools = tool_config.get("tools") or []
 
@@ -346,6 +359,163 @@ def _available_tools(
     return list(servers_by_id.values()), tools, raw_to_id
 
 
+async def _accessed_files(
+    record: dict[str, Any],
+    *,
+    include_raw_content: bool,
+    max_inline_bytes: int,
+) -> list[AIAccessedFile]:
+    """Extract document and image attachments from Converse-shape input messages.
+
+    Converse document block:
+      messages[].content[]{document:{name, format, source:{bytes:<base64>}}}
+    Converse image block:
+      messages[].content[]{image:{format, source:{bytes:<base64>}}}
+      (images carry no name)
+
+    Only considers messages after the last assistant message — files in
+    earlier turns were already reported in prior invocations.
+
+    S3-sourced attachments are resolved inline via HeadObject + optional
+    GetObject (gated by max_inline_bytes). Files are deduplicated by
+    (name, content_hash).
+    """
+    import asyncio
+    import base64 as _b64
+
+    from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
+
+    body = (record.get("input") or {}).get("inputBodyJson")
+    if not isinstance(body, dict):
+        return []
+    files: list[AIAccessedFile] = []
+    seen: set[tuple[str | None, str | None]] = set()
+
+    def _decode_b64(val: Any) -> bytes | None:
+        if not val:
+            return None
+        try:
+            return _b64.b64decode(val)
+        except Exception:
+            return None
+
+    def _add(
+        name: str | None,
+        media_type: str | None,
+        raw_bytes: bytes | None,
+        length: int | None = None,
+    ) -> None:
+        content_hash = (
+            f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}" if raw_bytes is not None else None
+        )
+        key = (name, content_hash)
+        if key in seen:
+            return
+        seen.add(key)
+        files.append(
+            AIAccessedFile(
+                name=name,
+                content_hash=content_hash,
+                media_type=media_type,
+                byte_length=len(raw_bytes) if raw_bytes is not None else length,
+                redacted_content=(
+                    raw_bytes.decode(errors="replace")
+                    if include_raw_content and raw_bytes is not None
+                    else None
+                ),
+            )
+        )
+
+    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
+    last_assistant = max(
+        (i for i, m in enumerate(messages) if m.get("role") == "assistant"),
+        default=-1,
+    )
+
+    # Collect all S3 source blocks from the current turn so we can resolve
+    # them concurrently before building the file list.
+    s3_sources: list[dict[str, Any]] = []
+    for msg in messages[last_assistant + 1 :]:
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            for key in ("document", "image"):
+                item = block.get(key)
+                if isinstance(item, dict):
+                    src = item.get("source") or {}
+                    if "s3Location" in src:
+                        s3_sources.append(src)
+
+    if s3_sources:
+        sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+
+        async def _guarded(src: dict[str, Any]) -> None:
+            async with sem:
+                await _resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes)
+
+        await asyncio.gather(*(_guarded(src) for src in s3_sources))
+
+    for msg in messages[last_assistant + 1 :]:
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+
+            if "document" in block:
+                doc = block["document"] or {}
+                fmt = doc.get("format") or None
+                source = doc.get("source") or {}
+                if "bytes" in source:
+                    raw_bytes = _decode_b64(source["bytes"])
+                    _add(
+                        name=doc.get("name") or None,
+                        media_type=f"application/{fmt}" if fmt else None,
+                        raw_bytes=raw_bytes,
+                    )
+                else:
+                    uri = (source.get("s3Location") or {}).get("uri") or None
+                    if "_resolved_byte_length" not in source:
+                        # HEAD failed (permissions, object missing, etc.) — emit
+                        # a stub so callers know the file was referenced.
+                        _add(name=doc.get("name") or uri, media_type=None, raw_bytes=None)
+                    else:
+                        # Use Converse format first; fall back to ContentType from HeadObject.
+                        media_type = (
+                            f"application/{fmt}"
+                            if fmt
+                            else source.get("_resolved_content_type") or None
+                        )
+                        _add(
+                            name=doc.get("name") or uri,
+                            media_type=media_type,
+                            raw_bytes=source.get("_resolved_bytes"),
+                            length=source.get("_resolved_byte_length"),
+                        )
+
+            elif "image" in block:
+                img = block["image"] or {}
+                fmt = img.get("format") or None
+                source = img.get("source") or {}
+                if "bytes" in source:
+                    raw_bytes = _decode_b64(source["bytes"])
+                    _add(name=None, media_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
+                else:
+                    uri = (source.get("s3Location") or {}).get("uri") or None
+                    if "_resolved_byte_length" not in source:
+                        _add(name=uri, media_type=None, raw_bytes=None)
+                    else:
+                        media_type = (
+                            f"image/{fmt}" if fmt else source.get("_resolved_content_type") or None
+                        )
+                        _add(
+                            name=uri,
+                            media_type=media_type,
+                            raw_bytes=source.get("_resolved_bytes"),
+                            length=source.get("_resolved_byte_length"),
+                        )
+
+    return files
+
+
 def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[str]:
     """Extract tool IDs from the assistant response's `toolUse` blocks."""
     obody = (record.get("output") or {}).get("outputBodyJson")
@@ -368,11 +538,12 @@ def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> li
     return ids
 
 
-def build_event(
+async def build_event(
     record: dict[str, Any],
     *,
     include_raw_content: bool = False,
     model_region: str | None = None,
+    max_inline_bytes: int = 10 * 1024 * 1024,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -437,4 +608,8 @@ def build_event(
         stop_reason=_stop_reason(record),
         input=_build_content(inp.get("inputBodyJson"), include_text=include_raw_content),
         output=_build_content(out.get("outputBodyJson"), include_text=include_raw_content),
+        accessed_files=await _accessed_files(
+            record, include_raw_content=include_raw_content, max_inline_bytes=max_inline_bytes
+        )
+        or None,
     )
