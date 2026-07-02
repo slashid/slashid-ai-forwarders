@@ -385,13 +385,21 @@ async def _accessed_files(
     """
     import asyncio
     import base64 as _b64
+    import mimetypes
 
     from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
 
-    # Bedrock Converse document format enum → IANA media types.
-    # Canonical list: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
-    # Image formats (png/jpeg/gif/webp) produce correct "image/{fmt}" as-is and need no mapping.
+    def _mime_from_name(name: str | None) -> str | None:
+        if not name:
+            return None
+        mt, _ = mimetypes.guess_type(name)
+        return mt or None
+
+    # Bedrock Converse format enum → IANA media types.
+    # Document canonical list: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
+    # Image canonical list:    https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageBlock.html
     _DOC_MIME: dict[str, str] = {
+        # document formats
         "pdf": "application/pdf",
         "csv": "text/csv",
         "txt": "text/plain",
@@ -401,6 +409,11 @@ async def _accessed_files(
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xls": "application/vnd.ms-excel",
         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        # image formats
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
     }
 
     body = (record.get("input") or {}).get("inputBodyJson")
@@ -482,28 +495,38 @@ async def _accessed_files(
                 doc = block["document"] or {}
                 fmt = doc.get("format") or None
                 source = doc.get("source") or {}
+                name = doc.get("name") or None
                 if "bytes" in source:
                     raw_bytes = _decode_b64(source["bytes"])
                     _add(
-                        name=doc.get("name") or None,
-                        media_type=_DOC_MIME.get(fmt, f"application/{fmt}") if fmt else None,
+                        name=name,
+                        media_type=(
+                            _DOC_MIME.get(fmt, f"application/{fmt}")
+                            if fmt
+                            else _mime_from_name(name)
+                        ),
                         raw_bytes=raw_bytes,
                     )
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
+                    file_name = name or uri
                     if "_resolved_byte_length" not in source:
                         # HEAD failed (permissions, object missing, etc.) — emit
                         # a stub so callers know the file was referenced.
-                        _add(name=doc.get("name") or uri, media_type=None, raw_bytes=None)
+                        _add(
+                            name=file_name,
+                            media_type=_mime_from_name(file_name),
+                            raw_bytes=None,
+                        )
                     else:
-                        # Use Converse format first; fall back to ContentType from HeadObject.
+                        # fmt → map → HeadObject ContentType → filename guess
                         media_type = (
                             _DOC_MIME.get(fmt, f"application/{fmt}")
                             if fmt
-                            else source.get("_resolved_content_type") or None
+                            else source.get("_resolved_content_type") or _mime_from_name(file_name)
                         )
                         _add(
-                            name=doc.get("name") or uri,
+                            name=file_name,
                             media_type=media_type,
                             raw_bytes=source.get("_resolved_bytes"),
                             length=source.get("_resolved_byte_length"),
@@ -515,14 +538,24 @@ async def _accessed_files(
                 source = img.get("source") or {}
                 if "bytes" in source:
                     raw_bytes = _decode_b64(source["bytes"])
-                    _add(name=None, media_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
+                    _add(
+                        name=None,
+                        media_type=_DOC_MIME.get(fmt, f"image/{fmt}") if fmt else None,
+                        raw_bytes=raw_bytes,
+                    )
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
                     if "_resolved_byte_length" not in source:
-                        _add(name=uri, media_type=None, raw_bytes=None)
+                        _add(
+                            name=uri,
+                            media_type=_mime_from_name(uri),
+                            raw_bytes=None,
+                        )
                     else:
                         media_type = (
-                            f"image/{fmt}" if fmt else source.get("_resolved_content_type") or None
+                            _DOC_MIME.get(fmt, f"image/{fmt}")
+                            if fmt
+                            else source.get("_resolved_content_type") or _mime_from_name(uri)
                         )
                         _add(
                             name=uri,
