@@ -446,15 +446,7 @@ async def _accessed_files(
                 item = block.get(key)
                 if isinstance(item, dict):
                     src = item.get("source") or {}
-                    log.info(
-                        "attachment: type=%s fmt=%s name=%s source_keys=%s s3=%s",
-                        key,
-                        item.get("format"),
-                        item.get("name"),
-                        list(src.keys()),
-                        (src.get("s3Location") or {}).get("uri"),
-                    )
-                    if "s3Location" in src:
+                    if "s3Location" in src or "s3Uri" in src:
                         s3_sources.append(src)
 
     if s3_sources:
@@ -483,7 +475,7 @@ async def _accessed_files(
                         raw_bytes=raw_bytes,
                     )
                 else:
-                    uri = (source.get("s3Location") or {}).get("uri") or None
+                    uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
                     if "_resolved_byte_length" not in source:
                         # HEAD failed (permissions, object missing, etc.) — emit
                         # a stub so callers know the file was referenced.
@@ -510,7 +502,7 @@ async def _accessed_files(
                     raw_bytes = _decode_b64(source["bytes"])
                     _add(name=None, media_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
                 else:
-                    uri = (source.get("s3Location") or {}).get("uri") or None
+                    uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
                     if "_resolved_byte_length" not in source:
                         _add(name=uri, media_type=None, raw_bytes=None)
                     else:

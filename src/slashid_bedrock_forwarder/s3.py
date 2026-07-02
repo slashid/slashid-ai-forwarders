@@ -135,8 +135,10 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: in
     """
     from botocore.exceptions import ClientError
 
+    # Converse shape: source.s3Location.uri  — Bedrock Playground: source.s3Uri
     s3_loc = source.get("s3Location") or {}
-    parsed = _parse_s3_uri(s3_loc.get("uri") or "")
+    uri = s3_loc.get("uri") or source.get("s3Uri") or ""
+    parsed = _parse_s3_uri(uri)
     if parsed is None:
         return
     bucket, key = parsed

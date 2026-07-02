@@ -436,6 +436,41 @@ async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.Mon
     assert img.content_hash is None
 
 
+async def test_accessed_files_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bedrock Playground sends source.s3Uri instead of source.s3Location.uri."""
+    from slashid_bedrock_forwarder import s3 as s3_mod
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        source["_resolved_byte_length"] = 50000
+        source["_resolved_content_type"] = "image/png"
+
+    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "image": {
+                            "format": "png",
+                            "source": {"s3Uri": "s3://my-bucket/photo.png"},
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert len(event.accessed_files) == 1
+    f = event.accessed_files[0]
+    assert f.name == "s3://my-bucket/photo.png"
+    assert f.media_type == "image/png"
+    assert f.byte_length == 50000
+
+
 async def test_accessed_files_s3_content_type_used_as_media_type_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
