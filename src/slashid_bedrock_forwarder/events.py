@@ -388,13 +388,12 @@ async def _accessed_files(
 
     from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
 
-    # Bedrock Converse document formats → IANA media types.
-    # Formats not listed fall back to "application/{fmt}" for documents
-    # and "image/{fmt}" for images (most image formats are correct as-is).
+    # Bedrock Converse document format enum → IANA media types.
+    # Canonical list: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
+    # Image formats (png/jpeg/gif/webp) produce correct "image/{fmt}" as-is and need no mapping.
     _DOC_MIME: dict[str, str] = {
         "pdf": "application/pdf",
         "csv": "text/csv",
-        "tsv": "text/tab-separated-values",
         "txt": "text/plain",
         "md": "text/markdown",
         "html": "text/html",
