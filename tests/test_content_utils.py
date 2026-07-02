@@ -58,25 +58,13 @@ def test_truncate_middle(text: str, max_chars: int, expected: str) -> None:
         ("     1\tfoo\n     2\tbar", "foo\nbar"),
         # Empty string
         ("", ""),
+        # Mixed: first line missing prefix — return unchanged
+        ("foo\n     2\tbar\n", "foo\n     2\tbar\n"),
+        # Plain text with no prefixes — return unchanged
+        ("just plain text\nno prefixes\n", "just plain text\nno prefixes\n"),
+        # Partial: only first line has prefix — return unchanged
+        ("     1\twith prefix\nwithout prefix\n", "     1\twith prefix\nwithout prefix\n"),
     ],
 )
 def test_strip_cat_n(raw: str, expected: str) -> None:
-    result = strip_cat_n(raw)
-    assert result == expected
-
-
-def test_strip_cat_n_no_prefix_returns_input() -> None:
-    """Mixed content (some lines without prefix) returns input unchanged."""
-    text = "foo\n     2\tbar\n"
-    assert strip_cat_n(text) == text
-
-
-def test_strip_cat_n_plain_text_returns_input() -> None:
-    text = "just plain text\nno prefixes\n"
-    assert strip_cat_n(text) == text
-
-
-def test_strip_cat_n_partial_prefix_returns_input() -> None:
-    """Only some lines have the prefix — return input unchanged."""
-    text = "     1\twith prefix\nwithout prefix\n"
-    assert strip_cat_n(text) == text
+    assert strip_cat_n(raw) == expected
