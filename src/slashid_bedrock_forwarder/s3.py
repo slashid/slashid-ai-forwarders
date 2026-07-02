@@ -37,6 +37,10 @@ log = logging.getLogger(__name__)
 # Cap concurrent S3 calls within one Lambda invocation.
 MAX_PARALLEL_FETCHES = 8
 
+# Extra bytes fetched beyond each half of max_content_size so _truncate_middle
+# has room to snap to a word boundary. Must match events._SNAP_TOLERANCE.
+_SNAP_TOLERANCE = 10
+
 
 @cache
 def _get_session() -> aioboto3.Session:
@@ -123,13 +127,19 @@ async def fetch_offloaded_body(
     return None  # unreachable but ty wants the explicit return
 
 
-async def _resolve_s3_attachment(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
+async def _resolve_s3_attachment(source: dict[str, Any], *, max_content_size: int) -> None:
     """HEAD + optional GET a Converse s3Location source block.
 
     Stashes on the source dict:
       `_resolved_byte_length`   — ContentLength from HeadObject
       `_resolved_content_type`  — ContentType from HeadObject (media_type fallback)
-      `_resolved_bytes`         — raw body when size == 0 or size <= max_fetch_bytes
+      `_resolved_bytes`         — full body when size == 0 or size <= max_content_size bytes
+      `_resolved_head_bytes`    — first chunk when file exceeds max_content_size (no hash)
+      `_resolved_tail_bytes`    — last chunk when file exceeds max_content_size (no hash)
+
+    When the file is larger than max_content_size, two Range GETs fetch
+    enough bytes for _truncate_middle to produce a well-formed snippet.
+    No content_hash is set for partial fetches since the bytes are incomplete.
 
     All keys are read by `_accessed_files` in events.py.
     """
@@ -155,10 +165,25 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_fetch_bytes: int
 
         if size == 0:
             source["_resolved_bytes"] = b""
-        elif size <= max_fetch_bytes:
+        elif size <= max_content_size:
             try:
                 resp = await s3.get_object(Bucket=bucket, Key=key)
                 source["_resolved_bytes"] = await resp["Body"].read()
+            except ClientError:
+                pass
+        else:
+            # Fetch head and tail chunks — enough for _truncate_middle with snap tolerance.
+            chunk = max_content_size // 2 + _SNAP_TOLERANCE
+            try:
+                head_resp = await s3.get_object(
+                    Bucket=bucket, Key=key, Range=f"bytes=0-{chunk - 1}"
+                )
+                source["_resolved_head_bytes"] = await head_resp["Body"].read()
+                tail_start = max(size - chunk, 0)
+                tail_resp = await s3.get_object(
+                    Bucket=bucket, Key=key, Range=f"bytes={tail_start}-{size - 1}"
+                )
+                source["_resolved_tail_bytes"] = await tail_resp["Body"].read()
             except ClientError:
                 pass
 

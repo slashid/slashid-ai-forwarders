@@ -396,7 +396,7 @@ async def test_accessed_files_image_inline() -> None:
 async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # no AWS calls — leave source without _resolved_* keys
 
     monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
@@ -443,7 +443,7 @@ async def test_accessed_files_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> No
     """Bedrock Playground sends source.s3Uri instead of source.s3Location.uri."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 50000
         source["_resolved_content_type"] = "image/png"
 
@@ -480,7 +480,7 @@ async def test_accessed_files_s3_content_type_used_as_media_type_fallback(
     """When Converse format is absent, ContentType from HeadObject is used as media_type."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 100
         source["_resolved_content_type"] = "image/webp"
 
@@ -548,7 +548,7 @@ async def test_accessed_files_media_type_from_filename_fallback(
     """When format is absent and HeadObject returns no ContentType, guess from URI extension."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 200
         # deliberately no _resolved_content_type
 
@@ -585,7 +585,7 @@ async def test_accessed_files_stub_has_media_type_from_filename(
     """HEAD-failed stub still gets media_type from the filename."""
     from slashid_bedrock_forwarder import s3 as s3_mod
 
-    async def fake_resolve(source: dict[str, Any], *, max_fetch_bytes: int) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # HEAD failed — no _resolved_* keys
 
     monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)

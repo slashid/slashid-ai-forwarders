@@ -459,7 +459,6 @@ async def _accessed_files(
     record: dict[str, Any],
     *,
     include_raw_content: bool,
-    max_fetch_bytes: int,
     max_content_size: int,
 ) -> list[AIAccessedFile]:
     """Extract document and image attachments from Converse-shape input messages.
@@ -529,25 +528,35 @@ async def _accessed_files(
         media_type: str | None,
         raw_bytes: bytes | None,
         length: int | None = None,
+        partial_head: bytes | None = None,
+        partial_tail: bytes | None = None,
     ) -> None:
-        content_hash = (
-            f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}" if raw_bytes is not None else None
-        )
+        # Full bytes → stable hash. Partial fetch → no hash (bytes are incomplete).
+        if raw_bytes is not None:
+            content_hash: str | None = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"
+        else:
+            content_hash = None
         key = (name, content_hash)
         if key in seen:
             return
         seen.add(key)
+        if include_raw_content:
+            if raw_bytes is not None:
+                redacted = _truncate_middle(raw_bytes.decode(errors="replace"), max_content_size)
+            elif partial_head is not None and partial_tail is not None:
+                combined = (partial_head + partial_tail).decode(errors="replace")
+                redacted = _truncate_middle(combined, max_content_size)
+            else:
+                redacted = None
+        else:
+            redacted = None
         files.append(
             AIAccessedFile(
                 name=name,
                 content_hash=content_hash,
                 media_type=media_type,
                 byte_length=len(raw_bytes) if raw_bytes is not None else length,
-                redacted_content=(
-                    _truncate_middle(raw_bytes.decode(errors="replace"), max_content_size)
-                    if include_raw_content and raw_bytes is not None
-                    else None
-                ),
+                redacted_content=redacted,
             )
         )
 
@@ -576,7 +585,7 @@ async def _accessed_files(
 
         async def _guarded(src: dict[str, Any]) -> None:
             async with sem:
-                await _resolve_s3_attachment(src, max_fetch_bytes=max_fetch_bytes)
+                await _resolve_s3_attachment(src, max_content_size=max_content_size)
 
         await asyncio.gather(*(_guarded(src) for src in s3_sources))
 
@@ -626,6 +635,8 @@ async def _accessed_files(
                             media_type=media_type,
                             raw_bytes=source.get("_resolved_bytes"),
                             length=source.get("_resolved_byte_length"),
+                            partial_head=source.get("_resolved_head_bytes"),
+                            partial_tail=source.get("_resolved_tail_bytes"),
                         )
 
             elif "image" in block:
@@ -658,6 +669,8 @@ async def _accessed_files(
                             media_type=media_type,
                             raw_bytes=source.get("_resolved_bytes"),
                             length=source.get("_resolved_byte_length"),
+                            partial_head=source.get("_resolved_head_bytes"),
+                            partial_tail=source.get("_resolved_tail_bytes"),
                         )
 
     # --- tool-result files ---------------------------------------------------
@@ -765,7 +778,6 @@ async def build_event(
     *,
     include_raw_content: bool = False,
     model_region: str | None = None,
-    max_fetch_bytes: int = 10 * 1024 * 1024,
     max_content_size: int = 100_000,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
@@ -842,7 +854,6 @@ async def build_event(
         accessed_files=await _accessed_files(
             record,
             include_raw_content=include_raw_content,
-            max_fetch_bytes=max_fetch_bytes,
             max_content_size=max_content_size,
         )
         or None,
