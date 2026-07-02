@@ -436,14 +436,61 @@ async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.Mon
     assert img.content_hash is None
 
 
-async def test_accessed_files_deduplicates_across_turns() -> None:
+async def test_accessed_files_s3_content_type_used_as_media_type_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When Converse format is absent, ContentType from HeadObject is used as media_type."""
+    from slashid_bedrock_forwarder import s3 as s3_mod
+
+    async def fake_resolve(source: dict[str, Any], *, max_inline_bytes: int) -> None:
+        source["_resolved_byte_length"] = 100
+        source["_resolved_content_type"] = "image/webp"
+
+    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+
+    record = _record_with_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "image": {
+                            # No format field
+                            "source": {"s3Location": {"uri": "s3://my-bucket/photo.webp"}},
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is not None
+    assert event.accessed_files[0].media_type == "image/webp"
+
+
+async def test_accessed_files_non_dict_input_body_returns_empty() -> None:
+    """Non-dict inputBodyJson (e.g. a list for non-Anthropic models) returns no files."""
+    record = _mil_record(
+        input={
+            "inputTokenCount": 10,
+            "inputBodyJson": [{"role": "user", "content": "text only"}],
+        },
+        output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "end_turn"}},
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.accessed_files is None
+
+
+async def test_accessed_files_deduplicates_within_same_window() -> None:
     content = b"same file"
     b64 = base64.b64encode(content).decode()
     block = {"document": {"name": "dup.txt", "format": "txt", "source": {"bytes": b64}}}
     record = _record_with_messages(
         [
             {"role": "user", "content": [block]},
-            {"role": "user", "content": [block]},  # same file in second turn
+            {"role": "user", "content": [block]},  # same file repeated in same window
         ]
     )
     event = await build_event(record)

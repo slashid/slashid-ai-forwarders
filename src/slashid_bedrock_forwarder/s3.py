@@ -126,9 +126,12 @@ async def fetch_offloaded_body(
 async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: int) -> None:
     """HEAD + optional GET a Converse s3Location source block.
 
-    Adds `_resolved_byte_length` from HeadObject. When the object is within
-    the inline threshold, also adds `_resolved_bytes` from GetObject.
-    Both keys are read by `_accessed_files` in events.py.
+    Stashes on the source dict:
+      `_resolved_byte_length`   — ContentLength from HeadObject
+      `_resolved_content_type`  — ContentType from HeadObject (media_type fallback)
+      `_resolved_bytes`         — raw body when size == 0 or size <= max_inline_bytes
+
+    All keys are read by `_accessed_files` in events.py.
     """
     from botocore.exceptions import ClientError
 
@@ -145,6 +148,8 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_inline_bytes: in
             return
         size = int(head["ContentLength"])
         source["_resolved_byte_length"] = size
+        if ct := head.get("ContentType"):
+            source["_resolved_content_type"] = ct
 
         if size == 0:
             source["_resolved_bytes"] = b""

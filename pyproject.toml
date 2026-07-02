@@ -16,9 +16,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # boto3/aioboto3 are provided by the AWS Lambda Python runtime — not
-    # packaged into the deploy zip. Only needed in the dev env so ty can
-    # resolve the S3 imports in `s3.py`.
+    # boto3 is provided by the AWS Lambda Python runtime — not packaged
+    # into the deploy zip. aioboto3 is NOT runtime-provided; it is listed
+    # as a runtime dep in [project] and IS packaged. Both are listed here
+    # so ty can resolve the S3 imports in `s3.py`.
     "boto3>=1.35",
     "aioboto3>=15.0",
     "pytest>=8.0",

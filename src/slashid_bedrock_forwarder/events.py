@@ -305,6 +305,8 @@ def _available_tools(
 ) -> tuple[list[AIToolServer], list[AITool], dict[str, str]]:
     """Return (tool_servers, tools, raw_name_to_tool_id) from the record's toolConfig."""
     body = (record.get("input") or {}).get("inputBodyJson") or {}
+    if not isinstance(body, dict):
+        return [], [], {}
     tool_config = body.get("toolConfig") or {}
     raw_tools = tool_config.get("tools") or []
 
@@ -381,9 +383,11 @@ async def _accessed_files(
     import asyncio
     import base64 as _b64
 
-    from .s3 import _resolve_s3_attachment
+    from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
 
-    body = (record.get("input") or {}).get("inputBodyJson") or {}
+    body = (record.get("input") or {}).get("inputBodyJson")
+    if not isinstance(body, dict):
+        return []
     files: list[AIAccessedFile] = []
     seen: set[tuple[str | None, str | None]] = set()
 
@@ -443,9 +447,13 @@ async def _accessed_files(
                         s3_sources.append(src)
 
     if s3_sources:
-        await asyncio.gather(
-            *(_resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes) for src in s3_sources)
-        )
+        sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+
+        async def _guarded(src: dict[str, Any]) -> None:
+            async with sem:
+                await _resolve_s3_attachment(src, max_inline_bytes=max_inline_bytes)
+
+        await asyncio.gather(*(_guarded(src) for src in s3_sources))
 
     for msg in messages[last_assistant + 1 :]:
         for block in msg.get("content") or []:
@@ -465,12 +473,23 @@ async def _accessed_files(
                     )
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or None
-                    _add(
-                        name=doc.get("name") or uri,
-                        media_type=f"application/{fmt}" if fmt else None,
-                        raw_bytes=source.get("_resolved_bytes"),
-                        length=source.get("_resolved_byte_length"),
-                    )
+                    if "_resolved_byte_length" not in source:
+                        # HEAD failed (permissions, object missing, etc.) — emit
+                        # a stub so callers know the file was referenced.
+                        _add(name=doc.get("name") or uri, media_type=None, raw_bytes=None)
+                    else:
+                        # Use Converse format first; fall back to ContentType from HeadObject.
+                        media_type = (
+                            f"application/{fmt}"
+                            if fmt
+                            else source.get("_resolved_content_type") or None
+                        )
+                        _add(
+                            name=doc.get("name") or uri,
+                            media_type=media_type,
+                            raw_bytes=source.get("_resolved_bytes"),
+                            length=source.get("_resolved_byte_length"),
+                        )
 
             elif "image" in block:
                 img = block["image"] or {}
@@ -481,12 +500,18 @@ async def _accessed_files(
                     _add(name=None, media_type=f"image/{fmt}" if fmt else None, raw_bytes=raw_bytes)
                 else:
                     uri = (source.get("s3Location") or {}).get("uri") or None
-                    _add(
-                        name=uri,
-                        media_type=f"image/{fmt}" if fmt else None,
-                        raw_bytes=source.get("_resolved_bytes"),
-                        length=source.get("_resolved_byte_length"),
-                    )
+                    if "_resolved_byte_length" not in source:
+                        _add(name=uri, media_type=None, raw_bytes=None)
+                    else:
+                        media_type = (
+                            f"image/{fmt}" if fmt else source.get("_resolved_content_type") or None
+                        )
+                        _add(
+                            name=uri,
+                            media_type=media_type,
+                            raw_bytes=source.get("_resolved_bytes"),
+                            length=source.get("_resolved_byte_length"),
+                        )
 
     return files
 
