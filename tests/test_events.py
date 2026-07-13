@@ -336,6 +336,41 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
     assert event.used_tools[0].trace_id == trace_id
 
 
+async def test_used_tools_extracts_trace_id_from_text_marker_on_error() -> None:
+    """On error paths clients drop structured content — trace_id survives as text marker.
+
+    mcp-gate-demo's error path stamps `[trace_id=<hex>]` at the end of the
+    text block precisely because Claude Code on Bedrock forwards the error
+    string only, discarding structuredContent.
+    """
+    trace_id = "f" * 32
+    err_text = f"McpError: Internal error: 403 Forbidden\n[trace_id={trace_id}]"
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_err", "name": "Bash", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu_err",
+                        "is_error": True,
+                        "content": err_text,
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].is_error is True
+    assert event.used_tools[0].trace_id == trace_id
+
+
 async def test_used_tools_missing_status_defaults_to_success() -> None:
     """Converse `status` is optional (only Claude 3 sets it) — absent = success."""
     record = _record_with_bash(

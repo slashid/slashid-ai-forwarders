@@ -720,11 +720,15 @@ async def _accessed_files(
 # $opentelemetry: the OTel context that MCP servers echo back on tool results
 # (see mcp-gate-demo CorrelationIdMiddleware). Wire shape:
 #   {"$opentelemetry": {"trace_id": "<32 hex>", "span_id": "<16 hex>"}}
-# Only lives in MCP `structuredContent`. Reaches Bedrock Converse either as a
-# native `{json: {...}}` block or, when the client stringifies structured
-# content, as a JSON-encoded `{text: "..."}` block. We handle both.
+# Primary carrier is MCP `structuredContent`. Success path preserves it —
+# reaches Bedrock Converse either as a native `{json: {...}}` block or, when
+# the client stringifies, a JSON-encoded `{text: "..."}` block.
+# Error path: some MCP clients (Claude Code on Bedrock) drop structured
+# content entirely and forward only the text message, so the middleware
+# also embeds `[trace_id=<32 hex>]` as a trailing text marker.
 _OTEL_KEY = "$opentelemetry"
 _TRACE_ID_HEX = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+_TRACE_ID_MARKER = re.compile(r"\[trace_id=([0-9a-f]{32})\]", re.IGNORECASE)
 
 
 def _trace_id_from_dict(d: Any) -> str | None:
@@ -740,21 +744,23 @@ def _trace_id_from_dict(d: Any) -> str | None:
     return None
 
 
-def _trace_id_from_json_text(text: str) -> str | None:
-    """Try to decode `text` as JSON and pull trace_id from the resulting dict.
-
-    Some MCP clients serialize `structuredContent` into a JSON string in a
-    text block instead of passing it through as a `{json: {...}}` block —
-    especially when bridging into Bedrock Converse's tool_result shape.
+def _trace_id_from_text(text: str) -> str | None:
+    """Pull trace_id from a text block via either the JSON envelope or the
+    `[trace_id=<hex>]` marker (the fallback carrier used by MCP servers on
+    error paths where the client drops structuredContent).
     """
-    text = text.strip()
-    if not text or text[0] not in "{[":
-        return None
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    return _trace_id_from_dict(parsed)
+    stripped = text.strip()
+    if stripped and stripped[0] in "{[":
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        else:
+            trace_id = _trace_id_from_dict(parsed)
+            if trace_id:
+                return trace_id
+    m = _TRACE_ID_MARKER.search(text)
+    return m.group(1).lower() if m else None
 
 
 def _extract_trace_id(content: Any) -> str | None:
@@ -767,7 +773,7 @@ def _extract_trace_id(content: Any) -> str | None:
     if content is None:
         return None
     if isinstance(content, str):
-        return _trace_id_from_json_text(content)
+        return _trace_id_from_text(content)
     if isinstance(content, dict):
         # Rare — some clients pass structured content directly here.
         return _trace_id_from_dict(content)
@@ -781,11 +787,11 @@ def _extract_trace_id(content: Any) -> str | None:
             trace_id = _trace_id_from_dict(block["json"])
             if trace_id:
                 return trace_id
-        # Text (Anthropic `{type: "text", text}`, Converse `{text}`) —
-        # may be a JSON-encoded structuredContent envelope.
+        # Text (Anthropic `{type: "text", text}`, Converse `{text}`) — may
+        # be a JSON-encoded envelope or carry the `[trace_id=…]` marker.
         text = block.get("text")
         if isinstance(text, str):
-            trace_id = _trace_id_from_json_text(text)
+            trace_id = _trace_id_from_text(text)
             if trace_id:
                 return trace_id
     return None
