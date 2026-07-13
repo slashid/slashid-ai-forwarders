@@ -138,7 +138,6 @@ async def test_build_event_with_tools_and_used_ids() -> None:
     assert event is not None
     assert event.available_tool_servers is not None
     assert event.available_tools is not None
-    assert event.used_tools is not None
 
     servers = {s.name: s for s in event.available_tool_servers}
     assert servers["excalidraw"].kind == "mcp"
@@ -148,11 +147,10 @@ async def test_build_event_with_tools_and_used_ids() -> None:
     assert tools_by_name["create_view"].tool_server_id == servers["excalidraw"].id
     assert tools_by_name["Bash"].tool_server_id == servers["builtin"].id
 
-    assert len(event.used_tools) == 1
-    assert event.used_tools[0].tool_id == tools_by_name["create_view"].id
-    # No tool_result in this record → is_error/trace_id remain unknown.
-    assert event.used_tools[0].is_error is None
-    assert event.used_tools[0].trace_id is None
+    # Output-only tool_use with no matching tool_result → deferred to the
+    # invocation event where the result actually shows up. Nothing to emit
+    # here.
+    assert event.used_tools is None
     assert event.stop_reason == "tool_use"
 
 
@@ -338,8 +336,57 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
     assert event.used_tools[0].trace_id == trace_id
 
 
-async def test_used_tools_merges_output_toolUse_with_input_toolResult() -> None:
-    """Same tool_use_id in output (new call) + input result (prior call) → one entry each."""
+async def test_used_tools_missing_status_defaults_to_success() -> None:
+    """Converse `status` is optional (only Claude 3 sets it) — absent = success."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_ns", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_ns",
+                            "content": [{"text": "ok"}],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].is_error is False
+
+
+async def test_used_tools_anthropic_missing_is_error_defaults_to_success() -> None:
+    """Anthropic `is_error` is optional — absent = success."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_na", "name": "Bash", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "tu_na", "content": "ok"},
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].is_error is False
+
+
+async def test_used_tools_defers_output_tool_use_without_result() -> None:
+    """Emit the completed prior-turn call; defer the new tool_use in output."""
     trace_id = "d" * 32
     record = _record_with_bash(
         input_messages=[
@@ -376,16 +423,11 @@ async def test_used_tools_merges_output_toolUse_with_input_toolResult() -> None:
     event = await build_event(record)
     assert event is not None
     assert event.used_tools is not None
-    # Two separate entries (both point to the same Bash tool but distinct
-    # invocations): the prior turn's completed result carries is_error /
-    # trace_id; the new call has neither yet.
-    assert len(event.used_tools) == 2
-    completed = [e for e in event.used_tools if e.trace_id is not None]
-    pending = [e for e in event.used_tools if e.trace_id is None]
-    assert len(completed) == 1 and len(pending) == 1
-    assert completed[0].is_error is False
-    assert completed[0].trace_id == trace_id
-    assert pending[0].is_error is None
+    # Only the pair-complete entry emits. tu_new (output-only) waits for its
+    # result on a future invocation event.
+    assert len(event.used_tools) == 1
+    assert event.used_tools[0].is_error is False
+    assert event.used_tools[0].trace_id == trace_id
 
 
 async def test_used_tools_skips_result_without_matching_tool_use() -> None:
