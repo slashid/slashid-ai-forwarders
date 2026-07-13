@@ -268,6 +268,7 @@ async def test_used_tools_extracts_trace_id_from_converse_json_block() -> None:
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
+    assert event.used_tools[0].span_id == "1" * 16
     assert event.used_tools[0].is_error is False
 
 
@@ -304,6 +305,7 @@ async def test_used_tools_extracts_trace_id_from_stringified_structured_content(
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
+    assert event.used_tools[0].span_id == "2" * 16
 
 
 async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> None:
@@ -334,17 +336,19 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
+    assert event.used_tools[0].span_id == "3" * 16
 
 
-async def test_used_tools_extracts_trace_id_from_text_marker_on_error() -> None:
-    """On error paths clients drop structured content — trace_id survives as text marker.
+async def test_used_tools_extracts_otel_from_text_marker_on_error() -> None:
+    """On error paths clients drop structured content — OTel context survives as text marker.
 
-    mcp-gate-demo's error path stamps `[trace_id=<hex>]` at the end of the
-    text block precisely because Claude Code on Bedrock forwards the error
-    string only, discarding structuredContent.
+    mcp-gate-demo's error path stamps `[trace_id=<hex> span_id=<hex>]` at
+    the end of the text block precisely because Claude Code on Bedrock
+    forwards the error string only, discarding structuredContent.
     """
     trace_id = "f" * 32
-    err_text = f"McpError: Internal error: 403 Forbidden\n[trace_id={trace_id}]"
+    span_id = "6" * 16
+    err_text = f"McpError: Internal error: 403 Forbidden\n[trace_id={trace_id} span_id={span_id}]"
     record = _record_with_bash(
         input_messages=[
             {
@@ -369,6 +373,7 @@ async def test_used_tools_extracts_trace_id_from_text_marker_on_error() -> None:
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is True
     assert event.used_tools[0].trace_id == trace_id
+    assert event.used_tools[0].span_id == span_id
 
 
 async def test_used_tools_missing_status_defaults_to_success() -> None:
@@ -562,6 +567,7 @@ async def test_used_tools_wire_form_matches_new_schema() -> None:
             "tool_id": tool_id,
             "is_error": True,
             "trace_id": "e" * 32,
+            "span_id": "5" * 16,
         }
     ]
 

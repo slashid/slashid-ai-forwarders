@@ -107,16 +107,17 @@ class AIToolUse(_WireModel):
     with no result yet) are deferred: they'll appear on the invocation
     event that carries the result.
 
-    `trace_id` is the OTel trace id echoed by MCP servers via a
+    `trace_id` / `span_id` are the OTel context echoed by MCP servers via a
     `$opentelemetry` block in `structuredContent` (see mcp-gate-demo
-    CorrelationIdMiddleware) — it correlates this tool call with the
-    corresponding Gate observability event on the SlashID side. Absent
-    when the MCP server doesn't run the middleware.
+    CorrelationIdMiddleware) — they correlate this specific tool call with
+    the corresponding Gate observability event on the SlashID side.
+    Absent when the MCP server doesn't run the middleware.
     """
 
     tool_id: str
     is_error: bool
     trace_id: str | None = None
+    span_id: str | None = None
 
 
 class AITool(_WireModel):
@@ -725,28 +726,36 @@ async def _accessed_files(
 # the client stringifies, a JSON-encoded `{text: "..."}` block.
 # Error path: some MCP clients (Claude Code on Bedrock) drop structured
 # content entirely and forward only the text message, so the middleware
-# also embeds `[trace_id=<32 hex>]` as a trailing text marker.
+# also embeds `[trace_id=<32 hex> span_id=<16 hex>]` as a trailing text
+# marker.
 _OTEL_KEY = "$opentelemetry"
 _TRACE_ID_HEX = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
-_TRACE_ID_MARKER = re.compile(r"\[trace_id=([0-9a-f]{32})\]", re.IGNORECASE)
+_SPAN_ID_HEX = re.compile(r"^[0-9a-f]{16}$", re.IGNORECASE)
+_OTEL_MARKER = re.compile(
+    r"\[trace_id=([0-9a-f]{32})\s+span_id=([0-9a-f]{16})\]",
+    re.IGNORECASE,
+)
+
+_OtelCtx = tuple[str | None, str | None]  # (trace_id, span_id)
 
 
-def _trace_id_from_dict(d: Any) -> str | None:
-    """Pull `$opentelemetry.trace_id` out of a decoded structured-content dict."""
+def _otel_from_dict(d: Any) -> _OtelCtx:
+    """Pull `$opentelemetry.{trace_id,span_id}` from a decoded structured-content dict."""
     if not isinstance(d, dict):
-        return None
+        return (None, None)
     otel = d.get(_OTEL_KEY)
     if not isinstance(otel, dict):
-        return None
-    val = otel.get("trace_id")
-    if isinstance(val, str) and _TRACE_ID_HEX.match(val):
-        return val.lower()
-    return None
+        return (None, None)
+    raw_t = otel.get("trace_id")
+    raw_s = otel.get("span_id")
+    trace_id = raw_t.lower() if isinstance(raw_t, str) and _TRACE_ID_HEX.match(raw_t) else None
+    span_id = raw_s.lower() if isinstance(raw_s, str) and _SPAN_ID_HEX.match(raw_s) else None
+    return (trace_id, span_id)
 
 
-def _trace_id_from_text(text: str) -> str | None:
-    """Pull trace_id from a text block via either the JSON envelope or the
-    `[trace_id=<hex>]` marker (the fallback carrier used by MCP servers on
+def _otel_from_text(text: str) -> _OtelCtx:
+    """Pull OTel context from a text block via either a JSON envelope or the
+    `[trace_id=<hex> span_id=<hex>]` marker (the fallback carrier used on
     error paths where the client drops structuredContent).
     """
     stripped = text.strip()
@@ -756,45 +765,48 @@ def _trace_id_from_text(text: str) -> str | None:
         except (json.JSONDecodeError, ValueError):
             pass
         else:
-            trace_id = _trace_id_from_dict(parsed)
-            if trace_id:
-                return trace_id
-    m = _TRACE_ID_MARKER.search(text)
-    return m.group(1).lower() if m else None
+            ctx = _otel_from_dict(parsed)
+            if ctx[0]:
+                return ctx
+    m = _OTEL_MARKER.search(text)
+    if m:
+        return (m.group(1).lower(), m.group(2).lower())
+    return (None, None)
 
 
-def _extract_trace_id(content: Any) -> str | None:
-    """Pull the MCP `$opentelemetry.trace_id` from a tool_result payload.
+def _extract_otel(content: Any) -> _OtelCtx:
+    """Pull the MCP `$opentelemetry` context from a tool_result payload.
 
     Handles both the Anthropic tool_result shape (string or list of blocks)
     and the Converse toolResult shape (list of `{text}` / `{json}` / etc.
-    blocks). Returns None when the marker is absent.
+    blocks). Returns (None, None) when the marker is absent.
     """
     if content is None:
-        return None
+        return (None, None)
     if isinstance(content, str):
-        return _trace_id_from_text(content)
+        return _otel_from_text(content)
     if isinstance(content, dict):
         # Rare — some clients pass structured content directly here.
-        return _trace_id_from_dict(content)
+        return _otel_from_dict(content)
     if not isinstance(content, list):
-        return None
+        return (None, None)
     for block in content:
         if not isinstance(block, dict):
             continue
         # Converse `{json: {...}}` carries structured content natively.
         if isinstance(block.get("json"), dict):
-            trace_id = _trace_id_from_dict(block["json"])
-            if trace_id:
-                return trace_id
+            ctx = _otel_from_dict(block["json"])
+            if ctx[0]:
+                return ctx
         # Text (Anthropic `{type: "text", text}`, Converse `{text}`) — may
-        # be a JSON-encoded envelope or carry the `[trace_id=…]` marker.
+        # be a JSON-encoded envelope or carry the `[trace_id=… span_id=…]`
+        # marker.
         text = block.get("text")
         if isinstance(text, str):
-            trace_id = _trace_id_from_text(text)
-            if trace_id:
-                return trace_id
-    return None
+            ctx = _otel_from_text(text)
+            if ctx[0]:
+                return ctx
+    return (None, None)
 
 
 def _iter_content_blocks(messages: list[Any]) -> Any:
@@ -861,14 +873,14 @@ def _used_tools(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[
             # Anthropic: `is_error` is optional; absence = success.
             raw_is_error = block.get("is_error")
             is_error = raw_is_error if isinstance(raw_is_error, bool) else False
-            trace_id = _extract_trace_id(block.get("content"))
+            trace_id, span_id = _extract_otel(block.get("content"))
         elif isinstance(block.get("toolResult"), dict):
             tr = block["toolResult"]
             uid = tr.get("toolUseId")
             # Converse: `status` is optional and only Claude 3 populates it.
             # Absence = success (there's no other outcome carrier on the wire).
             is_error = tr.get("status") == "error"
-            trace_id = _extract_trace_id(tr.get("content"))
+            trace_id, span_id = _extract_otel(tr.get("content"))
         else:
             continue
         if not isinstance(uid, str) or uid in seen:
@@ -881,7 +893,9 @@ def _used_tools(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[
             # with no tool_id has no analytic value.
             continue
         seen.add(uid)
-        used.append(AIToolUse(tool_id=tool_id, is_error=is_error, trace_id=trace_id))
+        used.append(
+            AIToolUse(tool_id=tool_id, is_error=is_error, trace_id=trace_id, span_id=span_id)
+        )
 
     return used
 
