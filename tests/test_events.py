@@ -63,7 +63,7 @@ async def test_build_event_minimal() -> None:
     # Optional fields stay None when not populated.
     assert event.available_tool_servers is None
     assert event.available_tools is None
-    assert event.used_tool_ids is None
+    assert event.used_tools is None
     assert event.available_agents is None
     assert event.used_agent_ids is None
 
@@ -138,7 +138,7 @@ async def test_build_event_with_tools_and_used_ids() -> None:
     assert event is not None
     assert event.available_tool_servers is not None
     assert event.available_tools is not None
-    assert event.used_tool_ids is not None
+    assert event.used_tools is not None
 
     servers = {s.name: s for s in event.available_tool_servers}
     assert servers["excalidraw"].kind == "mcp"
@@ -148,8 +148,345 @@ async def test_build_event_with_tools_and_used_ids() -> None:
     assert tools_by_name["create_view"].tool_server_id == servers["excalidraw"].id
     assert tools_by_name["Bash"].tool_server_id == servers["builtin"].id
 
-    assert event.used_tool_ids == [tools_by_name["create_view"].id]
+    assert len(event.used_tools) == 1
+    assert event.used_tools[0].tool_id == tools_by_name["create_view"].id
+    # No tool_result in this record → is_error/trace_id remain unknown.
+    assert event.used_tools[0].is_error is None
+    assert event.used_tools[0].trace_id is None
     assert event.stop_reason == "tool_use"
+
+
+def _record_with_bash(
+    *,
+    input_messages: list[dict[str, Any]] | None = None,
+    output_content: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a minimal MIL record advertising a single `Bash` tool."""
+    body: dict[str, Any] = {
+        "toolConfig": {"tools": [{"toolSpec": {"name": "Bash", "description": "shell"}}]},
+    }
+    if input_messages is not None:
+        body["messages"] = input_messages
+    output_body: dict[str, Any] = {"stopReason": "tool_use"}
+    if output_content is not None:
+        output_body["output"] = {"message": {"role": "assistant", "content": output_content}}
+    return _mil_record(
+        input={"inputTokenCount": 10, "inputBodyJson": body},
+        output={"outputTokenCount": 5, "outputBodyJson": output_body},
+    )
+
+
+async def test_used_tools_converse_error_status_maps_to_is_error() -> None:
+    """Converse `toolResult.status == "error"` propagates as is_error=True."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_1", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_1",
+                            "status": "error",
+                            "content": [{"text": "boom"}],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert len(event.used_tools) == 1
+    assert event.used_tools[0].is_error is True
+    assert event.used_tools[0].trace_id is None
+
+
+async def test_used_tools_anthropic_shape_is_error_flag() -> None:
+    """Anthropic `tool_result.is_error: true` propagates."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_2", "name": "Bash", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu_2",
+                        "is_error": True,
+                        "content": "boom",
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].is_error is True
+
+
+async def test_used_tools_extracts_trace_id_from_converse_json_block() -> None:
+    """Bedrock Converse structured_content passthrough → `{json: {$opentelemetry: {...}}}`."""
+    trace_id = "a" * 32
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_3", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_3",
+                            "status": "success",
+                            "content": [
+                                {
+                                    "json": {
+                                        "flow": "gate_svid",
+                                        "$opentelemetry": {
+                                            "trace_id": trace_id,
+                                            "span_id": "1" * 16,
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].trace_id == trace_id
+    assert event.used_tools[0].is_error is False
+
+
+async def test_used_tools_extracts_trace_id_from_stringified_structured_content() -> None:
+    """Clients that stringify structuredContent land the block in a text block."""
+    trace_id = "b" * 32
+    envelope = json.dumps(
+        {
+            "flow": "gate_svid",
+            "$opentelemetry": {"trace_id": trace_id, "span_id": "2" * 16},
+        }
+    )
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_4", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_4",
+                            "status": "success",
+                            "content": [{"text": envelope}],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].trace_id == trace_id
+
+
+async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> None:
+    """Anthropic tool_result.content can be a bare JSON string — parse it too."""
+    trace_id = "c" * 32
+    envelope = json.dumps(
+        {"$opentelemetry": {"trace_id": trace_id, "span_id": "3" * 16}, "flow": "x"}
+    )
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "tu_5", "name": "Bash", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu_5",
+                        "content": envelope,
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    assert event.used_tools[0].trace_id == trace_id
+
+
+async def test_used_tools_merges_output_toolUse_with_input_toolResult() -> None:
+    """Same tool_use_id in output (new call) + input result (prior call) → one entry each."""
+    trace_id = "d" * 32
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_prev", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_prev",
+                            "status": "success",
+                            "content": [
+                                {
+                                    "json": {
+                                        "$opentelemetry": {
+                                            "trace_id": trace_id,
+                                            "span_id": "4" * 16,
+                                        }
+                                    }
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+        ],
+        output_content=[
+            {"toolUse": {"toolUseId": "tu_new", "name": "Bash", "input": {}}},
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    # Two separate entries (both point to the same Bash tool but distinct
+    # invocations): the prior turn's completed result carries is_error /
+    # trace_id; the new call has neither yet.
+    assert len(event.used_tools) == 2
+    completed = [e for e in event.used_tools if e.trace_id is not None]
+    pending = [e for e in event.used_tools if e.trace_id is None]
+    assert len(completed) == 1 and len(pending) == 1
+    assert completed[0].is_error is False
+    assert completed[0].trace_id == trace_id
+    assert pending[0].is_error is None
+
+
+async def test_used_tools_skips_result_without_matching_tool_use() -> None:
+    """A tool_result whose tool_use_id we can't resolve is dropped, not stubbed."""
+    record = _record_with_bash(
+        input_messages=[
+            # no assistant tool_use for tu_orphan visible in this record
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_orphan",
+                            "status": "success",
+                            "content": [{"text": "hi"}],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is None
+
+
+async def test_used_tools_ignores_prior_tool_results_before_last_assistant() -> None:
+    """tool_result blocks that pre-date the last assistant turn were already reported."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_old", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_old",
+                            "status": "error",
+                            "content": [{"text": "old boom"}],
+                        }
+                    }
+                ],
+            },
+            # A second assistant turn comes after — the tu_old result is now
+            # "history" and shouldn't be re-emitted.
+            {"role": "assistant", "content": [{"text": "ok, next"}]},
+            {"role": "user", "content": [{"text": "continue"}]},
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is None
+
+
+async def test_used_tools_wire_form_matches_new_schema() -> None:
+    """Wire dump uses `used_tools` with the AIToolUse item shape."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tu_w", "name": "Bash", "input": {}}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_w",
+                            "status": "error",
+                            "content": [
+                                {
+                                    "json": {
+                                        "$opentelemetry": {
+                                            "trace_id": "e" * 32,
+                                            "span_id": "5" * 16,
+                                        }
+                                    }
+                                }
+                            ],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    tool_id = event.used_tools[0].tool_id
+    wire = event.model_dump(mode="json", exclude_none=True)
+    assert "used_tool_ids" not in wire
+    assert wire["used_tools"] == [
+        {
+            "tool_id": tool_id,
+            "is_error": True,
+            "trace_id": "e" * 32,
+        }
+    ]
 
 
 async def test_tool_id_differs_for_different_schema() -> None:
@@ -951,7 +1288,7 @@ async def test_build_event_wire_form() -> None:
     # No empty None placeholders for the rest.
     assert "available_tool_servers" not in wire
     assert "available_tools" not in wire
-    assert "used_tool_ids" not in wire
+    assert "used_tools" not in wire
     assert "available_agents" not in wire
     # Tokens always present (default 0s).
     assert wire["tokens"] == {

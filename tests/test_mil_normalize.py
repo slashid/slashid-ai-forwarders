@@ -163,7 +163,7 @@ def test_malformed_tool_input_json_does_not_leak_to_logs(caplog: pytest.LogCaptu
 def test_anthropic_nonstreaming_response_rewritten() -> None:
     """Non-streaming InvokeModel-against-Anthropic response reaches Converse shape.
 
-    Regression: before the fix, `_used_tool_ids` (which reads from
+    Regression: before the fix, `_used_tools` (which reads from
     `output.outputBodyJson.output.message.content[].toolUse`) returned empty
     for these records because the body sat at `outputBodyJson.content[]`
     with an Anthropic-native shape. Every non-streaming Anthropic

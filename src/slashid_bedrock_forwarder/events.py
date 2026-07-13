@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -95,6 +96,27 @@ class AIToolAnnotations(_WireModel):
     destructive_hint: bool | None = None
     idempotent_hint: bool | None = None
     open_world_hint: bool | None = None
+
+
+class AIToolUse(_WireModel):
+    """One tool invocation within an AI turn.
+
+    `tool_id` comes from the assistant's tool_use block; `is_error` and
+    `trace_id` come from the paired tool_result block (only known once the
+    tool has actually run and reported back). The Anthropic/Bedrock
+    `tool_use_id` that ties the two sides is used internally to merge them
+    but not surfaced on the wire — it's a client-scoped correlation key
+    with no meaning outside the MCP session.
+
+    `trace_id` is the OTel trace id echoed by MCP servers via a
+    `$opentelemetry` block in `structuredContent` (see mcp-gate-demo
+    CorrelationIdMiddleware) — it correlates this tool call with the
+    corresponding Gate observability event on the SlashID side.
+    """
+
+    tool_id: str
+    is_error: bool | None = None
+    trace_id: str | None = None
 
 
 class AITool(_WireModel):
@@ -203,7 +225,7 @@ class AIInvocationObservedV1(_WireModel):
     used_agent_ids: list[str] | None = None
     available_tool_servers: list[AIToolServer] | None = None
     available_tools: list[AITool] | None = None
-    used_tool_ids: list[str] | None = None
+    used_tools: list[AIToolUse] | None = None
     stop_reason: AIStopReason | None = None
     conversation_id: str | None = None
     input: AIInvocationContent | None = None
@@ -695,26 +717,208 @@ async def _accessed_files(
     return files
 
 
-def _used_tool_ids(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[str]:
-    """Extract tool IDs from the assistant response's `toolUse` blocks."""
-    obody = (record.get("output") or {}).get("outputBodyJson")
-    # Non-Anthropic streams reach us as raw lists (see mil_normalize.py — we
-    # only normalize shapes we own). Skip cleanly instead of crashing on .get().
-    if not isinstance(obody, dict):
-        return []
-    message = (obody.get("output") or {}).get("message") or {}
-    ids: list[str] = []
-    seen: set[str] = set()
-    for block in message.get("content", []) or []:
-        tu = (block or {}).get("toolUse") or {}
-        name = tu.get("name")
-        if not name:
+# $opentelemetry: the OTel context that MCP servers echo back on tool results
+# (see mcp-gate-demo CorrelationIdMiddleware). Wire shape:
+#   {"$opentelemetry": {"trace_id": "<32 hex>", "span_id": "<16 hex>"}}
+# Only lives in MCP `structuredContent`. Reaches Bedrock Converse either as a
+# native `{json: {...}}` block or, when the client stringifies structured
+# content, as a JSON-encoded `{text: "..."}` block. We handle both.
+_OTEL_KEY = "$opentelemetry"
+_TRACE_ID_HEX = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+
+
+def _trace_id_from_dict(d: Any) -> str | None:
+    """Pull `$opentelemetry.trace_id` out of a decoded structured-content dict."""
+    if not isinstance(d, dict):
+        return None
+    otel = d.get(_OTEL_KEY)
+    if not isinstance(otel, dict):
+        return None
+    val = otel.get("trace_id")
+    if isinstance(val, str) and _TRACE_ID_HEX.match(val):
+        return val.lower()
+    return None
+
+
+def _trace_id_from_json_text(text: str) -> str | None:
+    """Try to decode `text` as JSON and pull trace_id from the resulting dict.
+
+    Some MCP clients serialize `structuredContent` into a JSON string in a
+    text block instead of passing it through as a `{json: {...}}` block —
+    especially when bridging into Bedrock Converse's tool_result shape.
+    """
+    text = text.strip()
+    if not text or text[0] not in "{[":
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return _trace_id_from_dict(parsed)
+
+
+def _extract_trace_id(content: Any) -> str | None:
+    """Pull the MCP `$opentelemetry.trace_id` from a tool_result payload.
+
+    Handles both the Anthropic tool_result shape (string or list of blocks)
+    and the Converse toolResult shape (list of `{text}` / `{json}` / etc.
+    blocks). Returns None when the marker is absent.
+    """
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return _trace_id_from_json_text(content)
+    if isinstance(content, dict):
+        # Rare — some clients pass structured content directly here.
+        return _trace_id_from_dict(content)
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if not isinstance(block, dict):
             continue
+        # Converse `{json: {...}}` carries structured content natively.
+        if isinstance(block.get("json"), dict):
+            trace_id = _trace_id_from_dict(block["json"])
+            if trace_id:
+                return trace_id
+        # Text (Anthropic `{type: "text", text}`, Converse `{text}`) —
+        # may be a JSON-encoded structuredContent envelope.
+        text = block.get("text")
+        if isinstance(text, str):
+            trace_id = _trace_id_from_json_text(text)
+            if trace_id:
+                return trace_id
+    return None
+
+
+def _iter_content_blocks(messages: list[Any]) -> Any:
+    """Yield each content block across all messages (skipping malformed entries)."""
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        for block in msg.get("content") or []:
+            if isinstance(block, dict):
+                yield block
+
+
+def _used_tools(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[AIToolUse]:
+    """Collect tool invocations visible in this record.
+
+    Sources:
+    - Output tool_use blocks (assistant's new invocations this turn) —
+      contribute tool_id + tool_use_id; is_error/trace_id unknown yet.
+    - Input tool_result blocks *after the last assistant message* (results
+      the assistant just consumed) — contribute is_error and, where
+      available, the `_slashid.trace_id` echoed by the MCP server.
+
+    Entries are keyed by tool_use_id and merged when both sides are present.
+    tool_id for a result is resolved by looking up the matching tool_use
+    block in the input history (both Anthropic and Converse shapes).
+    """
+    input_body = (record.get("input") or {}).get("inputBodyJson")
+    input_messages: list[Any] = []
+    if isinstance(input_body, dict):
+        input_messages = list(input_body.get("messages") or [])
+
+    # tool_use_id → raw tool name, gathered from anywhere it might appear
+    # (assistant history in input, plus the assistant's new output).
+    name_by_use_id: dict[str, str] = {}
+    for block in _iter_content_blocks(input_messages):
+        if block.get("type") == "tool_use":
+            uid = block.get("id")
+            name = block.get("name")
+            if isinstance(uid, str) and isinstance(name, str):
+                name_by_use_id[uid] = name
+        elif isinstance(block.get("toolUse"), dict):
+            tu = block["toolUse"]
+            uid = tu.get("toolUseId")
+            name = tu.get("name")
+            if isinstance(uid, str) and isinstance(name, str):
+                name_by_use_id[uid] = name
+
+    # Output tool_use blocks — the assistant's new decisions this turn.
+    output_uses: list[tuple[str | None, str]] = []  # (tool_use_id, raw name)
+    obody = (record.get("output") or {}).get("outputBodyJson")
+    if isinstance(obody, dict):
+        message = (obody.get("output") or {}).get("message") or {}
+        for block in message.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            tu = block.get("toolUse")
+            if isinstance(tu, dict):
+                name = tu.get("name")
+                if isinstance(name, str):
+                    uid = tu.get("toolUseId")
+                    output_uses.append((uid if isinstance(uid, str) else None, name))
+                    if isinstance(uid, str):
+                        name_by_use_id[uid] = name
+
+    # Input tool_result blocks *after* the last assistant turn — the results
+    # the assistant just consumed. Earlier tool_results were already reported
+    # on prior invocations.
+    last_assistant = max(
+        (
+            i
+            for i, m in enumerate(input_messages)
+            if isinstance(m, dict) and m.get("role") == "assistant"
+        ),
+        default=-1,
+    )
+    fresh_messages = input_messages[last_assistant + 1 :]
+
+    results: list[tuple[str, bool | None, str | None]] = []  # (uid, is_error, trace)
+    for block in _iter_content_blocks(fresh_messages):
+        if block.get("type") == "tool_result":
+            uid = block.get("tool_use_id")
+            raw_is_error = block.get("is_error")
+            is_error = raw_is_error if isinstance(raw_is_error, bool) else None
+            trace_id = _extract_trace_id(block.get("content"))
+        elif isinstance(block.get("toolResult"), dict):
+            tr = block["toolResult"]
+            uid = tr.get("toolUseId")
+            status = tr.get("status")
+            is_error = status == "error" if status in ("success", "error") else None
+            trace_id = _extract_trace_id(tr.get("content"))
+        else:
+            continue
+        if isinstance(uid, str):
+            results.append((uid, is_error, trace_id))
+
+    # Merge by tool_use_id internally so the output tool_use and its matching
+    # input tool_result collapse into one entry. tool_use_id itself is
+    # client-scoped and doesn't appear on the wire.
+    by_uid: dict[str, AIToolUse] = {}
+    anonymous: list[AIToolUse] = []
+
+    for uid, name in output_uses:
         tool_id = raw_name_to_id.get(name)
-        if tool_id and tool_id not in seen:
-            ids.append(tool_id)
-            seen.add(tool_id)
-    return ids
+        if not tool_id:
+            continue
+        entry = AIToolUse(tool_id=tool_id)
+        if uid:
+            by_uid[uid] = entry
+        else:
+            anonymous.append(entry)
+
+    for uid, is_error, trace_id in results:
+        name = name_by_use_id.get(uid)
+        tool_id = raw_name_to_id.get(name or "")
+        if not tool_id:
+            # Result references a tool we can't identify (came in from an
+            # earlier turn whose tool_use we can't see, or toolConfig omits
+            # it). Skip — an entry with no tool_id has no analytic value.
+            continue
+        existing = by_uid.get(uid)
+        if existing is not None:
+            by_uid[uid] = existing.model_copy(update={"is_error": is_error, "trace_id": trace_id})
+        else:
+            by_uid[uid] = AIToolUse(
+                tool_id=tool_id,
+                is_error=is_error,
+                trace_id=trace_id,
+            )
+
+    return list(by_uid.values()) + anonymous
 
 
 async def build_event(
@@ -744,7 +948,7 @@ async def build_event(
         return None
 
     servers, tools, raw_to_id = _available_tools(record)
-    used = _used_tool_ids(record, raw_to_id)
+    used = _used_tools(record, raw_to_id)
 
     inp = record.get("input") or {}
     out = record.get("output") or {}
@@ -783,7 +987,7 @@ async def build_event(
         ),
         available_tool_servers=servers or None,
         available_tools=tools or None,
-        used_tool_ids=used or None,
+        used_tools=used or None,
         stop_reason=_stop_reason(record),
         input=_build_content(
             inp.get("inputBodyJson"),
