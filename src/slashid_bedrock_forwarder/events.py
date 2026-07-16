@@ -107,11 +107,12 @@ class AIToolUse(_WireModel):
     with no result yet) are deferred: they'll appear on the invocation
     event that carries the result.
 
-    `tool_use_id` is the client-generated id that ties the tool_use and
-    tool_result blocks together (Bedrock `toolUse.toolUseId`, Anthropic
-    `tool_use.id`). Unique per invocation within a conversation, not
-    globally — combined with the enclosing `request_id` it uniquely
-    identifies a call for cross-log correlation.
+    `tool_use_id` is the inference-provider-generated id that ties the
+    tool_use and tool_result blocks together (Bedrock `toolUse.toolUseId`,
+    Anthropic `tool_use.id`). Format is `toolu_[bdrk_]<version><~22 base62>`
+    with ~130 bits of entropy — effectively globally unique. The same id
+    naturally reappears in every subsequent turn's conversation history,
+    but always pointing at the same logical invocation.
 
     `trace_id` / `span_id` are the OTel context echoed by MCP servers via a
     `$opentelemetry` block in `structuredContent` (see mcp-gate-demo
