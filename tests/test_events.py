@@ -339,6 +339,39 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
     assert event.used_tools[0].span_id == "3" * 16
 
 
+async def test_used_tools_propagates_tool_use_id_from_both_shapes() -> None:
+    """Anthropic `tool_use.id` and Converse `toolUse.toolUseId` both land on the wire."""
+    record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_anth", "name": "Bash", "input": {}},
+                    {"toolUse": {"toolUseId": "tu_conv", "name": "Bash", "input": {}}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_anth", "content": "ok"},
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_conv",
+                            "status": "success",
+                            "content": [{"text": "ok"}],
+                        }
+                    },
+                ],
+            },
+        ],
+    )
+    event = await build_event(record)
+    assert event is not None
+    assert event.used_tools is not None
+    ids = {u.tool_use_id for u in event.used_tools}
+    assert ids == {"toolu_anth", "tu_conv"}
+
+
 async def test_used_tools_extracts_otel_from_text_marker_on_error() -> None:
     """On error paths clients drop structured content — OTel context survives as text marker.
 
@@ -565,6 +598,7 @@ async def test_used_tools_wire_form_matches_new_schema() -> None:
     assert wire["used_tools"] == [
         {
             "tool_id": tool_id,
+            "tool_use_id": "tu_w",
             "is_error": True,
             "trace_id": "e" * 32,
             "span_id": "5" * 16,

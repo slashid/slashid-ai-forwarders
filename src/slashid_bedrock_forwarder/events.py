@@ -107,6 +107,12 @@ class AIToolUse(_WireModel):
     with no result yet) are deferred: they'll appear on the invocation
     event that carries the result.
 
+    `tool_use_id` is the client-generated id that ties the tool_use and
+    tool_result blocks together (Bedrock `toolUse.toolUseId`, Anthropic
+    `tool_use.id`). Unique per invocation within a conversation, not
+    globally — combined with the enclosing `request_id` it uniquely
+    identifies a call for cross-log correlation.
+
     `trace_id` / `span_id` are the OTel context echoed by MCP servers via a
     `$opentelemetry` block in `structuredContent` (see mcp-gate-demo
     CorrelationIdMiddleware) — they correlate this specific tool call with
@@ -116,6 +122,7 @@ class AIToolUse(_WireModel):
 
     tool_id: str
     is_error: bool
+    tool_use_id: str | None = None
     trace_id: str | None = None
     span_id: str | None = None
 
@@ -894,7 +901,13 @@ def _used_tools(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[
             continue
         seen.add(uid)
         used.append(
-            AIToolUse(tool_id=tool_id, is_error=is_error, trace_id=trace_id, span_id=span_id)
+            AIToolUse(
+                tool_id=tool_id,
+                tool_use_id=uid,
+                is_error=is_error,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
         )
 
     return used
