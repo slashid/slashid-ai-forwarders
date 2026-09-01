@@ -757,6 +757,7 @@ name = "slashid-ai-forwarder-core"
 version = "0.1.0"
 source = { editable = "shared" }
 dependencies = [
+    { name = "aioboto3" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -765,6 +766,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aioboto3", specifier = ">=15.0" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.6" },
@@ -776,15 +778,11 @@ name = "slashid-bedrock-forwarder"
 version = "0.1.0"
 source = { editable = "bedrock" }
 dependencies = [
-    { name = "aioboto3" },
     { name = "slashid-ai-forwarder-core" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "aioboto3", specifier = ">=15.0" },
-    { name = "slashid-ai-forwarder-core", editable = "shared" },
-]
+requires-dist = [{ name = "slashid-ai-forwarder-core", editable = "shared" }]
 
 [[package]]
 name = "tenacity"

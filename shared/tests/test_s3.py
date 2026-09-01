@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from slashid_bedrock_forwarder import s3
+from slashid_ai_forwarder_core import s3
 
 
 @pytest.fixture(autouse=True)

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from slashid_bedrock_forwarder.events import (
+from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     build_event,
     parse_tool_name,
@@ -682,7 +682,7 @@ async def test_build_event_uses_arn_as_id_when_raw_is_arn() -> None:
 
 
 async def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
-    from slashid_bedrock_forwarder import model_catalog
+    from slashid_ai_forwarder_core import model_catalog
 
     monkeypatch.setattr(
         model_catalog,
@@ -720,7 +720,7 @@ async def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
     """Pydantic Literal type rejects values outside the AIStopReason enum."""
     from pydantic import ValidationError
 
-    from slashid_bedrock_forwarder.events import AIInvocationObservedV1, AIModel, AWSIdentityDetails
+    from slashid_ai_forwarder_core.events import AIInvocationObservedV1, AIModel, AWSIdentityDetails
 
     with pytest.raises(ValidationError):
         AIInvocationObservedV1(
@@ -858,7 +858,7 @@ async def test_accessed_files_image_inline() -> None:
 
 
 async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    from slashid_bedrock_forwarder import s3 as s3_mod
+    from slashid_ai_forwarder_core import s3 as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # no AWS calls — leave source without _resolved_* keys
@@ -905,7 +905,7 @@ async def test_accessed_files_s3_source_uses_uri_as_name(monkeypatch: pytest.Mon
 
 async def test_accessed_files_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     """Bedrock Playground sends source.s3Uri instead of source.s3Location.uri."""
-    from slashid_bedrock_forwarder import s3 as s3_mod
+    from slashid_ai_forwarder_core import s3 as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 50000
@@ -942,7 +942,7 @@ async def test_accessed_files_s3_content_type_used_as_media_type_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When Converse format is absent, ContentType from HeadObject is used as media_type."""
-    from slashid_bedrock_forwarder import s3 as s3_mod
+    from slashid_ai_forwarder_core import s3 as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 100
@@ -1010,7 +1010,7 @@ async def test_accessed_files_media_type_from_filename_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When format is absent and HeadObject returns no ContentType, guess from URI extension."""
-    from slashid_bedrock_forwarder import s3 as s3_mod
+    from slashid_ai_forwarder_core import s3 as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 200
@@ -1047,7 +1047,7 @@ async def test_accessed_files_stub_has_media_type_from_filename(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """HEAD-failed stub still gets media_type from the filename."""
-    from slashid_bedrock_forwarder import s3 as s3_mod
+    from slashid_ai_forwarder_core import s3 as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # HEAD failed — no _resolved_* keys
