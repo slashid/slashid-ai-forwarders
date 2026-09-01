@@ -1,0 +1,44 @@
+[project]
+name = "slashid-bedrock-forwarder"
+version = "0.1.0"
+description = "AWS Lambda forwarding Bedrock Model Invocation Logging events to SlashID NHI"
+requires-python = ">=3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "SlashID" }]
+dependencies = [
+    "slashid-ai-forwarder-core",
+    "aioboto3>=15.0",
+]
+
+[tool.uv.sources]
+slashid-ai-forwarder-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slashid_bedrock_forwarder"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle, pyflakes
+    "I",                # isort
+    "UP",               # pyupgrade
+    "B",                # flake8-bugbear
+    "SIM",              # flake8-simplify
+    "RUF",              # ruff-specific
+]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
