@@ -72,12 +72,12 @@ def looks_like_anthropic_message(body: Any) -> bool:
     )
 
 
-def anthropic_tools_to_converse_tool_config(tools: list[Any]) -> dict[str, Any]:
+def anthropic_tools_to_converse_tool_config(tools: Any) -> dict[str, Any]:
     """Convert Anthropic flat ``tools[]`` → Converse ``toolConfig`` dict.
 
-    Returns an empty dict if the input isn't a non-empty list — callers
-    can then choose whether to write ``toolConfig`` back into their
-    envelope (typically only when non-empty).
+    Accepts ``Any`` so callers can pass through whatever vendor data
+    lands in the ``tools`` field without pre-validation; returns an
+    empty dict on non-list / empty input.
     """
     if not isinstance(tools, list) or not tools:
         return {}

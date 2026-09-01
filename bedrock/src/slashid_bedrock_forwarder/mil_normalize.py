@@ -15,7 +15,7 @@ envelope glue file replacing this one.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from slashid_ai_forwarder_core.normalize.anthropic import (
     anthropic_message_to_converse,
@@ -38,9 +38,9 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
     """
     out = (record.get("output") or {}).get("outputBodyJson")
     if looks_like_anthropic_stream(out):
-        _normalize_anthropic_stream(record, out)
+        _normalize_anthropic_stream(record, cast("list[Any]", out))
     elif looks_like_anthropic_message(out):
-        _normalize_anthropic_message(record, out)
+        _normalize_anthropic_message(record, cast("dict[str, Any]", out))
     return record
 
 

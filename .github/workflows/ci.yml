@@ -7,6 +7,10 @@ on:
 
 jobs:
   check:
+    strategy:
+      fail-fast: false
+      matrix:
+        subproject: [shared, bedrock]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,17 +20,22 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install dependencies
+      - name: Sync workspace
+        # Workspace-wide sync so bedrock can resolve its shared dep.
         run: uv sync --all-groups
 
       - name: Ruff (lint)
-        run: uv run ruff check
+        working-directory: ${{ matrix.subproject }}
+        run: uv run ruff check .
 
       - name: Ruff (format check)
-        run: uv run ruff format --check
+        working-directory: ${{ matrix.subproject }}
+        run: uv run ruff format --check .
 
       - name: ty (typecheck)
+        working-directory: ${{ matrix.subproject }}
         run: uv run ty check
 
       - name: pytest
+        working-directory: ${{ matrix.subproject }}
         run: uv run pytest

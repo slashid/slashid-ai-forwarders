@@ -98,9 +98,7 @@ def test_anthropic_message_ignores_non_dict_content_blocks() -> None:
         "role": "assistant",
         "content": ["not-a-dict", {"type": "text", "text": "ok"}],
     }
-    assert anthropic_message_to_converse(body)["output"]["message"]["content"] == [
-        {"text": "ok"}
-    ]
+    assert anthropic_message_to_converse(body)["output"]["message"]["content"] == [{"text": "ok"}]
 
 
 # ---------- anthropic_stream_to_converse ----------
@@ -294,9 +292,7 @@ def test_extract_anthropic_stream_usage_ignores_non_dict_events() -> None:
 
 
 def test_looks_like_anthropic_message_positive() -> None:
-    assert looks_like_anthropic_message(
-        {"type": "message", "role": "assistant", "content": []}
-    )
+    assert looks_like_anthropic_message({"type": "message", "role": "assistant", "content": []})
 
 
 def test_looks_like_anthropic_message_negative_converse_shape() -> None:
@@ -322,9 +318,7 @@ def test_looks_like_anthropic_message_negative_non_dict() -> None:
 
 def test_looks_like_anthropic_stream_positive() -> None:
     assert looks_like_anthropic_stream([{"type": "message_start"}])
-    assert looks_like_anthropic_stream(
-        [{"type": "content_block_delta", "index": 0, "delta": {}}]
-    )
+    assert looks_like_anthropic_stream([{"type": "content_block_delta", "index": 0, "delta": {}}])
 
 
 def test_looks_like_anthropic_stream_negative_non_list() -> None:
