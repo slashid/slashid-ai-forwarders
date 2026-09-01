@@ -18,6 +18,8 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
     AnthropicStreamEvent,
     AnthropicToolDeclaration,
 )
+from slashid_ai_forwarder_core.normalize.converse.schema import ConverseResponse
+from slashid_ai_forwarder_core.testing import yaml_pytest
 
 _STREAM = TypeAdapter(list[AnthropicStreamEvent])
 
@@ -27,120 +29,12 @@ _STREAM = TypeAdapter(list[AnthropicStreamEvent])
 # --------------------------------------------------------------------------
 
 
-def test_anthropic_message_text_and_tool_use_to_converse() -> None:
-    msg = AnthropicMessage.model_validate(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "let me check"},
-                {
-                    "type": "tool_use",
-                    "id": "toolu_abc",
-                    "name": "read",
-                    "input": {"path": "/x"},
-                },
-            ],
-            "stop_reason": "tool_use",
-        }
-    )
-    result = message_to_converse(msg)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {"text": "let me check"},
-                    {
-                        "toolUse": {
-                            "toolUseId": "toolu_abc",
-                            "name": "read",
-                            "input": {"path": "/x"},
-                        }
-                    },
-                ],
-            },
-        },
-        "stopReason": "tool_use",
-    }
-
-
-def test_anthropic_message_thinking_folded_to_text() -> None:
-    msg = AnthropicMessage.model_validate(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-                {"type": "thinking", "thinking": "reasoning...", "signature": "sig"},
-                {"type": "text", "text": "answer"},
-            ],
-            "stop_reason": "end_turn",
-        }
-    )
-    result = message_to_converse(msg)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {"text": "reasoning..."},
-                    {"text": "answer"},
-                ],
-            },
-        },
-        "stopReason": "end_turn",
-    }
-
-
-def test_anthropic_message_empty_content() -> None:
-    msg = AnthropicMessage.model_validate({"type": "message", "role": "assistant", "content": []})
-    result = message_to_converse(msg)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {"message": {"role": "assistant", "content": []}},
-    }
-
-
-def test_anthropic_message_unknown_block_skipped_silently() -> None:
-    # Unknown content block types don't propagate to the Converse output.
-    # Documented behaviour in 1.1; may become warn-once in a follow-up.
-    msg = AnthropicMessage.model_validate(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "before"},
-                {"type": "server_tool_use", "id": "srv_1", "name": "web_search"},
-                {"type": "text", "text": "after"},
-            ],
-            "stop_reason": "end_turn",
-        }
-    )
-    result = message_to_converse(msg)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {"text": "before"},
-                    {"text": "after"},
-                ],
-            },
-        },
-        "stopReason": "end_turn",
-    }
-
-
-def test_anthropic_message_no_stop_reason_omits_key() -> None:
-    msg = AnthropicMessage.model_validate(
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "text", "text": "hi"}],
-        }
-    )
-    result = message_to_converse(msg)
-    dumped = result.model_dump(exclude_none=True)
-    assert "stopReason" not in dumped
+@yaml_pytest()
+def test_anthropic_message_to_converse(
+    body: AnthropicMessage,
+    expected: ConverseResponse,
+) -> None:
+    assert message_to_converse(body) == expected
 
 
 def test_anthropic_message_tool_use_with_null_input_becomes_empty_dict() -> None:
