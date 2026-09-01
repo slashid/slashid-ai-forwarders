@@ -615,3 +615,97 @@ def test_format_structural_exclusivity(expected_name: str, payload: Any) -> None
         f"Expected exactly {[expected_name]!r} to match, got {matches!r}. "
         "Two formats claiming the same shape violates first-match-wins invariance."
     )
+
+
+# --------------------------------------------------------------------------
+# End-to-end: unrecognized shape → AIInvocationObservedV1.parsed_as="unknown"
+# --------------------------------------------------------------------------
+
+
+async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
+    """Full pipeline: unknown-format MIL record → normalize_record marks it
+    with _parsed_as="unknown" → build_event surfaces it on the wire event.
+    Identity, model, tokens survive; semantic fields (stop_reason, tools)
+    are None/empty."""
+    from slashid_ai_forwarder_core.events import build_event
+
+    record = {
+        "schemaType": "ModelInvocationLog",
+        "timestamp": "2026-09-01T12:00:00Z",
+        "modelId": "amazon.hypothetical-model-v1:0",
+        "requestId": "req-xyz",
+        "region": "us-east-2",
+        "identity": {"arn": "arn:aws:iam::123:user/x"},
+        "input": {
+            "inputBodyJson": {"unknown_request_shape": True},
+            "inputTokenCount": 5,
+        },
+        "output": {
+            "outputBodyJson": {"unknown_response_shape": True, "some_field": [1, 2]},
+            "outputTokenCount": 3,
+        },
+    }
+    normalize_record(record)
+    event = await build_event(record)
+    assert event is not None
+    assert event.parsed_as == "unknown"
+    # Semantic fields empty/None on unknown-shape records.
+    assert event.stop_reason is None
+    assert event.used_tools is None
+    assert event.available_tools is None
+    # Model + identity + tokens survive from the envelope.
+    assert event.model.raw_model_id == "amazon.hypothetical-model-v1:0"
+    assert event.tokens.input == 5
+    assert event.tokens.output == 3
+
+
+async def test_e2e_anthropic_message_sets_parsed_as() -> None:
+    """Happy path: Anthropic-message record → parsed_as="anthropic-message"."""
+    from slashid_ai_forwarder_core.events import build_event
+
+    record = {
+        "timestamp": "2026-09-01T12:00:00Z",
+        "modelId": "us.anthropic.claude-sonnet-4-6",
+        "requestId": "req-ant",
+        "region": "us-east-2",
+        "identity": {"arn": "arn:aws:iam::123:user/x"},
+        "input": {"inputBodyJson": {}, "inputTokenCount": 10},
+        "output": {
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "hi"}],
+                "stop_reason": "end_turn",
+            },
+            "outputTokenCount": 5,
+        },
+    }
+    normalize_record(record)
+    event = await build_event(record)
+    assert event is not None
+    assert event.parsed_as == "anthropic-message"
+
+
+async def test_e2e_converse_response_sets_parsed_as() -> None:
+    """Happy path: native Converse response → parsed_as="converse-response"."""
+    from slashid_ai_forwarder_core.events import build_event
+
+    record = {
+        "timestamp": "2026-09-01T12:00:00Z",
+        "modelId": "us.amazon.nova-pro-v1:0",
+        "requestId": "req-nova",
+        "region": "us-east-2",
+        "identity": {"arn": "arn:aws:iam::123:user/x"},
+        "input": {"inputBodyJson": {}, "inputTokenCount": 6},
+        "output": {
+            "outputBodyJson": {
+                "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+                "stopReason": "end_turn",
+            },
+            "outputTokenCount": 3,
+        },
+    }
+    normalize_record(record)
+    event = await build_event(record)
+    assert event is not None
+    assert event.parsed_as == "converse-response"

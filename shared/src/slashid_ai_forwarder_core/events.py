@@ -230,6 +230,12 @@ class AIInvocationObservedV1(_WireModel):
     identity_details: AWSIdentityDetails
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
+    # Name of the vendor format the record's outputBodyJson matched — set
+    # by the envelope normalizer from its format-table entry (e.g.
+    # "anthropic-message", "anthropic-stream", "converse-response").
+    # Value "unknown" is the C' marker: no format matched, semantic
+    # fields (stop_reason, used_tools, ...) are empty or best-effort.
+    parsed_as: str
     available_agents: list[AIAgentDetails] | None = None
     used_agent_ids: list[str] | None = None
     available_tool_servers: list[AIToolServer] | None = None
@@ -978,6 +984,10 @@ async def build_event(
             cache_write=int(inp.get("cacheWriteInputTokenCount") or 0),
             reasoning=0,
         ),
+        # ``_parsed_as`` is set by the envelope normalizer (bedrock's
+        # mil_normalize.normalize_record). Defensive fallback to "unknown"
+        # for code paths that skip normalization (none in production today).
+        parsed_as=record.get("_parsed_as", "unknown"),
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,

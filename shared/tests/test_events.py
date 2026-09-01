@@ -728,6 +728,7 @@ async def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
             timestamp="t",
             identity_details=AWSIdentityDetails(principal_arn="arn:aws:iam::1:user/x"),
             model=AIModel(id="m"),
+            parsed_as="anthropic-message",
             stop_reason="not-a-real-reason",  # ty: ignore[invalid-argument-type]
         )
 
@@ -1453,3 +1454,22 @@ async def test_build_event_truncates_file_redacted_content() -> None:
     assert "…" in f.redacted_content
     # hash and byte_length reflect the full stripped content, not the truncated string
     assert f.byte_length == len(raw.encode())
+
+
+async def test_build_event_populates_parsed_as_from_record() -> None:
+    # normalize_record sets record["_parsed_as"]; build_event surfaces
+    # it on the wire model.
+    record = _mil_record()
+    record["_parsed_as"] = "anthropic-message"
+    event = await build_event(record)
+    assert event is not None
+    assert event.parsed_as == "anthropic-message"
+
+
+async def test_build_event_parsed_as_defaults_to_unknown() -> None:
+    # If _parsed_as is missing (bypass path — defensive; not exercised in
+    # normal handler flow), build_event falls back to "unknown".
+    record = _mil_record()  # no _parsed_as set
+    event = await build_event(record)
+    assert event is not None
+    assert event.parsed_as == "unknown"
