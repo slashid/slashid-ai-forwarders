@@ -1,0 +1,57 @@
+# SlashID Bedrock Forwarder
+
+CloudWatch-triggered AWS Lambda forwarding AWS Bedrock Model Invocation events to SlashID — strips bodies, forwards only model and tool metadata.
+
+## Architecture
+
+The Lambda runs in the customer's AWS account. CloudWatch Logs subscription delivers each Bedrock invocation, the handler extracts identity, model, token, and tool metadata (no prompt/response text and no tool arguments leave the account), and POSTs to SlashID's NHI AI invocations endpoint.
+
+```
+Bedrock call ──→ MIL ──→ CloudWatch Logs ──┐
+                                            ▼
+                                   Lambda (this repo)
+                                            │
+                                            ▼
+                              POST /nhi/events/ai-invocations
+                                            │
+                                            ▼
+                                  SlashID NHI subgraph
+```
+
+On terminal failure, the Lambda exhausts AWS's two built-in async-invoke retries and CloudWatch's `Errors` metric increments — set an alarm on it. (No SQS DLQ is wired up in v1; add `DeadLetterConfig` to `forwarder.yaml` if you want replay-capable durability.)
+
+## Install
+
+> Coming in v0.1 — published as a CloudFormation template attached to each GitHub release.
+
+The customer provides:
+
+| Parameter | Description |
+|---|---|
+| `BedrockLogGroupName` | The CloudWatch log group MIL writes to |
+| `BedrockBodyOffloadS3Bucket` | (optional) Bucket Bedrock writes offloaded prompts to. Granted `s3:GetObject` so the Lambda can inline large prompts. Leave blank to skip — offloaded records still ingest, just without tool-catalog metadata. |
+| `SlashIDEndpoint` | e.g. `https://api.slashid.com` |
+| `SlashIDPushToken` | Event-streaming bearer token for the connection (NoEcho) |
+| `IncludeRawContent` | (optional, default `false`) Opt-in to forwarding raw prompt/response JSON. When off, only content hash + mime type + byte length are sent. |
+
+The push token is the only credential the Lambda needs. SlashID derives the org and connection IDs from the token; identity creation and STS role-chain unrolling happen on the SlashID side.
+
+## Development
+
+Requirements: `uv`, `pre-commit`.
+
+```bash
+uv sync                       # install dependencies into .venv
+uv run pre-commit install     # set up hooks
+uv run pytest                 # run tests
+uv run ty check               # type-check
+uv run ruff check             # lint
+uv run ruff format            # format
+```
+
+## Releases
+
+Tagged releases publish two artifacts to GitHub Releases:
+
+- `slashid-bedrock-forwarder-<version>.zip` — Lambda deployment package
+- `cloudformation.yaml` — install template

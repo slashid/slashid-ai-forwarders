@@ -19,6 +19,7 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+.serena/
 
 # Local secrets / fixtures
 .env
