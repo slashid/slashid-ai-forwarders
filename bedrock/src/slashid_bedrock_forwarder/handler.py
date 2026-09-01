@@ -32,7 +32,6 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
-
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1, build_event
 from slashid_ai_forwarder_core.s3 import resolve_offloaded_bodies
 from slashid_ai_forwarder_core.sink import push_invocations
