@@ -68,70 +68,12 @@ def test_anthropic_message_tool_use_with_null_input_becomes_empty_dict() -> None
 # --------------------------------------------------------------------------
 
 
-def test_anthropic_stream_text_only() -> None:
-    events = _STREAM.validate_python(
-        [
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "text", "text": ""},
-            },
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": "hi"},
-            },
-            {"type": "content_block_stop", "index": 0},
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
-        ]
-    )
-    result = stream_to_converse(events)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-        "stopReason": "end_turn",
-    }
-
-
-def test_anthropic_stream_tool_use_with_input_json_deltas() -> None:
-    events = _STREAM.validate_python(
-        [
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read"},
-            },
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "input_json_delta", "partial_json": '{"path":'},
-            },
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "input_json_delta", "partial_json": '"/x"}'},
-            },
-            {"type": "content_block_stop", "index": 0},
-            {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
-        ]
-    )
-    result = stream_to_converse(events)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [
-                    {
-                        "toolUse": {
-                            "toolUseId": "toolu_1",
-                            "name": "read",
-                            "input": {"path": "/x"},
-                        }
-                    },
-                ],
-            },
-        },
-        "stopReason": "tool_use",
-    }
+@yaml_pytest()
+def test_anthropic_stream_to_converse(
+    body: list[AnthropicStreamEvent],
+    expected: ConverseResponse,
+) -> None:
+    assert stream_to_converse(body) == expected
 
 
 def test_anthropic_stream_malformed_input_json_yields_empty_dict(
@@ -166,115 +108,6 @@ def test_anthropic_stream_malformed_input_json_yields_empty_dict(
     assert any("tool_use input_json malformed" in r.message for r in caplog.records)
     # The byte count is present in the fully-formatted log message.
     assert any("8 bytes" in r.getMessage() for r in caplog.records)
-
-
-def test_anthropic_stream_thinking_folded_to_text() -> None:
-    events = _STREAM.validate_python(
-        [
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "thinking"},
-            },
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "thinking_delta", "thinking": "reasoning..."},
-            },
-            {"type": "content_block_stop", "index": 0},
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
-        ]
-    )
-    result = stream_to_converse(events)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {"message": {"role": "assistant", "content": [{"text": "reasoning..."}]}},
-        "stopReason": "end_turn",
-    }
-
-
-def test_anthropic_stream_empty_event_list() -> None:
-    events = _STREAM.validate_python([])
-    result = stream_to_converse(events)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {"message": {"role": "assistant", "content": []}},
-    }
-
-
-def test_anthropic_stream_no_stop_reason_omits_stopreason_key() -> None:
-    # No message_delta with a stop_reason -> stopReason key is absent
-    # from the dumped output.
-    events = _STREAM.validate_python(
-        [
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "text", "text": ""},
-            },
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": "hi"},
-            },
-            {"type": "content_block_stop", "index": 0},
-        ]
-    )
-    result = stream_to_converse(events)
-    dumped = result.model_dump(exclude_none=True)
-    assert "stopReason" not in dumped
-    assert dumped == {
-        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-    }
-
-
-def test_anthropic_stream_unknown_content_block_no_slot() -> None:
-    # AnthropicUnknownBlock in content_block_start allocates no slot;
-    # subsequent deltas and the stop event are safe no-ops.
-    events = _STREAM.validate_python(
-        [
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "server_tool_use", "id": "srv"},
-            },
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": "ignored"},
-            },
-            {"type": "content_block_stop", "index": 0},
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
-        ]
-    )
-    result = stream_to_converse(events)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {"message": {"role": "assistant", "content": []}},
-        "stopReason": "end_turn",
-    }
-
-
-def test_anthropic_stream_ping_and_message_stop_are_noops() -> None:
-    events = _STREAM.validate_python(
-        [
-            {"type": "ping"},
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "text", "text": ""},
-            },
-            {"type": "ping"},
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": "hi"},
-            },
-            {"type": "content_block_stop", "index": 0},
-            {"type": "message_stop"},
-        ]
-    )
-    result = stream_to_converse(events)
-    assert result.model_dump(exclude_none=True) == {
-        "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-    }
 
 
 # --------------------------------------------------------------------------
