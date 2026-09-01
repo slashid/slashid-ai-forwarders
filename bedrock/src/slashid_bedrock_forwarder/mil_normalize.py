@@ -76,7 +76,7 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]
         on_parse=_on_anthropic_stream_parse,
     ),
     _Format(
-        name="converse-response",
+        name="bedrock-converse",
         adapter=TypeAdapter(ConverseResponse),
         translate=lambda r: r,  # identity — already Converse; no envelope side effects
     ),

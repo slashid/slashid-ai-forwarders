@@ -775,7 +775,7 @@ requires-dist = [
 
 [[package]]
 name = "slashid-bedrock-forwarder"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "bedrock" }
 dependencies = [
     { name = "slashid-ai-forwarder-core" },

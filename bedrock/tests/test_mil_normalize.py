@@ -497,7 +497,7 @@ def test_dispatch_native_converse_sets_parsed_as() -> None:
         },
     }
     normalize_record(record)
-    assert record["_parsed_as"] == "converse-response"
+    assert record["_parsed_as"] == "bedrock-converse"
 
 
 def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
@@ -596,7 +596,7 @@ from slashid_bedrock_forwarder.mil_normalize import _FORMATS  # noqa: E402
             ],
         ),
         (
-            "converse-response",
+            "bedrock-converse",
             {
                 "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
             },
@@ -687,7 +687,7 @@ async def test_e2e_anthropic_message_sets_parsed_as() -> None:
 
 
 async def test_e2e_converse_response_sets_parsed_as() -> None:
-    """Happy path: native Converse response → parsed_as="converse-response"."""
+    """Happy path: native Converse response → parsed_as="bedrock-converse"."""
     from slashid_ai_forwarder_core.events import build_event
 
     record = {
@@ -708,4 +708,4 @@ async def test_e2e_converse_response_sets_parsed_as() -> None:
     normalize_record(record)
     event = await build_event(record)
     assert event is not None
-    assert event.parsed_as == "converse-response"
+    assert event.parsed_as == "bedrock-converse"

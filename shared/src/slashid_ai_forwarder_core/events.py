@@ -232,9 +232,10 @@ class AIInvocationObservedV1(_WireModel):
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     # Name of the vendor format the record's outputBodyJson matched — set
     # by the envelope normalizer from its format-table entry (e.g.
-    # "anthropic-message", "anthropic-stream", "converse-response").
-    # Value "unknown" is the C' marker: no format matched, semantic
-    # fields (stop_reason, used_tools, ...) are empty or best-effort.
+    # "anthropic-message", "anthropic-stream", "bedrock-converse"). Value
+    # "unknown" means no format matched: semantic fields (stop_reason,
+    # used_tools, ...) are empty or best-effort. Convention: kebab-case
+    # ``<vendor>-<shape>`` per envelope.
     parsed_as: str
     available_agents: list[AIAgentDetails] | None = None
     used_agent_ids: list[str] | None = None
