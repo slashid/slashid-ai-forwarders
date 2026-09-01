@@ -22,7 +22,6 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
     AnthropicThinkingDelta,
     AnthropicToolUseBlock,
     AnthropicUnknownBlock,
-    AnthropicUnknownEvent,
     AnthropicUsage,
 )
 
@@ -207,11 +206,28 @@ def test_stream_thinking_delta() -> None:
     assert events[0].delta.thinking == "reasoning..."
 
 
-def test_stream_unknown_event_type_falls_through_to_catchall() -> None:
+def test_stream_unknown_event_type_fails_validation() -> None:
+    # Load-bearing for stream detection: non-Anthropic Bedrock streams
+    # (Nova/Titan/Cohere) must fail validation here so the dispatcher
+    # falls through to parsed_as="unknown" instead of wrongly claiming
+    # ownership. Anthropic adds new event types rarely — see the note
+    # in schema.py above AnthropicStreamEvent.
     raw = [{"type": "some_future_event", "payload": {"foo": 1}}]
-    events = _STREAM_ADAPTER.validate_python(raw)
-    assert isinstance(events[0], AnthropicUnknownEvent)
-    assert events[0].type == "some_future_event"
+    with pytest.raises(ValidationError):
+        _STREAM_ADAPTER.validate_python(raw)
+
+
+def test_stream_mixed_known_and_unknown_events_fail_validation() -> None:
+    # One unknown event mixed with known ones invalidates the whole list.
+    # If Anthropic adds a new event type in a real stream, we get a
+    # WARNING via the dispatcher fallthrough and add the class here.
+    raw = [
+        {"type": "message_start", "message": {"usage": {"input_tokens": 1}}},
+        {"type": "some_future_event", "payload": {}},
+        {"type": "message_stop"},
+    ]
+    with pytest.raises(ValidationError):
+        _STREAM_ADAPTER.validate_python(raw)
 
 
 def test_stream_ping() -> None:

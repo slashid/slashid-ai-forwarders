@@ -126,9 +126,21 @@ AnthropicDelta = (
 )  # smart-union; see AnthropicContentBlock for the same rationale.
 
 
+class AnthropicMessageStartPayload(_LenientModel):
+    """The `message` payload inside a ``message_start`` event.
+
+    Deliberately lax — real Anthropic wire carries the full AnthropicMessage
+    envelope (type/role/content/model/…), but some MIL captures strip it
+    down to just ``usage``. We only rely on ``usage`` here; everything else
+    is dropped via ``extra="ignore"``.
+    """
+
+    usage: AnthropicUsage | None = None
+
+
 class AnthropicMessageStart(_LenientModel):
     type: Literal["message_start"]
-    message: AnthropicMessage | None = None
+    message: AnthropicMessageStartPayload | None = None
 
 
 class AnthropicMessageDelta(_LenientModel):
@@ -162,10 +174,16 @@ class AnthropicPing(_LenientModel):
     type: Literal["ping"]
 
 
-class AnthropicUnknownEvent(_LenientModel):
-    type: str
-
-
+# NOTE: intentionally no catch-all AnthropicUnknownEvent variant. If a stream
+# contains an event with an unknown top-level `type`, `list[AnthropicStreamEvent]`
+# validation fails and the dispatcher falls through to `parsed_as="unknown"`.
+# This is load-bearing for stream detection: non-Anthropic Bedrock streams
+# (Nova/Titan/Cohere use their own event vocabulary) MUST fail to validate
+# here so mil_normalize doesn't wrongly claim ownership of them. Anthropic
+# adds new event types rarely — when they do, we'll see the WARNING and add
+# the class here. Content-block-level unknown-tolerance still lives on
+# AnthropicUnknownBlock / AnthropicUnknownDelta (inner shapes where new
+# variants are more common).
 AnthropicStreamEvent = (
     AnthropicMessageStart
     | AnthropicMessageDelta
@@ -174,5 +192,4 @@ AnthropicStreamEvent = (
     | AnthropicContentBlockDeltaEvent
     | AnthropicContentBlockStop
     | AnthropicPing
-    | AnthropicUnknownEvent
-)  # smart-union; see AnthropicContentBlock for the same rationale.
+)
