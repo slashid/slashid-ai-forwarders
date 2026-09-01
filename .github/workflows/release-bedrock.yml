@@ -1,0 +1,108 @@
+name: Release Bedrock
+
+on:
+  push:
+    tags: ["bedrock-v*"]
+
+permissions:
+  contents: write
+
+env:
+  # Lambda runtime target. Must match the Runtime in bedrock/deploy/cloudformation/forwarder.yaml.
+  PYTHON_VERSION: "3.13"
+  # x86_64 is Lambda's default architecture; pinning the wheel tag here means
+  # `uv pip install` picks the right pydantic-core / httpx native binaries.
+  # Format is uv's `--python-platform` syntax, not the pip wheel-tag syntax.
+  PLATFORM_TAG: "x86_64-manylinux2014"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Resolve and verify version
+        # The tag is the release trigger, but the version is the source of
+        # truth in bedrock/pyproject.toml. Refuse to release on mismatch so
+        # a fat-fingered tag doesn't ship a wrong-numbered artifact.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#bedrock-v}"
+          FILE_VERSION="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("bedrock/pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME expects version $TAG_VERSION but bedrock/pyproject.toml has $FILE_VERSION"
+            exit 1
+          fi
+          {
+            echo "VERSION=$FILE_VERSION"
+            echo "ARTIFACT=slashid-bedrock-forwarder-v${FILE_VERSION}.zip"
+          } >> "$GITHUB_ENV"
+
+      - name: Export runtime dependencies (skip workspace member)
+        # --no-emit-workspace strips the slashid-ai-forwarder-core dep from
+        # the requirements file; we install its sources by copying the tree
+        # into build/ directly (Lambda has no visibility of workspace
+        # sources at deploy time).
+        run: |
+          uv export \
+            --package slashid-bedrock-forwarder \
+            --no-dev \
+            --no-emit-workspace \
+            --no-hashes \
+            --format requirements-txt \
+            > build-requirements.txt
+          echo "=== build-requirements.txt ==="
+          cat build-requirements.txt
+
+      - name: Install dependencies into build dir (Lambda-compatible wheels)
+        run: |
+          mkdir -p build
+          uv pip install \
+            --target build \
+            --python-version "${PYTHON_VERSION}" \
+            --python-platform "${PLATFORM_TAG}" \
+            --no-installer-metadata \
+            --requirement build-requirements.txt
+
+      - name: Bundle both source trees
+        run: |
+          cp -r bedrock/src/slashid_bedrock_forwarder build/
+          cp -r shared/src/slashid_ai_forwarder_core   build/
+
+      - name: Strip noise from the package
+        run: |
+          # Keep .dist-info — pydantic uses importlib.metadata to check
+          # pydantic_core's version at import time.
+          find build -type d -name __pycache__ -prune -exec rm -rf {} +
+          find build -name "*.pyc" -delete
+
+      - name: Build the deployable zip
+        run: |
+          (cd build && zip -qr "../${ARTIFACT}" .)
+          ls -lah "${ARTIFACT}"
+
+      - name: Stage CloudFormation template
+        run: cp bedrock/deploy/cloudformation/forwarder.yaml cloudformation.yaml
+
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          # Only the version suffix determines pre-release, not the bedrock- prefix.
+          if [[ "${VERSION}" == *-* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ARTIFACT }}
+            cloudformation.yaml
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}

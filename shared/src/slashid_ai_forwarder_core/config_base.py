@@ -1,23 +1,20 @@
-"""Cold-start configuration via pydantic-settings.
+"""Base configuration for SlashID AI forwarders via pydantic-settings.
 
-All values come from environment variables with the `SLASHID_` prefix.
-`load_config()` is cached so warm invocations reuse the parsed instance.
+Subclasses (one per forwarder) may add per-source fields — e.g. Bedrock's
+optional S3 offload bucket — but the shared surface below is enough to
+POST to the SlashID NHI subgraph.
 
-The push token is the SlashID connection's event-streaming token;
-CloudFormation sets it from a `NoEcho` parameter, and Lambda env vars
-are encrypted at rest with a KMS key.
+All values come from environment variables with the ``SLASHID_`` prefix.
 """
 
 from __future__ import annotations
-
-from functools import cache
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Config(BaseSettings):
-    """Forwarder runtime configuration."""
+class BaseConfig(BaseSettings):
+    """Shared runtime configuration for any AI-forwarder Lambda/service."""
 
     model_config = SettingsConfigDict(
         env_prefix="SLASHID_",
@@ -46,9 +43,3 @@ class Config(BaseSettings):
         # `endpoint + "/nhi/events/..."` so a trailing slash produces a
         # double slash. Normalise at the boundary.
         return v.rstrip("/")
-
-
-@cache
-def load_config() -> Config:
-    """Load the forwarder config once per Lambda container."""
-    return Config()  # pydantic-settings fills required fields from env

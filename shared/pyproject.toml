@@ -1,0 +1,50 @@
+[project]
+name = "slashid-ai-forwarder-core"
+version = "0.1.0"
+description = "Shared library for SlashID AI-provider forwarders."
+requires-python = ">=3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "SlashID" }]
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "tenacity>=9.0",
+    # aioboto3 is here (rather than in bedrock/) because
+    # slashid_ai_forwarder_core.events._accessed_files lazily imports
+    # slashid_ai_forwarder_core.s3._resolve_s3_attachment. Making the
+    # attachment resolver injectable (so shared/events.py is vendor-
+    # neutral and non-AWS forwarders don't pull aioboto3) is tracked
+    # as a Phase 2 cleanup.
+    "aioboto3>=15.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slashid_ai_forwarder_core"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle, pyflakes
+    "I",                # isort
+    "UP",               # pyupgrade
+    "B",                # flake8-bugbear
+    "SIM",              # flake8-simplify
+    "RUF",              # ruff-specific
+]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"

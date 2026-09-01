@@ -31,7 +31,7 @@ from tenacity import (
     wait_fixed,
 )
 
-from .content_utils import SNAP_TOLERANCE
+from slashid_ai_forwarder_core.content_utils import SNAP_TOLERANCE
 
 log = logging.getLogger(__name__)
 

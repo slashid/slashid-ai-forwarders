@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Smoke-test the forwarder via a native Converse invocation against a Bedrock
+# model that doesn't go through the Anthropic normalizer — this exercises the
+# "already-Converse, pass-through" branch of mil_normalize.normalize_record.
+#
+# Uses the IAM credentials already in your AWS SDK chain (env, ~/.aws/credentials,
+# or `aws sso login`).
+#
+# Usage:
+#   ./bedrock-converse                            # default prompt, Nova Pro
+#   ./bedrock-converse "your prompt here"         # custom prompt, Nova Pro
+#   MODEL_ID=us.amazon.nova-lite-v1:0 ./bedrock-converse   # different model
+#
+# Requires: aws CLI, jq.
+
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "error: jq is required (used to build the request JSON safely)" >&2
+  exit 1
+fi
+
+export AWS_REGION="${AWS_REGION:-us-east-2}"
+MODEL_ID="${MODEL_ID:-us.amazon.nova-pro-v1:0}"
+PROMPT="${1:-Say hello in one sentence.}"
+
+aws bedrock-runtime converse \
+  --model-id "${MODEL_ID}" \
+  --messages "$(jq -nc --arg text "$PROMPT" '[{role:"user",content:[{text:$text}]}]')"

@@ -1,0 +1,1 @@
+"""Vendor-shape → intermediate normalizers."""

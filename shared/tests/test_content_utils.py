@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from slashid_bedrock_forwarder.content_utils import strip_cat_n, truncate_middle
+from slashid_ai_forwarder_core.content_utils import strip_cat_n, truncate_middle
 
 # ---------------------------------------------------------------------------
 # truncate_middle

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from slashid_bedrock_forwarder.model_catalog import (
+from slashid_ai_forwarder_core.model_catalog import (
     ModelInfo,
     _canonical_id,
     get_model_info,
@@ -14,7 +14,7 @@ from slashid_bedrock_forwarder.model_catalog import (
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("slashid_bedrock_forwarder.model_catalog._catalogs", {})
+    monkeypatch.setattr("slashid_ai_forwarder_core.model_catalog._catalogs", {})
 
 
 @pytest.mark.parametrize(
@@ -45,7 +45,7 @@ def test_get_model_info_hit(monkeypatch: pytest.MonkeyPatch) -> None:
         provider="Amazon",
     )
     monkeypatch.setattr(
-        "slashid_bedrock_forwarder.model_catalog._catalogs",
+        "slashid_ai_forwarder_core.model_catalog._catalogs",
         {"us-east-2": {"amazon.nova-micro-v1:0": info}},
     )
     # canonical key → found via stripped fallback
@@ -66,7 +66,7 @@ def test_get_model_info_raw_key_preferred(monkeypatch: pytest.MonkeyPatch) -> No
         provider="Amazon",
     )
     monkeypatch.setattr(
-        "slashid_bedrock_forwarder.model_catalog._catalogs",
+        "slashid_ai_forwarder_core.model_catalog._catalogs",
         {
             "us-east-2": {
                 "us.amazon.nova-micro-v1:0": info_raw,
@@ -79,7 +79,7 @@ def test_get_model_info_raw_key_preferred(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_get_model_info_miss(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "slashid_bedrock_forwarder.model_catalog._catalogs",
+        "slashid_ai_forwarder_core.model_catalog._catalogs",
         {"us-east-2": {}},
     )
     assert get_model_info("unknown.model-v1:0", "us-east-2") is None
@@ -92,7 +92,7 @@ def test_get_model_info_arn_input(monkeypatch: pytest.MonkeyPatch) -> None:
         provider="Amazon",
     )
     monkeypatch.setattr(
-        "slashid_bedrock_forwarder.model_catalog._catalogs",
+        "slashid_ai_forwarder_core.model_catalog._catalogs",
         {"us-east-2": {"amazon.nova-micro-v1:0": info}},
     )
     arn_input = "arn:aws:bedrock:us-east-2:851725497009:inference-profile/us.amazon.nova-micro-v1:0"
@@ -106,7 +106,7 @@ def test_catalog_loaded_once(monkeypatch: pytest.MonkeyPatch) -> None:
         load_calls.append(region)
         return {}
 
-    monkeypatch.setattr("slashid_bedrock_forwarder.model_catalog._load", fake_load)
+    monkeypatch.setattr("slashid_ai_forwarder_core.model_catalog._load", fake_load)
     get_model_info("amazon.nova-micro-v1:0", "us-east-2")
     get_model_info("amazon.nova-micro-v1:0", "us-east-2")
     assert load_calls == ["us-east-2"]
@@ -119,7 +119,7 @@ def test_reset_catalog_clears_state(monkeypatch: pytest.MonkeyPatch) -> None:
         load_calls.append(region)
         return {}
 
-    monkeypatch.setattr("slashid_bedrock_forwarder.model_catalog._load", fake_load)
+    monkeypatch.setattr("slashid_ai_forwarder_core.model_catalog._load", fake_load)
     get_model_info("amazon.nova-micro-v1:0", "us-east-2")
     reset_catalog()
     get_model_info("amazon.nova-micro-v1:0", "us-east-2")

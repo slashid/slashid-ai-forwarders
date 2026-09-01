@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Run Claude Code routed through AWS Bedrock for the SlashID test account.
+#
+# Useful for smoke-testing the forwarder end-to-end: point this at an account
+# where the CloudFormation template is deployed, run an interactive session
+# (or a one-shot), then confirm AIInvocationObservedV1 events land on the
+# SlashID side.
+#
+# Uses the IAM credentials already in your AWS SDK chain (env, ~/.aws/credentials,
+# or `aws sso login`). Bedrock-mode disables /login — auth comes from AWS.
+#
+# Usage:
+#   ./bedrock-claude                     # interactive session
+#   ./bedrock-claude "explore this repo" # one-shot
+
+set -euo pipefail
+
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION="${AWS_REGION:-us-east-2}"
+
+export ANTHROPIC_MODEL='us.anthropic.claude-sonnet-4-6'
+export ANTHROPIC_DEFAULT_OPUS_MODEL='us.anthropic.claude-opus-4-7'
+export ANTHROPIC_DEFAULT_SONNET_MODEL='us.anthropic.claude-sonnet-4-6'
+export ANTHROPIC_DEFAULT_HAIKU_MODEL='us.anthropic.claude-haiku-4-5-20251001-v1:0'
+
+exec claude "$@"

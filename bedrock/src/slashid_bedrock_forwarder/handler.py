@@ -32,12 +32,12 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
+from slashid_ai_forwarder_core.events import AIInvocationObservedV1, build_event
+from slashid_ai_forwarder_core.s3 import resolve_offloaded_bodies
+from slashid_ai_forwarder_core.sink import push_invocations
 
 from .config import Config, load_config
-from .events import AIInvocationObservedV1, build_event
 from .mil_normalize import normalize_record
-from .s3 import resolve_offloaded_bodies
-from .sink import push_invocations
 
 log = logging.getLogger()
 log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
