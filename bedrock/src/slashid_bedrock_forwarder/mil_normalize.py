@@ -1,117 +1,169 @@
-"""Normalize Bedrock MIL records to the Converse shape.
+"""Normalize Bedrock MIL records to the Converse shape via typed dispatch.
 
-Envelope glue for Bedrock's Model Invocation Logging: unwraps
-``record["input"]["inputBodyJson"]`` / ``record["output"]["outputBodyJson"]``,
-dispatches on payload shape, calls the shared Anthropic → Converse pure
-functions, and writes results back into the envelope. Already-Converse
-records pass through unchanged.
+Table-driven: each entry in ``_FORMATS`` pairs a ``TypeAdapter`` with a
+pure translate function that returns a ``ConverseResponse``. Optional
+``on_parse`` callbacks handle envelope-specific side effects (Anthropic
+token backfill into MIL top-level fields). First-match-wins ordering is
+safe because the format shapes are structurally exclusive (Anthropic
+message is a dict-with-`type:"message"`; Anthropic stream is a list;
+Converse response is a dict-with-`output.message.role`).
 
-The vendor-shape logic (Anthropic Messages ↔ Converse transforms) lives
-in :mod:`slashid_ai_forwarder_core.normalize.anthropic` — Vertex's
-``rawPredict`` path on Anthropic reuses it verbatim, with a Vertex-shaped
-envelope glue file replacing this one.
+The vendor payload logic (Anthropic Messages ↔ Converse transforms)
+lives in :mod:`slashid_ai_forwarder_core.normalize.anthropic.normalize`.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
-from slashid_ai_forwarder_core.normalize.anthropic import (
-    anthropic_message_to_converse,
-    anthropic_stream_to_converse,
-    anthropic_tools_to_converse_tool_config,
-    extract_anthropic_stream_usage,
-    looks_like_anthropic_message,
-    looks_like_anthropic_stream,
+from pydantic import TypeAdapter, ValidationError
+from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
+    extract_stream_usage,
+    message_to_converse,
+    stream_to_converse,
+    tools_to_converse_tool_config,
 )
+from slashid_ai_forwarder_core.normalize.anthropic.schema import (
+    AnthropicMessage,
+    AnthropicStreamEvent,
+    AnthropicToolDeclaration,
+    AnthropicUsage,
+)
+from slashid_ai_forwarder_core.normalize.converse.schema import ConverseResponse
 
 log = logging.getLogger(__name__)
 
 
-def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch on the record's API family and rewrite in place to Converse shape.
+@dataclass(frozen=True)
+class _Format[T]:
+    """One row in the MIL format-dispatch table."""
 
-    Each family-normalizer owns the full input+output rewrite for its
-    shape, because the caller's API family determines both. Unrecognized
-    shapes (Converse, other-vendor streams) are left untouched.
+    name: str
+    adapter: TypeAdapter[T]
+    translate: Callable[[T], ConverseResponse]
+    on_parse: Callable[[dict[str, Any], T], None] | None = None
+
+
+def _on_anthropic_message_parse(rec: dict[str, Any], msg: AnthropicMessage) -> None:
+    """Anthropic-message envelope side effects: rewrite input tools + backfill tokens."""
+    _rewrite_input_tools(rec)
+    _backfill_tokens_from_usage(rec, msg.usage)
+
+
+def _on_anthropic_stream_parse(
+    rec: dict[str, Any],
+    events: list[AnthropicStreamEvent],
+) -> None:
+    """Anthropic-stream envelope side effects: rewrite input tools + backfill tokens."""
+    _rewrite_input_tools(rec)
+    _backfill_tokens_from_usage(rec, extract_stream_usage(events))
+
+
+_FORMATS: list[_Format] = [  # type: ignore[type-arg]
+    _Format(
+        name="anthropic-message",
+        adapter=TypeAdapter(AnthropicMessage),
+        translate=message_to_converse,
+        on_parse=_on_anthropic_message_parse,
+    ),
+    _Format(
+        name="anthropic-stream",
+        adapter=TypeAdapter(list[AnthropicStreamEvent]),
+        translate=stream_to_converse,
+        on_parse=_on_anthropic_stream_parse,
+    ),
+    _Format(
+        name="converse-response",
+        adapter=TypeAdapter(ConverseResponse),
+        translate=lambda r: r,  # identity — already Converse; no envelope side effects
+    ),
+]
+
+
+def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch on the record's output body shape and rewrite in place.
+
+    Sets ``record["_parsed_as"]`` to the matching format name, or
+    ``"unknown"`` on fallthrough. ``build_event`` reads this to populate
+    the wire field.
+
+    Note: request-side ``_rewrite_input_tools`` is called from the
+    Anthropic ``on_parse`` callbacks (family-scoped) — not unconditionally
+    up-front — so non-Anthropic output shapes (Converse, unknown) leave
+    the input body untouched.
     """
     out = (record.get("output") or {}).get("outputBodyJson")
-    if looks_like_anthropic_stream(out):
-        _normalize_anthropic_stream(record, cast("list[Any]", out))
-    elif looks_like_anthropic_message(out):
-        _normalize_anthropic_message(record, cast("dict[str, Any]", out))
+    for fmt in _FORMATS:
+        try:
+            parsed = fmt.adapter.validate_python(out)
+        except ValidationError:
+            continue
+        if fmt.on_parse is not None:
+            fmt.on_parse(record, parsed)
+        canonical = fmt.translate(parsed)
+        record["output"]["outputBodyJson"] = canonical.model_dump(
+            mode="json",
+            exclude_none=True,
+        )
+        record["_parsed_as"] = fmt.name
+        log.debug("normalized record as %s", fmt.name)
+        return record
+    log.warning(
+        "unrecognized MIL body shape for model=%s request_id=%s",
+        record.get("modelId"),
+        record.get("requestId"),
+    )
+    record["_parsed_as"] = "unknown"
     return record
 
 
-def _normalize_anthropic_stream(record: dict[str, Any], events: list[Any]) -> None:
-    """Rewrite an Anthropic streaming record in place to Converse shape.
-
-    Precondition: dispatched to only after ``looks_like_anthropic_stream``
-    matched, which is the only guarantor that
-    ``record["output"]["outputBodyJson"]`` is a list — bracket access
-    below is safe post-detection.
-    """
-    _rewrite_input_tools(record)
-    _backfill_tokens_from_body_usage(record, extract_anthropic_stream_usage(events))
-    record["output"]["outputBodyJson"] = anthropic_stream_to_converse(events)
-
-
-def _normalize_anthropic_message(record: dict[str, Any], body: dict[str, Any]) -> None:
-    """Rewrite an Anthropic non-streaming record in place to Converse shape.
-
-    Precondition: dispatched to only after ``looks_like_anthropic_message``
-    matched, which is the only guarantor that
-    ``record["output"]["outputBodyJson"]`` is a dict — bracket access
-    below is safe post-detection.
-    """
-    _rewrite_input_tools(record)
-    _backfill_tokens_from_body_usage(record, body.get("usage"))
-    record["output"]["outputBodyJson"] = anthropic_message_to_converse(body)
-
-
 def _rewrite_input_tools(record: dict[str, Any]) -> None:
-    """Rewrite request-side ``body.tools[]`` → ``body.toolConfig`` via the shared helper.
+    """Rewrite Anthropic-side body.tools[] → body.toolConfig via the shared helper.
 
-    Idempotent — leaves the body alone when ``toolConfig`` is already
-    present or when there are no Anthropic-flat tools to convert.
+    Bespoke function in 1.1 — the only request-side transform we need.
+    When Phase 2 grows more request-side rewrites, migrate to a parallel
+    ``_INPUT_FORMATS`` table with the same shape as ``_FORMATS``.
     """
-    input_body = (record.get("input") or {}).get("inputBodyJson")
-    if not isinstance(input_body, dict) or "toolConfig" in input_body:
+    body = (record.get("input") or {}).get("inputBodyJson")
+    if not isinstance(body, dict) or "toolConfig" in body:
         return
-    tools = input_body.get("tools")
-    if not isinstance(tools, list):
+    raw_tools = body.get("tools")
+    if not isinstance(raw_tools, list) or not raw_tools:
         return
-    tool_config = anthropic_tools_to_converse_tool_config(tools)
-    if tool_config:
-        input_body["toolConfig"] = tool_config
+    tools = [AnthropicToolDeclaration.model_validate(t) for t in raw_tools if isinstance(t, dict)]
+    if not tools:
+        return
+    body["toolConfig"] = tools_to_converse_tool_config(tools).model_dump(
+        by_alias=True,
+        exclude_none=True,
+    )
 
 
-def _backfill_tokens_from_body_usage(record: dict[str, Any], usage: Any) -> None:
-    """Copy Anthropic ``body.usage`` counts to MIL top-level fields when missing.
+def _backfill_tokens_from_usage(
+    record: dict[str, Any],
+    usage: AnthropicUsage | None,
+) -> None:
+    """Copy Anthropic body.usage counts to MIL top-level fields when missing.
 
-    Bedrock MIL populates ``input.inputTokenCount`` and ``output.outputTokenCount``
-    at the record top level for non-streaming Anthropic InvokeModel responses,
-    but does NOT populate ``input.cacheReadInputTokenCount`` or
-    ``cacheWriteInputTokenCount``. The counts are always inside ``body.usage``,
-    so backfill before we discard the body during reconstruction. Downstream
-    (``build_event.tokens``) then reads all four fields uniformly at the top
-    level regardless of API family.
-
-    Idempotent — only sets fields that are currently None. MIL wins when set.
+    Bedrock MIL populates inputTokenCount/outputTokenCount at the record
+    top level for non-streaming Anthropic InvokeModel responses, but does
+    NOT populate cacheReadInputTokenCount / cacheWriteInputTokenCount.
+    The counts live inside body.usage; backfill before the body is
+    replaced by translate. Idempotent — only sets fields currently None.
     """
-    if not isinstance(usage, dict):
+    if usage is None:
         return
     inp = record.setdefault("input", {})
     out = record.setdefault("output", {})
-    _set_if_absent(inp, "inputTokenCount", usage.get("input_tokens"))
-    _set_if_absent(out, "outputTokenCount", usage.get("output_tokens"))
-    _set_if_absent(inp, "cacheReadInputTokenCount", usage.get("cache_read_input_tokens"))
-    _set_if_absent(inp, "cacheWriteInputTokenCount", usage.get("cache_creation_input_tokens"))
+    _set_if_absent(inp, "inputTokenCount", usage.input_tokens)
+    _set_if_absent(out, "outputTokenCount", usage.output_tokens)
+    _set_if_absent(inp, "cacheReadInputTokenCount", usage.cache_read_input_tokens)
+    _set_if_absent(inp, "cacheWriteInputTokenCount", usage.cache_creation_input_tokens)
 
 
-def _set_if_absent(container: dict[str, Any], key: str, value: Any) -> None:
-    """Set ``container[key] = value`` only when the key is missing / None and
-    the value is a non-None int (the shape Anthropic uses for token counts)."""
+def _set_if_absent(container: dict[str, Any], key: str, value: int | None) -> None:
     if container.get(key) is None and isinstance(value, int):
         container[key] = value

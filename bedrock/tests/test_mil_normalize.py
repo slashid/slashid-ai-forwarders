@@ -439,3 +439,179 @@ def test_anthropic_stream_input_tools_rewritten_with_output() -> None:
     assert "toolConfig" in out["input"]["inputBodyJson"]
     # Output reconstructed from stream events.
     assert out["output"]["outputBodyJson"]["stopReason"] == "end_turn"
+
+
+# --------------------------------------------------------------------------
+# Table-driven dispatch: parsed_as marker + fallthrough
+# --------------------------------------------------------------------------
+
+
+def test_dispatch_anthropic_message_sets_parsed_as() -> None:
+    record = {
+        "input": {"inputBodyJson": {"anthropic_version": "bedrock-2023-05-31"}},
+        "output": {
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "hi"}],
+                "stop_reason": "end_turn",
+            }
+        },
+    }
+    normalize_record(record)
+    assert record["_parsed_as"] == "anthropic-message"
+
+
+def test_dispatch_anthropic_stream_sets_parsed_as() -> None:
+    record = {
+        "input": {"inputBodyJson": {"anthropic_version": "bedrock-2023-05-31"}},
+        "output": {
+            "outputBodyJson": [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "hi"},
+                },
+                {"type": "content_block_stop", "index": 0},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+            ]
+        },
+    }
+    normalize_record(record)
+    assert record["_parsed_as"] == "anthropic-stream"
+
+
+def test_dispatch_native_converse_sets_parsed_as() -> None:
+    record = {
+        "input": {"inputBodyJson": {"messages": [{"role": "user", "content": [{"text": "hi"}]}]}},
+        "output": {
+            "outputBodyJson": {
+                "output": {"message": {"role": "assistant", "content": [{"text": "hello"}]}},
+                "stopReason": "end_turn",
+            }
+        },
+    }
+    normalize_record(record)
+    assert record["_parsed_as"] == "converse-response"
+
+
+def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    record = {
+        "modelId": "amazon.new-model-v1:0",
+        "requestId": "req-xyz",
+        "input": {"inputBodyJson": {}},
+        "output": {"outputBodyJson": {"totally": "unknown", "shape": [1, 2, 3]}},
+    }
+    with caplog.at_level(logging.WARNING, logger="slashid_bedrock_forwarder.mil_normalize"):
+        normalize_record(record)
+    assert record["_parsed_as"] == "unknown"
+    assert any(
+        "unrecognized MIL body shape" in r.message and "amazon.new-model-v1:0" in r.message
+        for r in caplog.records
+    )
+
+
+def test_dispatch_backfill_tokens_from_anthropic_message_usage() -> None:
+    # cache_creation_input_tokens should be copied to cacheWriteInputTokenCount.
+    record = {
+        "input": {"inputBodyJson": {}},
+        "output": {
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "usage": {
+                    "cache_creation_input_tokens": 42,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                },
+            }
+        },
+    }
+    normalize_record(record)
+    assert record["input"]["cacheWriteInputTokenCount"] == 42
+    assert record["input"]["inputTokenCount"] == 10
+    assert record["output"]["outputTokenCount"] == 5
+
+
+def test_dispatch_backfill_tokens_idempotent_does_not_overwrite() -> None:
+    # If MIL already populated a field, backfill leaves it alone.
+    record = {
+        "input": {
+            "inputBodyJson": {},
+            "inputTokenCount": 999,
+        },
+        "output": {
+            "outputBodyJson": {
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "usage": {"input_tokens": 10},
+            }
+        },
+    }
+    normalize_record(record)
+    assert record["input"]["inputTokenCount"] == 999
+
+
+# --------------------------------------------------------------------------
+# Structural-exclusivity invariant: exactly one format matches each
+# canonical payload. Guards against a future schema loosening that would
+# let two formats claim the same shape.
+# --------------------------------------------------------------------------
+
+
+from pydantic import ValidationError  # noqa: E402
+
+from slashid_bedrock_forwarder.mil_normalize import _FORMATS  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "expected_name,payload",
+    [
+        (
+            "anthropic-message",
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "hi"}],
+            },
+        ),
+        (
+            "anthropic-stream",
+            [
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+                {"type": "content_block_stop", "index": 0},
+            ],
+        ),
+        (
+            "converse-response",
+            {
+                "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            },
+        ),
+    ],
+)
+def test_format_structural_exclusivity(expected_name: str, payload: Any) -> None:
+    matches = []
+    for fmt in _FORMATS:
+        try:
+            fmt.adapter.validate_python(payload)
+        except ValidationError:
+            continue
+        matches.append(fmt.name)
+    assert matches == [expected_name], (
+        f"Expected exactly {[expected_name]!r} to match, got {matches!r}. "
+        "Two formats claiming the same shape violates first-match-wins invariance."
+    )
