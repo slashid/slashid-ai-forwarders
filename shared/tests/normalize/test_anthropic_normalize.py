@@ -17,8 +17,12 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
     AnthropicMessage,
     AnthropicStreamEvent,
     AnthropicToolDeclaration,
+    AnthropicUsage,
 )
-from slashid_ai_forwarder_core.normalize.converse.schema import ConverseResponse
+from slashid_ai_forwarder_core.normalize.converse.schema import (
+    ConverseResponse,
+    ConverseToolConfig,
+)
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 _STREAM = TypeAdapter(list[AnthropicStreamEvent])
@@ -115,58 +119,12 @@ def test_anthropic_stream_malformed_input_json_yields_empty_dict(
 # --------------------------------------------------------------------------
 
 
-def test_anthropic_tools_to_converse_tool_config() -> None:
-    tools = [
-        AnthropicToolDeclaration.model_validate(
-            {
-                "name": "read",
-                "description": "Read a file.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                },
-            }
-        ),
-    ]
-    result = tools_to_converse_tool_config(tools)
-    assert result.model_dump(by_alias=True, exclude_none=True) == {
-        "tools": [
-            {
-                "toolSpec": {
-                    "name": "read",
-                    "description": "Read a file.",
-                    "inputSchema": {
-                        "json": {
-                            "type": "object",
-                            "properties": {"path": {"type": "string"}},
-                        }
-                    },
-                },
-            },
-        ],
-    }
-
-
-def test_anthropic_tools_to_converse_tool_config_empty_input() -> None:
-    result = tools_to_converse_tool_config([])
-    assert result.model_dump(by_alias=True, exclude_none=True) == {"tools": []}
-
-
-def test_anthropic_tools_to_converse_tool_config_missing_input_schema() -> None:
-    tools = [AnthropicToolDeclaration.model_validate({"name": "noop"})]
-    result = tools_to_converse_tool_config(tools)
-    assert result.tools[0].toolSpec.inputSchema.json_ == {}
-    # Wire form: {"json": {}}
-    assert result.model_dump(by_alias=True, exclude_none=True) == {
-        "tools": [
-            {
-                "toolSpec": {
-                    "name": "noop",
-                    "inputSchema": {"json": {}},
-                },
-            },
-        ],
-    }
+@yaml_pytest()
+def test_anthropic_tools_to_converse_tool_config(
+    body: list[AnthropicToolDeclaration],
+    expected: ConverseToolConfig,
+) -> None:
+    assert tools_to_converse_tool_config(body) == expected
 
 
 # --------------------------------------------------------------------------
@@ -174,43 +132,9 @@ def test_anthropic_tools_to_converse_tool_config_missing_input_schema() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_extract_stream_usage_merges_start_and_delta() -> None:
-    events = _STREAM.validate_python(
-        [
-            {
-                "type": "message_start",
-                "message": {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [],
-                    "usage": {"input_tokens": 10, "cache_read_input_tokens": 3},
-                },
-            },
-            {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 12}},
-        ]
-    )
-    usage = extract_stream_usage(events)
-    assert usage.input_tokens == 10
-    assert usage.output_tokens == 12
-    assert usage.cache_read_input_tokens == 3
-
-
-def test_extract_stream_usage_empty_events() -> None:
-    usage = extract_stream_usage(_STREAM.validate_python([]))
-    assert usage.input_tokens is None
-    assert usage.output_tokens is None
-    assert usage.cache_read_input_tokens is None
-    assert usage.cache_creation_input_tokens is None
-    assert usage.model_dump(exclude_none=True) == {}
-
-
-def test_extract_stream_usage_delta_only() -> None:
-    # Some responses only carry usage in message_delta.
-    events = _STREAM.validate_python(
-        [
-            {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 5}},
-        ]
-    )
-    usage = extract_stream_usage(events)
-    assert usage.output_tokens == 5
-    assert usage.input_tokens is None
+@yaml_pytest()
+def test_extract_stream_usage(
+    body: list[AnthropicStreamEvent],
+    expected: AnthropicUsage,
+) -> None:
+    assert extract_stream_usage(body) == expected
