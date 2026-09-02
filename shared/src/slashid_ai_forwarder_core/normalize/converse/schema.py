@@ -118,3 +118,74 @@ class ConverseTool(_LenientModel):
 
 class ConverseToolConfig(_LenientModel):
     tools: list[ConverseTool] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# Request-side schemas (Phase 2)
+# --------------------------------------------------------------------------
+
+
+class ConverseSystemContentBlock(_LenientModel):
+    """One entry of ``ConverseRequestBody.system``.
+
+    Bedrock system is a ``list[SystemContentBlock]`` where each block
+    carries ``{text: "..."}`` (canonical) — variants like ``{guardContent:
+    ...}`` are dropped via _LenientModel.
+    """
+
+    text: str = ""
+
+
+class ConverseToolResultContent(_LenientModel):
+    """Inner ``toolResult`` payload — the ``{toolUseId, content, status}`` shape."""
+
+    toolUseId: str
+    content: JsonValue = None  # list[block] | str — kept loose
+    status: Literal["success", "error"] | None = None
+
+
+class ConverseToolResultBlock(_StrictModel):
+    """User-turn content block carrying a tool result back to the model.
+
+    Key-tagged with ``toolResult`` (matches the pattern of ``ConverseTextBlock`` /
+    ``ConverseToolUseBlock`` / ``ConverseReasoningBlock``). Strict so
+    smart-union picks the variant whose key IS present.
+    """
+
+    toolResult: ConverseToolResultContent
+
+
+ConverseRequestContentBlock = (
+    ConverseTextBlock
+    | ConverseToolUseBlock
+    | ConverseReasoningBlock
+    | ConverseToolResultBlock
+    | ConverseUnknownBlock
+)
+# Superset of response-side ConverseContentBlock, adding
+# ConverseToolResultBlock for user-turn content.
+
+
+class ConverseRequestMessage(_LenientModel):
+    """One message in ``ConverseRequestBody.messages``.
+
+    Role widened from response-side ``Literal["assistant"]`` to
+    ``Literal["user", "assistant"]`` (request-side is the conversation
+    history).
+    """
+
+    role: Literal["user", "assistant"]
+    content: list[ConverseRequestContentBlock]
+
+
+class ConverseRequestBody(_LenientModel):
+    """The request body sent to Bedrock Converse API.
+
+    Content-relevant fields only — inferenceConfig,
+    additionalModelRequestFields, guardrailConfig, etc. are dropped via
+    _LenientModel.
+    """
+
+    system: list[ConverseSystemContentBlock] | None = None
+    messages: list[ConverseRequestMessage]
+    toolConfig: ConverseToolConfig | None = None
