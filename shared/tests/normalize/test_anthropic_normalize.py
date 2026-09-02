@@ -7,15 +7,10 @@ from pydantic import TypeAdapter
 
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
     extract_stream_usage,
-    tools_to_converse_tool_config,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.schema import (
     AnthropicStreamEvent,
-    AnthropicToolDeclaration,
     AnthropicUsage,
-)
-from slashid_ai_forwarder_core.normalize.converse.schema import (
-    ConverseToolConfig,
 )
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
@@ -113,19 +108,6 @@ def test_anthropic_stream_malformed_input_json_yields_empty_dict(
         and "malformed" in r.message
     ]
     assert len(matches) == 1
-
-
-# --------------------------------------------------------------------------
-# tools_to_converse_tool_config
-# --------------------------------------------------------------------------
-
-
-@yaml_pytest()
-def test_anthropic_tools_to_converse_tool_config(
-    body: list[AnthropicToolDeclaration],
-    expected: ConverseToolConfig,
-) -> None:
-    assert tools_to_converse_tool_config(body) == expected
 
 
 # --------------------------------------------------------------------------

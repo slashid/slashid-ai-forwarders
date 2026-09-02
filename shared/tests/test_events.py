@@ -14,6 +14,9 @@ from slashid_ai_forwarder_core.events import (
     build_event,
     parse_tool_name,
 )
+from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
+    anthropic_dict_to_normalized,
+)
 from slashid_ai_forwarder_core.normalize.converse.normalize import (
     converse_dict_to_normalized,
 )
@@ -116,7 +119,8 @@ async def test_build_event_with_tools_and_used_ids() -> None:
                         },
                         {"toolSpec": {"name": "Bash", "description": "shell"}},
                     ]
-                }
+                },
+                "messages": [],
             },
         },
         output={
@@ -163,15 +167,44 @@ def _record_with_bash(
     input_messages: list[dict[str, Any]] | None = None,
     output_content: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build a minimal MIL record advertising a single `Bash` tool."""
+    """Build a minimal Converse-shape MIL record advertising a single `Bash` tool.
+
+    Pair with ``converse_dict_to_normalized(record)``.
+    """
     body: dict[str, Any] = {
         "toolConfig": {"tools": [{"toolSpec": {"name": "Bash", "description": "shell"}}]},
+        "messages": input_messages if input_messages is not None else [],
     }
-    if input_messages is not None:
-        body["messages"] = input_messages
     output_body: dict[str, Any] = {"stopReason": "tool_use"}
     if output_content is not None:
         output_body["output"] = {"message": {"role": "assistant", "content": output_content}}
+    return _mil_record(
+        input={"inputTokenCount": 10, "inputBodyJson": body},
+        output={"outputTokenCount": 5, "outputBodyJson": output_body},
+    )
+
+
+def _anthropic_record_with_bash(
+    *,
+    input_messages: list[dict[str, Any]] | None = None,
+    output_content: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a minimal Anthropic-shape MIL record advertising a single `Bash` tool.
+
+    Pair with ``anthropic_dict_to_normalized(record)``. Uses Anthropic
+    request-side ``tools`` (not Converse ``toolConfig``) and produces an
+    ``AnthropicMessage`` response envelope.
+    """
+    body: dict[str, Any] = {
+        "tools": [{"name": "Bash", "description": "shell"}],
+        "messages": input_messages if input_messages is not None else [],
+    }
+    output_body: dict[str, Any] = {
+        "type": "message",
+        "role": "assistant",
+        "content": output_content or [],
+        "stop_reason": "tool_use",
+    }
     return _mil_record(
         input={"inputTokenCount": 10, "inputBodyJson": body},
         output={"outputTokenCount": 5, "outputBodyJson": output_body},
@@ -210,7 +243,7 @@ async def test_used_tools_converse_error_status_maps_to_is_error() -> None:
 
 async def test_used_tools_anthropic_shape_is_error_flag() -> None:
     """Anthropic `tool_result.is_error: true` propagates."""
-    record = _record_with_bash(
+    record = _anthropic_record_with_bash(
         input_messages=[
             {
                 "role": "assistant",
@@ -229,7 +262,7 @@ async def test_used_tools_anthropic_shape_is_error_flag() -> None:
             },
         ],
     )
-    event = await build_event(converse_dict_to_normalized(record), record)
+    event = await build_event(anthropic_dict_to_normalized(record), record)
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is True
@@ -318,7 +351,7 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
     envelope = json.dumps(
         {"$opentelemetry": {"trace_id": trace_id, "span_id": "3" * 16}, "flow": "x"}
     )
-    record = _record_with_bash(
+    record = _anthropic_record_with_bash(
         input_messages=[
             {
                 "role": "assistant",
@@ -336,28 +369,44 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
             },
         ],
     )
-    event = await build_event(converse_dict_to_normalized(record), record)
+    event = await build_event(anthropic_dict_to_normalized(record), record)
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
     assert event.used_tools[0].span_id == "3" * 16
 
 
-async def test_used_tools_propagates_tool_use_id_from_both_shapes() -> None:
-    """Anthropic `tool_use.id` and Converse `toolUse.toolUseId` both land on the wire."""
-    record = _record_with_bash(
+async def test_used_tools_propagates_tool_use_id_across_vendors() -> None:
+    """Same tool_use_id → wire, regardless of vendor. Pre-Phase-2 this test
+    combined both shapes in one record; post-Phase-2 a real record is one
+    vendor or the other, so verify each independently."""
+    anthropic_record = _anthropic_record_with_bash(
         input_messages=[
             {
                 "role": "assistant",
                 "content": [
                     {"type": "tool_use", "id": "toolu_anth", "name": "Bash", "input": {}},
-                    {"toolUse": {"toolUseId": "tu_conv", "name": "Bash", "input": {}}},
                 ],
             },
             {
                 "role": "user",
                 "content": [
                     {"type": "tool_result", "tool_use_id": "toolu_anth", "content": "ok"},
+                ],
+            },
+        ],
+    )
+    converse_record = _record_with_bash(
+        input_messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"toolUse": {"toolUseId": "tu_conv", "name": "Bash", "input": {}}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
                     {
                         "toolResult": {
                             "toolUseId": "tu_conv",
@@ -369,11 +418,12 @@ async def test_used_tools_propagates_tool_use_id_from_both_shapes() -> None:
             },
         ],
     )
-    event = await build_event(converse_dict_to_normalized(record), record)
-    assert event is not None
-    assert event.used_tools is not None
-    ids = {u.tool_use_id for u in event.used_tools}
-    assert ids == {"toolu_anth", "tu_conv"}
+    a_event = await build_event(anthropic_dict_to_normalized(anthropic_record), anthropic_record)
+    c_event = await build_event(converse_dict_to_normalized(converse_record), converse_record)
+    assert a_event is not None and a_event.used_tools is not None
+    assert c_event is not None and c_event.used_tools is not None
+    assert a_event.used_tools[0].tool_use_id == "toolu_anth"
+    assert c_event.used_tools[0].tool_use_id == "tu_conv"
 
 
 async def test_used_tools_extracts_otel_from_text_marker_on_error() -> None:
@@ -386,7 +436,7 @@ async def test_used_tools_extracts_otel_from_text_marker_on_error() -> None:
     trace_id = "f" * 32
     span_id = "6" * 16
     err_text = f"McpError: Internal error: 403 Forbidden\n[trace_id={trace_id} span_id={span_id}]"
-    record = _record_with_bash(
+    record = _anthropic_record_with_bash(
         input_messages=[
             {
                 "role": "assistant",
@@ -405,7 +455,7 @@ async def test_used_tools_extracts_otel_from_text_marker_on_error() -> None:
             },
         ],
     )
-    event = await build_event(converse_dict_to_normalized(record), record)
+    event = await build_event(anthropic_dict_to_normalized(record), record)
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is True
@@ -442,7 +492,7 @@ async def test_used_tools_missing_status_defaults_to_success() -> None:
 
 async def test_used_tools_anthropic_missing_is_error_defaults_to_success() -> None:
     """Anthropic `is_error` is optional — absent = success."""
-    record = _record_with_bash(
+    record = _anthropic_record_with_bash(
         input_messages=[
             {
                 "role": "assistant",
@@ -456,7 +506,7 @@ async def test_used_tools_anthropic_missing_is_error_defaults_to_success() -> No
             },
         ],
     )
-    event = await build_event(converse_dict_to_normalized(record), record)
+    event = await build_event(anthropic_dict_to_normalized(record), record)
     assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is False
@@ -622,7 +672,8 @@ async def test_tool_id_differs_for_different_schema() -> None:
                         "tools": [
                             {"toolSpec": {"name": "WebFetch", "inputSchema": {"json": schema}}}
                         ]
-                    }
+                    },
+                    "messages": [],
                 },
             }
         )
@@ -649,7 +700,8 @@ async def test_tool_id_differs_for_different_description() -> None:
             input={
                 "inputTokenCount": 1,
                 "inputBodyJson": {
-                    "toolConfig": {"tools": [{"toolSpec": {"name": "Bash", "description": desc}}]}
+                    "toolConfig": {"tools": [{"toolSpec": {"name": "Bash", "description": desc}}]},
+                    "messages": [],
                 },
             }
         )

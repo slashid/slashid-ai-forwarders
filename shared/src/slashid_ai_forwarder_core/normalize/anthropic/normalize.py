@@ -4,10 +4,7 @@ Two entry points:
 - ``message_to_normalized_invocation(request, response)`` — non-streaming
 - ``stream_to_normalized_invocation(request, response)`` — streaming state-machine
 
-Plus two helpers used by the Bedrock forwarder's envelope handling:
-- ``tools_to_converse_tool_config(tools)`` — for the request-side tool
-  rewrite ``mil_normalize._rewrite_input_tools`` does before hashing,
-  which keeps ``events._available_tools(record)`` working.
+Plus one helper used by the Bedrock forwarder's envelope handling:
 - ``extract_stream_usage(events)`` — collapses per-event usage counts
   into a single ``AnthropicUsage`` for the MIL top-level token backfill.
 """
@@ -18,12 +15,7 @@ import json
 import logging
 from typing import Any, cast
 
-from ..converse.schema import (
-    ConverseTool,
-    ConverseToolConfig,
-    ConverseToolInputSchema,
-    ConverseToolSpec,
-)
+from ..normalized.tools import build_tools_declared
 from ..normalized.types import (
     NormalizedContent,
     NormalizedInvocation,
@@ -47,7 +39,6 @@ from .schema import (
     AnthropicTextDelta,
     AnthropicThinkingBlock,
     AnthropicThinkingDelta,
-    AnthropicToolDeclaration,
     AnthropicToolResultBlock,
     AnthropicToolUseBlock,
     AnthropicUsage,
@@ -55,33 +46,6 @@ from .schema import (
 from .stop_reasons import map as map_anthropic_stop_reason
 
 log = logging.getLogger(__name__)
-
-
-def tools_to_converse_tool_config(
-    tools: list[AnthropicToolDeclaration],
-) -> ConverseToolConfig:
-    """Convert Anthropic flat ``tools[]`` into a Converse ``toolConfig``.
-
-    Byte-parity with ``_legacy.py::anthropic_tools_to_converse_tool_config``.
-    Missing ``input_schema`` becomes ``{"json": {}}`` on the wire.
-    """
-    return ConverseToolConfig(
-        tools=[
-            ConverseTool(
-                toolSpec=ConverseToolSpec(
-                    name=t.name,
-                    description=t.description,
-                    # Construct via model_validate so pydantic honours the
-                    # Python-side field name ``json_`` (aliased to ``json``
-                    # on the wire because ``json`` is a Python builtin).
-                    inputSchema=ConverseToolInputSchema.model_validate(
-                        {"json_": t.input_schema or {}}
-                    ),
-                ),
-            )
-            for t in tools
-        ],
-    )
 
 
 def extract_stream_usage(events: list[AnthropicStreamEvent]) -> AnthropicUsage:
@@ -129,6 +93,10 @@ def _request_to_input(request: AnthropicRequestBody) -> NormalizedInvocationInpu
     Anthropic's ``system`` can be a bare string or a list of
     ``AnthropicSystemBlock`` entries; both forms fold into a single
     index-0 ``role="system"`` NormalizedMessage per canonical convention.
+    Tool declarations from ``request.tools`` become canonical ``AITool`` /
+    ``AIToolServer`` lists via ``build_tools_declared`` — Claude Code's
+    ``mcp__server__tool`` naming pattern is parsed the same way as
+    Converse's ``toolConfig`` entries.
     """
     messages: list[NormalizedMessage] = []
     system_text = _flatten_system(request.system)
@@ -146,7 +114,14 @@ def _request_to_input(request: AnthropicRequestBody) -> NormalizedInvocationInpu
                 content=_translate_request_content(msg.content),
             )
         )
-    return NormalizedInvocationInput(messages=messages or None)
+    tools_declared, tool_servers = build_tools_declared(
+        (t.name, t.description, t.input_schema) for t in (request.tools or [])
+    )
+    return NormalizedInvocationInput(
+        messages=messages or None,
+        tools_declared=tools_declared or None,
+        tool_servers=tool_servers or None,
+    )
 
 
 def _flatten_system(
@@ -224,6 +199,53 @@ def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:
         message=NormalizedMessage(role="assistant", content=content),
         stop_reason=map_anthropic_stop_reason(msg.stop_reason),
     )
+
+
+# --------------------------------------------------------------------------
+# Supported test helper — bridges a raw Anthropic-shape MIL record dict into
+# NormalizedInvocation with best-effort validation on each side. Mirrors
+# ``converse.normalize.converse_dict_to_normalized`` for symmetry; production
+# Bedrock forwarder uses ``mil_normalize.normalize_record`` directly.
+# --------------------------------------------------------------------------
+
+
+def anthropic_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: ignore[type-arg]
+    """Convenience adapter: MIL/Anthropic-dict record → NormalizedInvocation.
+
+    Best-effort on each side — validation failure falls back to the empty
+    default rather than raising. Useful for tests / audit-envelope replay
+    where the caller holds a raw Anthropic-shape input body (with
+    ``messages[].content[]`` carrying ``{"type": "tool_use", ...}`` etc.).
+
+    Non-streaming (``AnthropicMessage``) shape only — streaming records
+    should route through ``mil_normalize.normalize_record`` in the Bedrock
+    forwarder.
+    """
+    from pydantic import TypeAdapter, ValidationError
+
+    _request_adapter = TypeAdapter(AnthropicRequestBody)
+    _response_adapter = TypeAdapter(AnthropicMessage)
+
+    in_body = (record.get("input") or {}).get("inputBodyJson")
+    out_body = (record.get("output") or {}).get("outputBodyJson")
+
+    input_side: NormalizedInvocationInput
+    try:
+        parsed_in = _request_adapter.validate_python(in_body)
+    except ValidationError:
+        input_side = NormalizedInvocationInput()
+    else:
+        input_side = _request_to_input(parsed_in)
+
+    output_side: NormalizedInvocationOutput
+    try:
+        parsed_out = _response_adapter.validate_python(out_body)
+    except ValidationError:
+        output_side = NormalizedInvocationOutput()
+    else:
+        output_side = _message_to_output(parsed_out)
+
+    return NormalizedInvocation(input=input_side, output=output_side)
 
 
 def stream_to_normalized_invocation(

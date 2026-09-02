@@ -109,7 +109,10 @@ class ConverseToolInputSchema(_LenientModel):
 class ConverseToolSpec(_LenientModel):
     name: str
     description: str | None = None
-    inputSchema: ConverseToolInputSchema
+    # Optional — some ``toolSpec`` entries carry no ``inputSchema`` at all
+    # (Claude Code's Bash / minimal tools do this). Legacy ``_available_tools``
+    # tolerated it by defaulting to ``{}``; keep parity here.
+    inputSchema: ConverseToolInputSchema | None = None
 
 
 class ConverseTool(_LenientModel):

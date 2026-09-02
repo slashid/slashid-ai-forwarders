@@ -48,14 +48,10 @@ def test_already_converse_shape_passes_through() -> None:
     assert normalized.output.stop_reason == "end_turn"
 
 
-def test_anthropic_tools_rewritten_to_toolconfig() -> None:
-    """Tools normalization runs when both request and response identify the
-    record as Anthropic — either the non-streaming dict here, or a streaming
-    events list (covered by the stream tests below).
-
-    ``_rewrite_input_tools`` still mutates ``record["input"]["inputBodyJson"]``
-    on-record, because ``events._available_tools(record)`` reads from there.
-    """
+def test_anthropic_tools_populate_tools_declared() -> None:
+    """Anthropic ``request.tools[]`` land on ``normalized.input.tools_declared``
+    as canonical ``AITool`` / ``AIToolServer`` entries — no more on-record
+    Converse rewrite. Raw input body stays untouched."""
     record: dict[str, Any] = {
         "input": {
             "inputBodyJson": {
@@ -78,18 +74,21 @@ def test_anthropic_tools_rewritten_to_toolconfig() -> None:
             }
         },
     }
-    normalize_record(record)
-    body: Any = record["input"]["inputBodyJson"]
-    tools = body["toolConfig"]["tools"]
-    assert tools == [
-        {
-            "toolSpec": {
-                "name": "search",
-                "description": "search the web",
-                "inputSchema": {"json": {"type": "object", "properties": {"q": {}}}},
-            }
-        }
-    ]
+    normalized = normalize_record(record)
+    # Raw input body preserved verbatim — no toolConfig injection.
+    assert "toolConfig" not in record["input"]["inputBodyJson"]
+    assert normalized.input.tools_declared is not None
+    assert normalized.input.tool_servers is not None
+    assert len(normalized.input.tools_declared) == 1
+    tool = normalized.input.tools_declared[0]
+    assert tool.name == "search"
+    assert tool.description == "search the web"
+    # "search" has no `mcp__` / `__` prefix → maps onto the synthetic
+    # "builtin" server (runtime kind).
+    server = normalized.input.tool_servers[0]
+    assert server.name == "builtin"
+    assert server.kind == "runtime"
+    assert tool.tool_server_id == server.id
 
 
 def test_anthropic_stream_text_block_reconstructed() -> None:
@@ -457,9 +456,9 @@ def test_anthropic_stream_backfills_tokens_from_usage_events() -> None:
     assert record["output"]["outputTokenCount"] == 3
 
 
-def test_anthropic_stream_input_tools_rewritten_with_output() -> None:
-    """Input tools are normalized as part of the Anthropic-stream dispatch,
-    not as an independent step. Verifies the family-scoped ownership."""
+def test_anthropic_stream_input_tools_populate_tools_declared() -> None:
+    """Anthropic-stream dispatch populates ``tools_declared`` from
+    ``request.tools[]`` — the raw record body stays untouched."""
     record = {
         "input": {
             "inputBodyJson": {
@@ -487,9 +486,12 @@ def test_anthropic_stream_input_tools_rewritten_with_output() -> None:
         },
     }
     normalized = normalize_record(record)
-    # Input tools rewritten on-record because output identified as Anthropic stream.
-    assert "toolConfig" in record["input"]["inputBodyJson"]
-    # NormalizedInvocation carries the reconstructed stop reason.
+    # Raw input body preserved verbatim.
+    assert "toolConfig" not in record["input"]["inputBodyJson"]
+    # Canonical carries the tool declaration + reconstructed stop reason.
+    assert normalized.input.tools_declared is not None
+    assert len(normalized.input.tools_declared) == 1
+    assert normalized.input.tools_declared[0].name == "search"
     assert normalized.output is not None
     assert normalized.output.stop_reason == "end_turn"
 

@@ -9,6 +9,7 @@ and other cross-half invariants stay centralized.
 
 from __future__ import annotations
 
+from ..normalized.tools import build_tools_declared
 from ..normalized.types import (
     NormalizedContent,
     NormalizedInvocation,
@@ -45,10 +46,8 @@ def _to_input(request: ConverseRequestBody) -> NormalizedInvocationInput:
 
     Prepends any ``system`` content as an index-0 ``NormalizedMessage`` with
     ``role="system"`` (per the "System messages" design convention). Tool
-    declarations and tool servers are left ``None`` for now — Chunk 8 wires
-    them up when mil_normalize starts consuming NormalizedInvocation for
-    the ``available_tools`` list; today they're already derived envelope-
-    side via ``events._available_tools(record)`` reading the raw record.
+    declarations under ``toolConfig`` are translated into canonical
+    ``AITool`` / ``AIToolServer`` lists via ``build_tools_declared``.
     """
     messages: list[NormalizedMessage] = []
     if request.system:
@@ -66,7 +65,22 @@ def _to_input(request: ConverseRequestBody) -> NormalizedInvocationInput:
                 content=_translate_request_content(msg.content),
             )
         )
-    return NormalizedInvocationInput(messages=messages or None)
+    tools_declared, tool_servers = build_tools_declared(_iter_converse_tool_specs(request))
+    return NormalizedInvocationInput(
+        messages=messages or None,
+        tools_declared=tools_declared or None,
+        tool_servers=tool_servers or None,
+    )
+
+
+def _iter_converse_tool_specs(request: ConverseRequestBody):
+    """Yield ``(raw_name, description, input_schema)`` for each ``toolConfig.tools[]`` entry."""
+    if request.toolConfig is None:
+        return
+    for tool in request.toolConfig.tools:
+        spec = tool.toolSpec
+        schema = spec.inputSchema.json_ if spec.inputSchema else None
+        yield spec.name, spec.description, schema
 
 
 def _translate_request_content(

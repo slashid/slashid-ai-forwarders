@@ -153,10 +153,9 @@ def test_converse_tool_config_round_trip() -> None:
     }
     cfg = ConverseToolConfig.model_validate(raw)
     assert cfg.tools[0].toolSpec.name == "read"
-    assert (
-        cfg.tools[0].toolSpec.inputSchema.json_
-        == raw["tools"][0]["toolSpec"]["inputSchema"]["json"]
-    )
+    input_schema = cfg.tools[0].toolSpec.inputSchema
+    assert input_schema is not None
+    assert input_schema.json_ == raw["tools"][0]["toolSpec"]["inputSchema"]["json"]
     assert cfg.model_dump(by_alias=True, exclude_none=True) == raw
 
 

@@ -7,15 +7,14 @@ honestly reflect whether we understood the record.
 
 ``on_parse`` callbacks fire after both parses succeed and receive
 ``(record, request, response)`` — extended from Phase 1.1's
-``(record, response)`` so callbacks can read request-side data (e.g.
-tools_declared for wire ``available_tools``). Today only the token
-backfill is used; ``request`` is present for future extensions.
+``(record, response)`` so callbacks can read request-side data. Today
+only the token backfill uses it; ``request`` is present for future
+extensions.
 
 ``normalize_record(record) -> NormalizedInvocation`` returns the
 canonical shape (or an empty ``NormalizedInvocation()`` on fallthrough)
 and additionally sets ``record["_parsed_as"]`` so ``build_event`` can
-read it. ``_rewrite_input_tools`` still mutates the record's inputBody
-so ``events._available_tools(record)`` continues to work.
+read it.
 """
 
 from __future__ import annotations
@@ -30,13 +29,11 @@ from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
     extract_stream_usage,
     message_to_normalized_invocation,
     stream_to_normalized_invocation,
-    tools_to_converse_tool_config,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.schema import (
     AnthropicMessage,
     AnthropicRequestBody,
     AnthropicStreamEvent,
-    AnthropicToolDeclaration,
     AnthropicUsage,
 )
 from slashid_ai_forwarder_core.normalize.converse.normalize import (
@@ -57,7 +54,7 @@ class _Format[TIn, TOut]:
 
     ``on_parse`` fires after both request and response parse successfully
     and before ``to_invocation`` — mutation hook for envelope-level side
-    effects (token backfill, input-tool rewriting).
+    effects (token backfill).
     """
 
     name: str
@@ -72,13 +69,8 @@ def _on_anthropic_message_parse(
     request: AnthropicRequestBody,
     msg: AnthropicMessage,
 ) -> None:
-    """Anthropic-message envelope side effects: rewrite input tools + backfill tokens.
-
-    ``request`` is available but unused today — future work (e.g. populating
-    ``available_tools`` from `request.tools`) will read it. Keep the arg.
-    """
-    del request  # explicitly unused, for signature-conformance
-    _rewrite_input_tools(rec)
+    """Anthropic-message envelope side effects: backfill tokens onto the MIL record."""
+    del request  # unused today; kept for signature-conformance
     _backfill_tokens_from_usage(rec, msg.usage)
 
 
@@ -87,9 +79,8 @@ def _on_anthropic_stream_parse(
     request: AnthropicRequestBody,
     events: list[AnthropicStreamEvent],
 ) -> None:
-    """Anthropic-stream envelope side effects: rewrite input tools + backfill tokens."""
+    """Anthropic-stream envelope side effects: backfill tokens onto the MIL record."""
     del request
-    _rewrite_input_tools(rec)
     _backfill_tokens_from_usage(rec, extract_stream_usage(events))
 
 
@@ -153,29 +144,6 @@ def normalize_record(record: dict[str, Any]) -> NormalizedInvocation:
     )
     record["_parsed_as"] = "unknown"
     return NormalizedInvocation()
-
-
-def _rewrite_input_tools(record: dict[str, Any]) -> None:
-    """Rewrite Anthropic-side body.tools[] → body.toolConfig via the shared helper.
-
-    Kept from Phase 1.1 — ``events._available_tools(record)`` still reads
-    Converse-shape toolConfig off the record's inputBodyJson. When
-    ``available_tools`` migrates to be built from ``NormalizedInvocation``
-    (future phase), this becomes deletable.
-    """
-    body = (record.get("input") or {}).get("inputBodyJson")
-    if not isinstance(body, dict) or "toolConfig" in body:
-        return
-    raw_tools = body.get("tools")
-    if not isinstance(raw_tools, list) or not raw_tools:
-        return
-    tools = [AnthropicToolDeclaration.model_validate(t) for t in raw_tools if isinstance(t, dict)]
-    if not tools:
-        return
-    body["toolConfig"] = tools_to_converse_tool_config(tools).model_dump(
-        by_alias=True,
-        exclude_none=True,
-    )
 
 
 def _backfill_tokens_from_usage(
