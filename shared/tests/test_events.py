@@ -1448,7 +1448,10 @@ async def test_build_event_truncates_redacted_text() -> None:
             "inputBodyJson": {"messages": [{"role": "user", "content": [{"text": "x" * 200}]}]},
         }
     )
-    event = await build_event(converse_dict_to_normalized(record), record, include_raw_content=True, max_content_size=20)
+    event = await build_event(
+        converse_dict_to_normalized(record), record,
+        include_raw_content=True, max_content_size=20,
+    )
     assert event is not None
     assert event.input is not None
     assert event.input.redacted_text is not None
@@ -1466,7 +1469,10 @@ async def test_build_event_truncates_file_redacted_content() -> None:
         tool_input={"file_path": "/repo/big.txt"},
         tool_result_content=cat_n,
     )
-    event = await build_event(converse_dict_to_normalized(record), record, include_raw_content=True, max_content_size=50)
+    event = await build_event(
+        converse_dict_to_normalized(record), record,
+        include_raw_content=True, max_content_size=50,
+    )
     assert event is not None
     assert event.accessed_files is not None
     f = event.accessed_files[0]

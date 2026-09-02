@@ -155,7 +155,6 @@ def _translate_response_content(
 
 from pydantic import TypeAdapter, ValidationError  # noqa: E402
 
-
 _REQUEST_ADAPTER = TypeAdapter(ConverseRequestBody)
 _RESPONSE_ADAPTER = TypeAdapter(ConverseResponse)
 

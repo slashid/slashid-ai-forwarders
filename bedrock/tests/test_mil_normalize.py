@@ -9,7 +9,6 @@ import pytest
 
 from slashid_bedrock_forwarder.mil_normalize import normalize_record
 
-
 # Minimal valid request bodies for each format — both request and response
 # must validate, so every test needs an inputBodyJson that satisfies the
 # request-side schema for the format under test.
@@ -570,7 +569,11 @@ def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
     record = {
         "modelId": "amazon.new-model-v1:0",
         "requestId": "req-xyz",
-        "input": {"inputBodyJson": {"messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}},
+        "input": {
+            "inputBodyJson": {
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+            }
+        },
         "output": {"outputBodyJson": {"totally": "unknown", "shape": [1, 2, 3]}},
     }
     with caplog.at_level(logging.WARNING, logger="slashid_bedrock_forwarder.mil_normalize"):

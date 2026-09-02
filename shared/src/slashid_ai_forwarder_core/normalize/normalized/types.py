@@ -19,8 +19,8 @@ from typing import Literal
 from pydantic import Field, JsonValue, NonNegativeInt
 from pydantic_extra_types.mime_types import MimeType
 
-from .._base import _LenientModel
 from ...events import AIInvocationTokens, AIStopReason, AITool, AIToolServer
+from .._base import _LenientModel
 
 # ``.._base`` reaches ``normalize/_base`` (two levels up: normalized/ → normalize/).
 # ``...events`` reaches ``slashid_ai_forwarder_core.events`` (three levels up).

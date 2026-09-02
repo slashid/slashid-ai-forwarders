@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from slashid_ai_forwarder_core.events import AIStopReason
-from slashid_ai_forwarder_core.normalize.anthropic.stop_reasons import map as map_anthropic_stop_reason
+from slashid_ai_forwarder_core.normalize.anthropic.stop_reasons import (
+    map as map_anthropic_stop_reason,
+)
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 
