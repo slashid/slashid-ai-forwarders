@@ -220,3 +220,141 @@ def extract_stream_usage(events: list[AnthropicStreamEvent]) -> AnthropicUsage:
                 for field, value in event.usage.model_dump(exclude_none=True).items():
                     setattr(out, field, value)
     return out
+
+
+# --------------------------------------------------------------------------
+# Phase 2 — direct-walk translates producing NormalizedInvocation
+#
+# These live alongside the legacy message_to_converse / stream_to_converse
+# during the transition. Once mil_normalize (Chunk 8) rewires to consume
+# these, Chunk 9 deletes the legacy functions and their fixtures.
+# --------------------------------------------------------------------------
+
+
+from ..normalized.types import (  # noqa: E402 — import here to keep Phase 1 section clean
+    NormalizedContent,
+    NormalizedInvocation,
+    NormalizedInvocationInput,
+    NormalizedInvocationOutput,
+    NormalizedMessage,
+)
+from .schema import (  # noqa: E402
+    AnthropicRequestBody,
+    AnthropicRequestContentBlock,
+    AnthropicSystemBlock,
+    AnthropicToolResultBlock,
+)
+from .stop_reasons import map as map_anthropic_stop_reason  # noqa: E402
+
+
+def message_to_normalized_invocation(
+    request: AnthropicRequestBody,
+    response: AnthropicMessage,
+) -> NormalizedInvocation:
+    """Non-streaming Anthropic invocation → canonical NormalizedInvocation.
+
+    Direct walks on both sides (no composition through Converse) —
+    Anthropic-side fields (cache_control markers, is_error on tool_result
+    blocks, thinking signatures) preserved without a lossy hop.
+    """
+    return NormalizedInvocation(
+        input=_request_to_input(request),
+        output=_message_to_output(response),
+    )
+
+
+def _request_to_input(request: AnthropicRequestBody) -> NormalizedInvocationInput:
+    """Walk an Anthropic request body → NormalizedInvocationInput.
+
+    Anthropic's ``system`` can be a bare string or a list of
+    ``AnthropicSystemBlock`` entries; both forms fold into a single
+    index-0 ``role="system"`` NormalizedMessage per canonical convention.
+    """
+    messages: list[NormalizedMessage] = []
+    system_text = _flatten_system(request.system)
+    if system_text is not None:
+        messages.append(
+            NormalizedMessage(
+                role="system",
+                content=[NormalizedContent(kind="text", text=system_text)],
+            )
+        )
+    for msg in request.messages:
+        messages.append(
+            NormalizedMessage(
+                role=msg.role,
+                content=_translate_request_content(msg.content),
+            )
+        )
+    return NormalizedInvocationInput(messages=messages or None)
+
+
+def _flatten_system(
+    system: str | list[AnthropicSystemBlock] | None,
+) -> str | None:
+    if system is None:
+        return None
+    if isinstance(system, str):
+        return system
+    # List form — concatenate text blocks.
+    return "".join(block.text or "" for block in system)
+
+
+def _translate_request_content(
+    blocks: list[AnthropicRequestContentBlock],
+) -> list[NormalizedContent]:
+    out: list[NormalizedContent] = []
+    for block in blocks:
+        match block:
+            case AnthropicTextBlock():
+                out.append(NormalizedContent(kind="text", text=block.text))
+            case AnthropicToolUseBlock():
+                out.append(NormalizedContent(
+                    kind="tool_use",
+                    tool_use_id=block.id,
+                    tool_name=block.name,
+                    tool_input=block.input if block.input else {},
+                    tool_executor="client",
+                ))
+            case AnthropicThinkingBlock():
+                out.append(NormalizedContent(kind="reasoning", text=block.thinking))
+            case AnthropicToolResultBlock():
+                out.append(NormalizedContent(
+                    kind="tool_result",
+                    tool_use_id=block.tool_use_id,
+                    tool_output=block.content,
+                    tool_is_error=block.is_error,
+                    tool_executor="client",
+                ))
+            # AnthropicUnknownBlock: skipped silently.
+    return out
+
+
+def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:
+    """Walk an Anthropic non-streaming response → NormalizedInvocationOutput.
+
+    Byte-parity note: matches the null-input-becomes-empty-dict invariant
+    from Phase 1.1 (tool_use blocks with input=None or falsy → {}). This
+    is preserved because content hashing is sensitive to the distinction
+    between "empty dict" and "null".
+    """
+    content: list[NormalizedContent] = []
+    for block in msg.content:
+        match block:
+            case AnthropicTextBlock():
+                content.append(NormalizedContent(kind="text", text=block.text))
+            case AnthropicToolUseBlock():
+                content.append(NormalizedContent(
+                    kind="tool_use",
+                    tool_use_id=block.id,
+                    tool_name=block.name,
+                    tool_input=block.input if block.input else {},
+                    tool_executor="client",
+                ))
+            case AnthropicThinkingBlock():
+                content.append(NormalizedContent(kind="reasoning", text=block.thinking))
+            # AnthropicUnknownBlock: skipped silently.
+    return NormalizedInvocationOutput(
+        message=NormalizedMessage(role="assistant", content=content),
+        stop_reason=map_anthropic_stop_reason(msg.stop_reason),
+    )
