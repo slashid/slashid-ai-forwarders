@@ -1,10 +1,15 @@
-"""Anthropic -> Converse translates (pure functions, no envelope knowledge).
+"""Anthropic Messages API → NormalizedInvocation translates + helpers.
 
-Byte-parity with the pre-refactor helpers in ``_legacy.py``
-(``_reconstruct_message_from_dict``, ``_reconstruct_message_from_stream``,
-``anthropic_tools_to_converse_tool_config``, ``extract_anthropic_stream_usage``).
-The dispatcher rewrite in Chunk 4 will retarget ``mil_normalize.py`` to
-these typed entry points; ``_legacy.py`` gets deleted in Chunk 6.
+Two entry points:
+- ``message_to_normalized_invocation(request, response)`` — non-streaming
+- ``stream_to_normalized_invocation(request, response)`` — streaming state-machine
+
+Plus two helpers used by the Bedrock forwarder's envelope handling:
+- ``tools_to_converse_tool_config(tools)`` — for the request-side tool
+  rewrite ``mil_normalize._rewrite_input_tools`` does before hashing,
+  which keeps ``events._available_tools(record)`` working.
+- ``extract_stream_usage(events)`` — collapses per-event usage counts
+  into a single ``AnthropicUsage`` for the MIL top-level token backfill.
 """
 
 from __future__ import annotations
@@ -14,17 +19,17 @@ import logging
 from typing import Any, cast
 
 from ..converse.schema import (
-    ConverseAssistantMessage,
-    ConverseContentBlock,
-    ConverseOutput,
-    ConverseResponse,
-    ConverseTextBlock,
     ConverseTool,
     ConverseToolConfig,
     ConverseToolInputSchema,
     ConverseToolSpec,
-    ConverseToolUse,
-    ConverseToolUseBlock,
+)
+from ..normalized.types import (
+    NormalizedContent,
+    NormalizedInvocation,
+    NormalizedInvocationInput,
+    NormalizedInvocationOutput,
+    NormalizedMessage,
 )
 from .schema import (
     AnthropicContentBlockDeltaEvent,
@@ -34,142 +39,22 @@ from .schema import (
     AnthropicMessage,
     AnthropicMessageDelta,
     AnthropicMessageStart,
+    AnthropicRequestBody,
+    AnthropicRequestContentBlock,
     AnthropicStreamEvent,
+    AnthropicSystemBlock,
     AnthropicTextBlock,
     AnthropicTextDelta,
     AnthropicThinkingBlock,
     AnthropicThinkingDelta,
     AnthropicToolDeclaration,
+    AnthropicToolResultBlock,
     AnthropicToolUseBlock,
     AnthropicUsage,
 )
+from .stop_reasons import map as map_anthropic_stop_reason
 
 log = logging.getLogger(__name__)
-
-
-def message_to_converse(msg: AnthropicMessage) -> ConverseResponse:
-    """Rewrite an Anthropic non-streaming Messages response into Converse shape.
-
-    Empty content list is valid — returns a ``ConverseResponse`` whose
-    ``output.message.content`` is also empty. Unknown-type blocks
-    (``AnthropicUnknownBlock``) are skipped silently in 1.1.
-
-    Byte-parity with ``_legacy.py::anthropic_message_to_converse``.
-    """
-    content: list[ConverseContentBlock] = []
-    for block in msg.content:
-        match block:
-            case AnthropicTextBlock():
-                content.append(ConverseTextBlock(text=block.text))
-            case AnthropicToolUseBlock():
-                # Byte-parity: legacy substitutes empty dict when input is falsy
-                # (None or empty). Preserving that quirk keeps hashes stable.
-                tool_input: Any = block.input if block.input else {}
-                content.append(
-                    ConverseToolUseBlock(
-                        toolUse=ConverseToolUse(
-                            toolUseId=block.id,
-                            name=block.name,
-                            input=tool_input,
-                        ),
-                    ),
-                )
-            case AnthropicThinkingBlock():
-                # Fold thinking into a text block to match Phase 1 behaviour.
-                content.append(ConverseTextBlock(text=block.thinking))
-            # AnthropicUnknownBlock: skipped silently.
-    return ConverseResponse(
-        output=ConverseOutput(
-            message=ConverseAssistantMessage(role="assistant", content=content),
-        ),
-        stopReason=msg.stop_reason,
-    )
-
-
-def stream_to_converse(events: list[AnthropicStreamEvent]) -> ConverseResponse:
-    """Walk Anthropic SSE events and reassemble into a Converse response.
-
-    Malformed ``input_json_delta`` buffers produce ``{}`` as the tool_use
-    input and emit a WARNING with the byte count (never the raw bytes —
-    could contain PII).
-
-    Byte-parity with ``_legacy.py::anthropic_stream_to_converse``.
-    """
-    content: list[ConverseContentBlock] = []
-    slots: dict[int, dict[str, Any]] = {}  # index -> in-flight block state
-    stop_reason: str | None = None
-
-    for event in events:
-        match event:
-            case AnthropicContentBlockStart():
-                cb = event.content_block
-                match cb:
-                    case AnthropicTextBlock():
-                        slots[event.index] = {"_type": "text", "text": cb.text}
-                    case AnthropicToolUseBlock():
-                        slots[event.index] = {
-                            "_type": "tool_use",
-                            "toolUseId": cb.id,
-                            "name": cb.name,
-                            "input_buf": "",
-                        }
-                    case AnthropicThinkingBlock():
-                        slots[event.index] = {"_type": "thinking", "text": ""}
-                    # AnthropicUnknownBlock: no slot allocated -> stop is a no-op.
-
-            case AnthropicContentBlockDeltaEvent():
-                slot = slots.get(event.index)
-                if slot is None:
-                    continue
-                match event.delta:
-                    case AnthropicTextDelta():
-                        slot["text"] = slot.get("text", "") + event.delta.text
-                    case AnthropicInputJsonDelta():
-                        slot["input_buf"] = slot.get("input_buf", "") + event.delta.partial_json
-                    case AnthropicThinkingDelta():
-                        slot["text"] = slot.get("text", "") + event.delta.thinking
-                    # AnthropicUnknownDelta: silently ignored.
-
-            case AnthropicContentBlockStop():
-                slot = slots.pop(event.index, None)
-                if slot is None:
-                    continue
-                block_type = slot["_type"]
-                if block_type == "text":
-                    content.append(ConverseTextBlock(text=slot.get("text", "")))
-                elif block_type == "tool_use":
-                    parsed_input: dict[str, Any] = {}
-                    buf = slot.get("input_buf") or ""
-                    if buf:
-                        try:
-                            parsed_input = cast("dict[str, Any]", json.loads(buf))
-                        except json.JSONDecodeError:
-                            # Length only — the buffer can hold tool arguments and
-                            # we don't want those bytes in CloudWatch logs.
-                            log.warning("tool_use input_json malformed (%d bytes)", len(buf))
-                    content.append(
-                        ConverseToolUseBlock(
-                            toolUse=ConverseToolUse(
-                                toolUseId=slot["toolUseId"],
-                                name=slot["name"],
-                                input=parsed_input,
-                            ),
-                        ),
-                    )
-                elif block_type == "thinking":
-                    content.append(ConverseTextBlock(text=slot.get("text", "")))
-
-            case AnthropicMessageDelta() if event.delta:
-                raw_reason = event.delta.get("stop_reason")
-                if isinstance(raw_reason, str) and raw_reason:
-                    stop_reason = raw_reason
-
-    return ConverseResponse(
-        output=ConverseOutput(
-            message=ConverseAssistantMessage(role="assistant", content=content),
-        ),
-        stopReason=stop_reason,
-    )
 
 
 def tools_to_converse_tool_config(
@@ -220,31 +105,6 @@ def extract_stream_usage(events: list[AnthropicStreamEvent]) -> AnthropicUsage:
                 for field, value in event.usage.model_dump(exclude_none=True).items():
                     setattr(out, field, value)
     return out
-
-
-# --------------------------------------------------------------------------
-# Phase 2 — direct-walk translates producing NormalizedInvocation
-#
-# These live alongside the legacy message_to_converse / stream_to_converse
-# during the transition. Once mil_normalize (Chunk 8) rewires to consume
-# these, Chunk 9 deletes the legacy functions and their fixtures.
-# --------------------------------------------------------------------------
-
-
-from ..normalized.types import (  # noqa: E402 — import here to keep Phase 1 section clean
-    NormalizedContent,
-    NormalizedInvocation,
-    NormalizedInvocationInput,
-    NormalizedInvocationOutput,
-    NormalizedMessage,
-)
-from .schema import (  # noqa: E402
-    AnthropicRequestBody,
-    AnthropicRequestContentBlock,
-    AnthropicSystemBlock,
-    AnthropicToolResultBlock,
-)
-from .stop_reasons import map as map_anthropic_stop_reason  # noqa: E402
 
 
 def message_to_normalized_invocation(
@@ -367,9 +227,8 @@ def stream_to_normalized_invocation(
     """Streaming Anthropic invocation → canonical.
 
     Same shape as ``message_to_normalized_invocation``; the output side
-    runs a state-machine over the SSE event stream (same skeleton as the
-    legacy ``stream_to_converse``, but produces NormalizedContent blocks
-    directly with no Converse hop).
+    runs a state-machine over the SSE event stream, producing
+    NormalizedContent blocks directly with no Converse hop.
     """
     return NormalizedInvocation(
         input=_request_to_input(request),
@@ -382,7 +241,7 @@ def _stream_to_output(
 ) -> NormalizedInvocationOutput:
     """Walk Anthropic SSE events → NormalizedInvocationOutput.
 
-    Byte-parity notes carried forward from stream_to_converse:
+    Byte-parity notes:
     - malformed ``input_json_delta`` reassembly (buffer doesn't parse
       as JSON) logs a WARNING with byte count and produces ``{}`` as
       the tool_use input (never the raw bytes — could contain PII);
