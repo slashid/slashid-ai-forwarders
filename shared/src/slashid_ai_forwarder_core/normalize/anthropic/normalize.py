@@ -358,3 +358,108 @@ def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:
         message=NormalizedMessage(role="assistant", content=content),
         stop_reason=map_anthropic_stop_reason(msg.stop_reason),
     )
+
+
+def stream_to_normalized_invocation(
+    request: AnthropicRequestBody,
+    response: list[AnthropicStreamEvent],
+) -> NormalizedInvocation:
+    """Streaming Anthropic invocation → canonical.
+
+    Same shape as ``message_to_normalized_invocation``; the output side
+    runs a state-machine over the SSE event stream (same skeleton as the
+    legacy ``stream_to_converse``, but produces NormalizedContent blocks
+    directly with no Converse hop).
+    """
+    return NormalizedInvocation(
+        input=_request_to_input(request),
+        output=_stream_to_output(response),
+    )
+
+
+def _stream_to_output(
+    events: list[AnthropicStreamEvent],
+) -> NormalizedInvocationOutput:
+    """Walk Anthropic SSE events → NormalizedInvocationOutput.
+
+    Byte-parity notes carried forward from stream_to_converse:
+    - malformed ``input_json_delta`` reassembly (buffer doesn't parse
+      as JSON) logs a WARNING with byte count and produces ``{}`` as
+      the tool_use input (never the raw bytes — could contain PII);
+    - null / empty tool_use input becomes ``{}``, not ``None``.
+    """
+    content: list[NormalizedContent] = []
+    slots: dict[int, dict[str, Any]] = {}
+    stop_reason: str | None = None
+
+    for event in events:
+        match event:
+            case AnthropicContentBlockStart():
+                cb = event.content_block
+                match cb:
+                    case AnthropicTextBlock():
+                        slots[event.index] = {"_type": "text", "text": cb.text}
+                    case AnthropicToolUseBlock():
+                        slots[event.index] = {
+                            "_type": "tool_use",
+                            "tool_use_id": cb.id,
+                            "name": cb.name,
+                            "input_buf": "",
+                        }
+                    case AnthropicThinkingBlock():
+                        slots[event.index] = {"_type": "reasoning", "text": ""}
+                    # AnthropicUnknownBlock: no slot allocated.
+
+            case AnthropicContentBlockDeltaEvent():
+                slot = slots.get(event.index)
+                if slot is None:
+                    continue
+                match event.delta:
+                    case AnthropicTextDelta():
+                        slot["text"] = slot.get("text", "") + event.delta.text
+                    case AnthropicInputJsonDelta():
+                        slot["input_buf"] = slot.get("input_buf", "") + event.delta.partial_json
+                    case AnthropicThinkingDelta():
+                        slot["text"] = slot.get("text", "") + event.delta.thinking
+                    # AnthropicUnknownDelta: silently ignored.
+
+            case AnthropicContentBlockStop():
+                slot = slots.pop(event.index, None)
+                if slot is None:
+                    continue
+                block_type = slot["_type"]
+                if block_type == "text":
+                    content.append(NormalizedContent(
+                        kind="text",
+                        text=slot.get("text", ""),
+                    ))
+                elif block_type == "reasoning":
+                    content.append(NormalizedContent(
+                        kind="reasoning",
+                        text=slot.get("text", ""),
+                    ))
+                elif block_type == "tool_use":
+                    parsed_input: dict[str, Any] = {}
+                    buf = slot.get("input_buf") or ""
+                    if buf:
+                        try:
+                            parsed_input = cast("dict[str, Any]", json.loads(buf))
+                        except json.JSONDecodeError:
+                            log.warning("tool_use input_json malformed (%d bytes)", len(buf))
+                    content.append(NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id=slot["tool_use_id"],
+                        tool_name=slot["name"],
+                        tool_input=parsed_input,
+                        tool_executor="client",
+                    ))
+
+            case AnthropicMessageDelta() if event.delta:
+                raw_reason = event.delta.get("stop_reason")
+                if isinstance(raw_reason, str) and raw_reason:
+                    stop_reason = raw_reason
+
+    return NormalizedInvocationOutput(
+        message=NormalizedMessage(role="assistant", content=content),
+        stop_reason=map_anthropic_stop_reason(stop_reason),
+    )
