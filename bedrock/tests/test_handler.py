@@ -97,7 +97,7 @@ def test_run_normalizes_after_offload_resolution(monkeypatch: pytest.MonkeyPatch
     """
     anthropic_body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "messages": [{"role": "user", "content": "hi"}],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
         "tools": [
             {
                 "name": "WebFetch",

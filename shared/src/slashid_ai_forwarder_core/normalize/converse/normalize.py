@@ -145,10 +145,12 @@ def _translate_response_content(
 
 
 # --------------------------------------------------------------------------
-# Chunk 7 temporary adapter — bridges the post-Phase-1.1 record shape (a
-# dict with Converse-serialized outputBodyJson) into NormalizedInvocation
-# while build_event learns to accept NormalizedInvocation. Deleted in
-# Chunk 8 once mil_normalize emits NormalizedInvocation directly.
+# Supported test helper — bridges a raw Converse-shape MIL record dict into
+# NormalizedInvocation with best-effort validation on each side. The
+# production Bedrock forwarder uses ``mil_normalize.normalize_record``
+# directly (tighter TIn+TOut contract). This helper stays available for
+# shared-package tests, audit-envelope replay, and future backfill scripts
+# that hold raw Converse-shape dicts.
 # --------------------------------------------------------------------------
 
 from pydantic import TypeAdapter, ValidationError  # noqa: E402
@@ -159,14 +161,15 @@ _RESPONSE_ADAPTER = TypeAdapter(ConverseResponse)
 
 
 def converse_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: ignore[type-arg]
-    """Transitional adapter: MIL record → NormalizedInvocation.
+    """Convenience adapter: MIL/Converse-dict record → NormalizedInvocation.
 
-    Best-effort on each side — a validation failure on either input or
-    output falls back to the empty default for that half rather than
-    raising. This matches the pre-Phase-2 build_event tolerance (record
-    with bad body still emits an event with envelope-side fields intact);
-    the tighter TIn-required contract lives in ``mil_normalize._FORMATS``
-    once Chunk 8 rewires and deletes this adapter.
+    Best-effort on each side — validation failure falls back to the empty
+    default rather than raising. Useful for callers that hold raw
+    Converse-shape dicts (audit-envelope replay, backfill scripts,
+    test helpers).
+
+    Production Bedrock forwarder uses ``mil_normalize.normalize_record``
+    directly, which enforces the tighter TIn+TOut contract.
     """
     in_body = (record.get("input") or {}).get("inputBodyJson")
     out_body = (record.get("output") or {}).get("outputBodyJson")
