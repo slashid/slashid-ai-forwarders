@@ -142,3 +142,49 @@ def _translate_response_content(
                 out.append(NormalizedContent(kind="reasoning", text=text))
             # ConverseUnknownBlock: silently skipped.
     return out
+
+
+# --------------------------------------------------------------------------
+# Chunk 7 temporary adapter — bridges the post-Phase-1.1 record shape (a
+# dict with Converse-serialized outputBodyJson) into NormalizedInvocation
+# while build_event learns to accept NormalizedInvocation. Deleted in
+# Chunk 8 once mil_normalize emits NormalizedInvocation directly.
+# --------------------------------------------------------------------------
+
+from pydantic import TypeAdapter, ValidationError  # noqa: E402
+
+
+_REQUEST_ADAPTER = TypeAdapter(ConverseRequestBody)
+_RESPONSE_ADAPTER = TypeAdapter(ConverseResponse)
+
+
+def converse_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: ignore[type-arg]
+    """Transitional adapter: MIL record → NormalizedInvocation.
+
+    Best-effort on each side — a validation failure on either input or
+    output falls back to the empty default for that half rather than
+    raising. This matches the pre-Phase-2 build_event tolerance (record
+    with bad body still emits an event with envelope-side fields intact);
+    the tighter TIn-required contract lives in ``mil_normalize._FORMATS``
+    once Chunk 8 rewires and deletes this adapter.
+    """
+    in_body = (record.get("input") or {}).get("inputBodyJson")
+    out_body = (record.get("output") or {}).get("outputBodyJson")
+
+    input_side: NormalizedInvocationInput
+    try:
+        parsed_in = _REQUEST_ADAPTER.validate_python(in_body)
+    except ValidationError:
+        input_side = NormalizedInvocationInput()
+    else:
+        input_side = _to_input(parsed_in)
+
+    output_side: NormalizedInvocationOutput
+    try:
+        parsed_out = _RESPONSE_ADAPTER.validate_python(out_body)
+    except ValidationError:
+        output_side = NormalizedInvocationOutput()
+    else:
+        output_side = _to_output(parsed_out)
+
+    return NormalizedInvocation(input=input_side, output=output_side)

@@ -33,6 +33,9 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1, build_event
+from slashid_ai_forwarder_core.normalize.converse.normalize import (
+    converse_dict_to_normalized,
+)
 from slashid_ai_forwarder_core.s3 import resolve_offloaded_bodies
 from slashid_ai_forwarder_core.sink import push_invocations
 
@@ -126,6 +129,7 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
     built_or_none = await asyncio.gather(
         *(
             build_event(
+                converse_dict_to_normalized(r),
                 r,
                 include_raw_content=config.include_raw_content,
                 max_content_size=config.max_content_size,

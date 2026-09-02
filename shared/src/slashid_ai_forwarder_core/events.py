@@ -15,11 +15,18 @@ import logging
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .content_utils import strip_cat_n, truncate_middle
+
+if TYPE_CHECKING:
+    # events.py already has ``from __future__ import annotations`` so
+    # annotations resolve lazily. A runtime import here would create a
+    # circular import at module load: types.py imports AIInvocationTokens /
+    # AIStopReason / AITool / AIToolServer from events.py.
+    from .normalize.normalized.types import NormalizedInvocation
 
 log = logging.getLogger(__name__)
 
@@ -922,6 +929,7 @@ def _used_tools(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[
 
 
 async def build_event(
+    normalized: NormalizedInvocation,
     record: dict[str, Any],
     *,
     include_raw_content: bool = False,
@@ -994,12 +1002,12 @@ async def build_event(
         used_tools=used or None,
         stop_reason=_stop_reason(record),
         input=_build_content(
-            inp.get("inputBodyJson"),
+            normalized.input.model_dump(mode="json", exclude_none=True),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),
         output=_build_content(
-            out.get("outputBodyJson"),
+            normalized.output.model_dump(mode="json", exclude_none=True),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),

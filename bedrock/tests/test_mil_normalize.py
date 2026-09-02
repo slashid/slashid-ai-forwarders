@@ -628,6 +628,9 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
     Identity, model, tokens survive; semantic fields (stop_reason, tools)
     are None/empty."""
     from slashid_ai_forwarder_core.events import build_event
+    from slashid_ai_forwarder_core.normalize.converse.normalize import (
+        converse_dict_to_normalized,
+    )
 
     record = {
         "schemaType": "ModelInvocationLog",
@@ -646,7 +649,7 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
         },
     }
     normalize_record(record)
-    event = await build_event(record)
+    event = await build_event(converse_dict_to_normalized(record), record)
     assert event is not None
     assert event.parsed_as == "unknown"
     # Semantic fields empty/None on unknown-shape records.
@@ -662,6 +665,9 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
 async def test_e2e_anthropic_message_sets_parsed_as() -> None:
     """Happy path: Anthropic-message record → parsed_as="anthropic-message"."""
     from slashid_ai_forwarder_core.events import build_event
+    from slashid_ai_forwarder_core.normalize.converse.normalize import (
+        converse_dict_to_normalized,
+    )
 
     record = {
         "timestamp": "2026-09-01T12:00:00Z",
@@ -681,7 +687,7 @@ async def test_e2e_anthropic_message_sets_parsed_as() -> None:
         },
     }
     normalize_record(record)
-    event = await build_event(record)
+    event = await build_event(converse_dict_to_normalized(record), record)
     assert event is not None
     assert event.parsed_as == "anthropic-message"
 
@@ -689,6 +695,9 @@ async def test_e2e_anthropic_message_sets_parsed_as() -> None:
 async def test_e2e_converse_response_sets_parsed_as() -> None:
     """Happy path: native Converse response → parsed_as="bedrock-converse"."""
     from slashid_ai_forwarder_core.events import build_event
+    from slashid_ai_forwarder_core.normalize.converse.normalize import (
+        converse_dict_to_normalized,
+    )
 
     record = {
         "timestamp": "2026-09-01T12:00:00Z",
@@ -706,6 +715,6 @@ async def test_e2e_converse_response_sets_parsed_as() -> None:
         },
     }
     normalize_record(record)
-    event = await build_event(record)
+    event = await build_event(converse_dict_to_normalized(record), record)
     assert event is not None
     assert event.parsed_as == "bedrock-converse"
