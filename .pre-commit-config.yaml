@@ -22,6 +22,14 @@ repos:
         args: ["--fix"]
       - id: ruff-format
 
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.6.2
+    hooks:
+      - id: prettier
+        # Handles .yaml/.yml, .json, .md by default. CFN template is
+        # excluded via .prettierignore because prettier's YAML parser
+        # doesn't understand short-form CFN tags (!Ref / !Sub / ...).
+
   # ty (Astral's type checker) has no published pre-commit repo yet —
   # run it as a local hook against the project venv.
   - repo: local

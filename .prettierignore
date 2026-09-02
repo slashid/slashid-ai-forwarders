@@ -1,0 +1,15 @@
+# CFN templates use short-form tags (!Ref, !Sub, !GetAtt, ...) that
+# prettier's YAML parser rejects.
+bedrock/deploy/cloudformation/*.yaml
+
+# Generated files.
+uv.lock
+
+# Vendored / cached tool state.
+.venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+.serena/
