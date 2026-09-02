@@ -232,4 +232,4 @@ async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:
         if body is not None:
             container[field] = body
         else:
-            log.info("proceeding without offloaded body for %s", path)
+            log.warning("proceeding without offloaded body for %s", path)

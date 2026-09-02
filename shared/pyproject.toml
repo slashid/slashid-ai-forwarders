@@ -17,6 +17,7 @@ dependencies = [
     # neutral and non-AWS forwarders don't pull aioboto3) is tracked
     # as a Phase 2 cleanup.
     "aioboto3>=15.0",
+    "pydantic-extra-types>=2.10",
 ]
 
 [dependency-groups]
