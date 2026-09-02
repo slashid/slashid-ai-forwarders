@@ -42,8 +42,6 @@ def test_make_ai_tool_preserves_extra_ai_tool_kwargs() -> None:
 
 def test_make_ai_tool_input_schema_uses_compact_json() -> None:
     """Wire string uses compact JSON separators — hash-stable across runs."""
-    tool = make_ai_tool(
-        id="t", name="x", input_schema={"a": 1, "b": [1, 2, 3]}
-    )
+    tool = make_ai_tool(id="t", name="x", input_schema={"a": 1, "b": [1, 2, 3]})
     # sort_keys + compact separators produce a stable form.
     assert tool.input_schema == '{"a":1,"b":[1,2,3]}'

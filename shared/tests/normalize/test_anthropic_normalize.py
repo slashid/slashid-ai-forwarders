@@ -37,15 +37,19 @@ def test_anthropic_message_tool_use_with_null_input_becomes_empty_dict() -> None
         AnthropicRequestBody,
     )
 
-    request = AnthropicRequestBody.model_validate({
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "noop"}]}],
-    })
-    response = AnthropicMessage.model_validate({
-        "type": "message",
-        "role": "assistant",
-        "content": [{"type": "tool_use", "id": "toolu_x", "name": "noop"}],
-        "stop_reason": "tool_use",
-    })
+    request = AnthropicRequestBody.model_validate(
+        {
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "noop"}]}],
+        }
+    )
+    response = AnthropicMessage.model_validate(
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "toolu_x", "name": "noop"}],
+            "stop_reason": "tool_use",
+        }
+    )
     normalized = message_to_normalized_invocation(request, response)
     assert normalized.output.message is not None
     tool_block = normalized.output.message.content[0]
@@ -69,22 +73,26 @@ def test_anthropic_stream_malformed_input_json_yields_empty_dict(
         AnthropicStreamEvent,
     )
 
-    request = AnthropicRequestBody.model_validate({
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-    })
-    stream = TypeAdapter(list[AnthropicStreamEvent]).validate_python([
+    request = AnthropicRequestBody.model_validate(
         {
-            "type": "content_block_start",
-            "index": 0,
-            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read"},
-        },
-        {
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {"type": "input_json_delta", "partial_json": "not json"},
-        },
-        {"type": "content_block_stop", "index": 0},
-    ])
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        }
+    )
+    stream = TypeAdapter(list[AnthropicStreamEvent]).validate_python(
+        [
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read"},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "not json"},
+            },
+            {"type": "content_block_stop", "index": 0},
+        ]
+    )
     with caplog.at_level(
         logging.WARNING,
         logger="slashid_ai_forwarder_core.normalize.anthropic.normalize",
@@ -98,7 +106,8 @@ def test_anthropic_stream_malformed_input_json_yields_empty_dict(
 
     # Level + logger + substring — no exact-wording match.
     matches = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING
         and r.name == "slashid_ai_forwarder_core.normalize.anthropic.normalize"
         and "malformed" in r.message

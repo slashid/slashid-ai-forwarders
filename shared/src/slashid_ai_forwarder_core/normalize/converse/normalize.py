@@ -79,22 +79,26 @@ def _translate_request_content(
                 out.append(NormalizedContent(kind="text", text=block.text))
             case ConverseToolUseBlock():
                 tu = block.toolUse
-                out.append(NormalizedContent(
-                    kind="tool_use",
-                    tool_use_id=tu.toolUseId,
-                    tool_name=tu.name,
-                    tool_input=tu.input if tu.input else {},
-                    tool_executor="client",
-                ))
+                out.append(
+                    NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id=tu.toolUseId,
+                        tool_name=tu.name,
+                        tool_input=tu.input if tu.input else {},
+                        tool_executor="client",
+                    )
+                )
             case ConverseToolResultBlock():
                 tr = block.toolResult
-                out.append(NormalizedContent(
-                    kind="tool_result",
-                    tool_use_id=tr.toolUseId,
-                    tool_output=tr.content,
-                    tool_is_error=tr.status == "error",
-                    tool_executor="client",
-                ))
+                out.append(
+                    NormalizedContent(
+                        kind="tool_result",
+                        tool_use_id=tr.toolUseId,
+                        tool_output=tr.content,
+                        tool_is_error=tr.status == "error",
+                        tool_executor="client",
+                    )
+                )
             case ConverseReasoningBlock():
                 rc = block.reasoningContent
                 text = (rc.reasoningText.text if rc.reasoningText else "") or ""
@@ -129,13 +133,15 @@ def _translate_response_content(
                 out.append(NormalizedContent(kind="text", text=block.text))
             case ConverseToolUseBlock():
                 tu = block.toolUse
-                out.append(NormalizedContent(
-                    kind="tool_use",
-                    tool_use_id=tu.toolUseId,
-                    tool_name=tu.name,
-                    tool_input=tu.input if tu.input else {},
-                    tool_executor="client",
-                ))
+                out.append(
+                    NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id=tu.toolUseId,
+                        tool_name=tu.name,
+                        tool_input=tu.input if tu.input else {},
+                        tool_executor="client",
+                    )
+                )
             case ConverseReasoningBlock():
                 rc = block.reasoningContent
                 text = (rc.reasoningText.text if rc.reasoningText else "") or ""

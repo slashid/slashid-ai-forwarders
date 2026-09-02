@@ -36,13 +36,17 @@ def test_converse_dict_to_normalized_from_full_record() -> None:
     )
 
     record = {
-        "input": {"inputBodyJson": {
-            "messages": [{"role": "user", "content": [{"text": "hi"}]}],
-        }},
-        "output": {"outputBodyJson": {
-            "output": {"message": {"role": "assistant", "content": [{"text": "hi back"}]}},
-            "stopReason": "end_turn",
-        }},
+        "input": {
+            "inputBodyJson": {
+                "messages": [{"role": "user", "content": [{"text": "hi"}]}],
+            }
+        },
+        "output": {
+            "outputBodyJson": {
+                "output": {"message": {"role": "assistant", "content": [{"text": "hi back"}]}},
+                "stopReason": "end_turn",
+            }
+        },
     }
     normalized = converse_dict_to_normalized(record)
     assert normalized.output.stop_reason == "end_turn"
@@ -63,10 +67,12 @@ def test_converse_dict_to_normalized_missing_input_body_yields_empty_input() -> 
 
     record = {
         "input": {"inputBodyJson": None},
-        "output": {"outputBodyJson": {
-            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
-            "stopReason": "end_turn",
-        }},
+        "output": {
+            "outputBodyJson": {
+                "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+                "stopReason": "end_turn",
+            }
+        },
     }
     normalized = converse_dict_to_normalized(record)
     assert normalized.input.messages is None

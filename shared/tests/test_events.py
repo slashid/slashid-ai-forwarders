@@ -1449,8 +1449,10 @@ async def test_build_event_truncates_redacted_text() -> None:
         }
     )
     event = await build_event(
-        converse_dict_to_normalized(record), record,
-        include_raw_content=True, max_content_size=20,
+        converse_dict_to_normalized(record),
+        record,
+        include_raw_content=True,
+        max_content_size=20,
     )
     assert event is not None
     assert event.input is not None
@@ -1470,8 +1472,10 @@ async def test_build_event_truncates_file_redacted_content() -> None:
         tool_result_content=cat_n,
     )
     event = await build_event(
-        converse_dict_to_normalized(record), record,
-        include_raw_content=True, max_content_size=50,
+        converse_dict_to_normalized(record),
+        record,
+        include_raw_content=True,
+        max_content_size=50,
     )
     assert event is not None
     assert event.accessed_files is not None

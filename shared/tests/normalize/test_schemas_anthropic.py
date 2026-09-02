@@ -249,9 +249,11 @@ def test_stream_non_list_rejected() -> None:
 def test_anthropic_request_body_minimal() -> None:
     from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestBody
 
-    body = AnthropicRequestBody.model_validate({
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-    })
+    body = AnthropicRequestBody.model_validate(
+        {
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        }
+    )
     assert body.messages[0].role == "user"
     assert body.system is None
     assert body.tools is None
@@ -261,17 +263,21 @@ def test_anthropic_request_body_system_string_and_list_forms() -> None:
     from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestBody
 
     # String form
-    b1 = AnthropicRequestBody.model_validate({
-        "system": "You are helpful.",
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-    })
+    b1 = AnthropicRequestBody.model_validate(
+        {
+            "system": "You are helpful.",
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        }
+    )
     assert b1.system == "You are helpful."
 
     # List form (each item has {type: "text", text: ...})
-    b2 = AnthropicRequestBody.model_validate({
-        "system": [{"type": "text", "text": "You are helpful."}],
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-    })
+    b2 = AnthropicRequestBody.model_validate(
+        {
+            "system": [{"type": "text", "text": "You are helpful."}],
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+        }
+    )
     assert isinstance(b2.system, list)
     assert b2.system[0].text == "You are helpful."
 
@@ -280,14 +286,16 @@ def test_anthropic_request_body_ignores_non_content_settings() -> None:
     """max_tokens, temperature, top_p, stream, metadata — all dropped."""
     from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestBody
 
-    body = AnthropicRequestBody.model_validate({
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-        "max_tokens": 4096,
-        "temperature": 0.7,
-        "top_p": 0.9,
-        "stream": True,
-        "metadata": {"user_id": "u_1"},
-    })
+    body = AnthropicRequestBody.model_validate(
+        {
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": True,
+            "metadata": {"user_id": "u_1"},
+        }
+    )
     assert not hasattr(body, "max_tokens")
     assert not hasattr(body, "temperature")
 
@@ -296,13 +304,15 @@ def test_anthropic_request_message_role_widened() -> None:
     """Request messages allow role='assistant' (conversation history)."""
     from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestBody
 
-    body = AnthropicRequestBody.model_validate({
-        "messages": [
-            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
-            {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
-            {"role": "user", "content": [{"type": "text", "text": "how are you"}]},
-        ],
-    })
+    body = AnthropicRequestBody.model_validate(
+        {
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+                {"role": "user", "content": [{"type": "text", "text": "how are you"}]},
+            ],
+        }
+    )
     assert [m.role for m in body.messages] == ["user", "assistant", "user"]
 
 
@@ -313,21 +323,23 @@ def test_anthropic_tool_result_block_in_user_message() -> None:
         AnthropicToolResultBlock,
     )
 
-    body = AnthropicRequestBody.model_validate({
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "toolu_1",
-                        "content": "the answer is 42",
-                        "is_error": False,
-                    }
-                ],
-            },
-        ],
-    })
+    body = AnthropicRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": "the answer is 42",
+                            "is_error": False,
+                        }
+                    ],
+                },
+            ],
+        }
+    )
     block = body.messages[0].content[0]
     assert isinstance(block, AnthropicToolResultBlock)
     assert block.tool_use_id == "toolu_1"
@@ -341,16 +353,18 @@ def test_anthropic_tool_result_block_is_error_defaults_false() -> None:
         AnthropicToolResultBlock,
     )
 
-    body = AnthropicRequestBody.model_validate({
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
-                ],
-            },
-        ],
-    })
+    body = AnthropicRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
+                    ],
+                },
+            ],
+        }
+    )
     block = body.messages[0].content[0]
     assert isinstance(block, AnthropicToolResultBlock)
     assert block.is_error is False
@@ -359,12 +373,17 @@ def test_anthropic_tool_result_block_is_error_defaults_false() -> None:
 def test_anthropic_request_body_tools_declared() -> None:
     from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestBody
 
-    body = AnthropicRequestBody.model_validate({
-        "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
-        "tools": [
-            {"name": "read_file", "description": "Read a file",
-             "input_schema": {"type": "object"}},
-        ],
-    })
+    body = AnthropicRequestBody.model_validate(
+        {
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+            "tools": [
+                {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object"},
+                },
+            ],
+        }
+    )
     assert body.tools is not None
     assert body.tools[0].name == "read_file"

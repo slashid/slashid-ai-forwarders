@@ -169,23 +169,27 @@ def _translate_request_content(
             case AnthropicTextBlock():
                 out.append(NormalizedContent(kind="text", text=block.text))
             case AnthropicToolUseBlock():
-                out.append(NormalizedContent(
-                    kind="tool_use",
-                    tool_use_id=block.id,
-                    tool_name=block.name,
-                    tool_input=block.input if block.input else {},
-                    tool_executor="client",
-                ))
+                out.append(
+                    NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id=block.id,
+                        tool_name=block.name,
+                        tool_input=block.input if block.input else {},
+                        tool_executor="client",
+                    )
+                )
             case AnthropicThinkingBlock():
                 out.append(NormalizedContent(kind="reasoning", text=block.thinking))
             case AnthropicToolResultBlock():
-                out.append(NormalizedContent(
-                    kind="tool_result",
-                    tool_use_id=block.tool_use_id,
-                    tool_output=block.content,
-                    tool_is_error=block.is_error,
-                    tool_executor="client",
-                ))
+                out.append(
+                    NormalizedContent(
+                        kind="tool_result",
+                        tool_use_id=block.tool_use_id,
+                        tool_output=block.content,
+                        tool_is_error=block.is_error,
+                        tool_executor="client",
+                    )
+                )
             # AnthropicUnknownBlock: skipped silently.
     return out
 
@@ -204,13 +208,15 @@ def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:
             case AnthropicTextBlock():
                 content.append(NormalizedContent(kind="text", text=block.text))
             case AnthropicToolUseBlock():
-                content.append(NormalizedContent(
-                    kind="tool_use",
-                    tool_use_id=block.id,
-                    tool_name=block.name,
-                    tool_input=block.input if block.input else {},
-                    tool_executor="client",
-                ))
+                content.append(
+                    NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id=block.id,
+                        tool_name=block.name,
+                        tool_input=block.input if block.input else {},
+                        tool_executor="client",
+                    )
+                )
             case AnthropicThinkingBlock():
                 content.append(NormalizedContent(kind="reasoning", text=block.thinking))
             # AnthropicUnknownBlock: skipped silently.
@@ -288,15 +294,19 @@ def _stream_to_output(
                     continue
                 block_type = slot["_type"]
                 if block_type == "text":
-                    content.append(NormalizedContent(
-                        kind="text",
-                        text=slot.get("text", ""),
-                    ))
+                    content.append(
+                        NormalizedContent(
+                            kind="text",
+                            text=slot.get("text", ""),
+                        )
+                    )
                 elif block_type == "reasoning":
-                    content.append(NormalizedContent(
-                        kind="reasoning",
-                        text=slot.get("text", ""),
-                    ))
+                    content.append(
+                        NormalizedContent(
+                            kind="reasoning",
+                            text=slot.get("text", ""),
+                        )
+                    )
                 elif block_type == "tool_use":
                     parsed_input: dict[str, Any] = {}
                     buf = slot.get("input_buf") or ""
@@ -305,13 +315,15 @@ def _stream_to_output(
                             parsed_input = cast("dict[str, Any]", json.loads(buf))
                         except json.JSONDecodeError:
                             log.warning("tool_use input_json malformed (%d bytes)", len(buf))
-                    content.append(NormalizedContent(
-                        kind="tool_use",
-                        tool_use_id=slot["tool_use_id"],
-                        tool_name=slot["name"],
-                        tool_input=parsed_input,
-                        tool_executor="client",
-                    ))
+                    content.append(
+                        NormalizedContent(
+                            kind="tool_use",
+                            tool_use_id=slot["tool_use_id"],
+                            tool_name=slot["name"],
+                            tool_input=parsed_input,
+                            tool_executor="client",
+                        )
+                    )
 
             case AnthropicMessageDelta() if event.delta:
                 raw_reason = event.delta.get("stop_reason")

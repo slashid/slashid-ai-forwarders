@@ -32,9 +32,7 @@ class NormalizedContent(_LenientModel):
     """One content block inside a message — the smallest unit of what the
     conversation is *about*."""
 
-    kind: Literal[
-        "text", "image", "audio", "document", "tool_use", "tool_result", "reasoning"
-    ]
+    kind: Literal["text", "image", "audio", "document", "tool_use", "tool_result", "reasoning"]
     text: str | None = None
     tool_use_id: str | None = None
     tool_name: str | None = None
