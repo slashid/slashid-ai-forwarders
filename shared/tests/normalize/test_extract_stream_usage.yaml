@@ -1,0 +1,27 @@
+id: merges_start_and_delta
+body:
+  - type: message_start
+    message:
+      type: message
+      role: assistant
+      content: []
+      usage: {input_tokens: 10, cache_read_input_tokens: 3}
+  - type: message_delta
+    delta: {}
+    usage: {output_tokens: 12}
+expected:
+  input_tokens: 10
+  output_tokens: 12
+  cache_read_input_tokens: 3
+---
+id: empty_events
+body: []
+expected: {}
+---
+id: delta_only
+body:
+  - type: message_delta
+    delta: {}
+    usage: {output_tokens: 5}
+expected:
+  output_tokens: 5

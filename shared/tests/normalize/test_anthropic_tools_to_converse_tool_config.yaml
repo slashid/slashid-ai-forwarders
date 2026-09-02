@@ -1,0 +1,31 @@
+id: single_tool_with_input_schema
+body:
+  - name: read
+    description: Read a file.
+    input_schema:
+      type: object
+      properties: {path: {type: string}}
+expected:
+  tools:
+    - toolSpec:
+        name: read
+        description: Read a file.
+        inputSchema:
+          json:
+            type: object
+            properties: {path: {type: string}}
+---
+id: empty_input
+body: []
+expected:
+  tools: []
+---
+id: missing_input_schema
+body:
+  - {name: noop}
+expected:
+  tools:
+    - toolSpec:
+        name: noop
+        inputSchema:
+          json: {}

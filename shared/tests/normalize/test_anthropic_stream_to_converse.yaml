@@ -1,0 +1,123 @@
+id: text_only
+body:
+  - type: content_block_start
+    index: 0
+    content_block: {type: text, text: ""}
+  - type: content_block_delta
+    index: 0
+    delta: {type: text_delta, text: hi}
+  - {type: content_block_stop, index: 0}
+  - type: message_delta
+    delta: {stop_reason: end_turn}
+expected:
+  output:
+    message:
+      role: assistant
+      content:
+        - {text: hi}
+  stopReason: end_turn
+---
+id: tool_use_with_input_json_deltas
+body:
+  - type: content_block_start
+    index: 0
+    content_block: {type: tool_use, id: toolu_1, name: read}
+  - type: content_block_delta
+    index: 0
+    delta: {type: input_json_delta, partial_json: '{"path":'}
+  - type: content_block_delta
+    index: 0
+    delta: {type: input_json_delta, partial_json: '"/x"}'}
+  - {type: content_block_stop, index: 0}
+  - type: message_delta
+    delta: {stop_reason: tool_use}
+expected:
+  output:
+    message:
+      role: assistant
+      content:
+        - toolUse:
+            toolUseId: toolu_1
+            name: read
+            input: {path: /x}
+  stopReason: tool_use
+---
+id: thinking_folded_to_text
+body:
+  - type: content_block_start
+    index: 0
+    content_block: {type: thinking}
+  - type: content_block_delta
+    index: 0
+    delta: {type: thinking_delta, thinking: "reasoning..."}
+  - {type: content_block_stop, index: 0}
+  - type: message_delta
+    delta: {stop_reason: end_turn}
+expected:
+  output:
+    message:
+      role: assistant
+      content:
+        - {text: "reasoning..."}
+  stopReason: end_turn
+---
+id: empty_event_list
+body: []
+expected:
+  output:
+    message:
+      role: assistant
+      content: []
+---
+id: no_stop_reason_omits_stopreason_key
+body:
+  - type: content_block_start
+    index: 0
+    content_block: {type: text, text: ""}
+  - type: content_block_delta
+    index: 0
+    delta: {type: text_delta, text: hi}
+  - {type: content_block_stop, index: 0}
+expected:
+  output:
+    message:
+      role: assistant
+      content:
+        - {text: hi}
+---
+id: unknown_content_block_no_slot
+body:
+  - type: content_block_start
+    index: 0
+    content_block: {type: server_tool_use, id: srv}
+  - type: content_block_delta
+    index: 0
+    delta: {type: text_delta, text: ignored}
+  - {type: content_block_stop, index: 0}
+  - type: message_delta
+    delta: {stop_reason: end_turn}
+expected:
+  output:
+    message:
+      role: assistant
+      content: []
+  stopReason: end_turn
+---
+id: ping_and_message_stop_are_noops
+body:
+  - {type: ping}
+  - type: content_block_start
+    index: 0
+    content_block: {type: text, text: ""}
+  - {type: ping}
+  - type: content_block_delta
+    index: 0
+    delta: {type: text_delta, text: hi}
+  - {type: content_block_stop, index: 0}
+  - {type: message_stop}
+expected:
+  output:
+    message:
+      role: assistant
+      content:
+        - {text: hi}
