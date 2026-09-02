@@ -1,0 +1,47 @@
+id: end_turn
+raw: end_turn
+expected: end_turn
+---
+id: max_tokens
+raw: max_tokens
+expected: max_tokens
+---
+id: stop_sequence
+raw: stop_sequence
+expected: stop_sequence
+---
+id: tool_use
+raw: tool_use
+expected: tool_use
+---
+id: guardrail_intervened_folded_into_content_filtered
+raw: guardrail_intervened
+expected: content_filtered
+---
+id: content_filtered
+raw: content_filtered
+expected: content_filtered
+---
+id: malformed_model_output
+raw: malformed_model_output
+expected: malformed_model_output
+---
+id: malformed_tool_use
+raw: malformed_tool_use
+expected: malformed_tool_use
+---
+id: model_context_window_exceeded
+raw: model_context_window_exceeded
+expected: model_context_window_exceeded
+---
+id: unknown_falls_through
+raw: some_new_reason
+expected: unknown
+---
+id: none_falls_through
+raw: null
+expected: unknown
+---
+id: empty_falls_through
+raw: ""
+expected: unknown
