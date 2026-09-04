@@ -74,23 +74,16 @@ Requires the AWS CLI and `jq`. For a GUI alternative, the [Bedrock Playground](h
 ./claude "explore this repo" # one-shot
 ```
 
-### Via Converse with a local attachment (`_accessed_files` inline-bytes path)
+### Via Converse with a local attachment (`_accessed_files` document + image paths)
 
-`./converse-attach <file> [prompt]` base64-encodes a local file, sends it as a Converse `document` (pdf/csv/txt/md/html/doc/docx/xls/xlsx) or `image` (png/jpeg/gif/webp) block, and validates that the emitted `AIInvocationObservedV1.accessed_files` entry carries the file name, IANA media type, byte length, and stable `sha256/sha1/md5` matching the raw bytes.
+`./converse-attach <file> [prompt]` base64-encodes a local file, sends it as a Converse `document` (pdf/csv/txt/md/html/doc/docx/xls/xlsx) or `image` (png/jpeg/gif/webp) block, and validates that the emitted `AIInvocationObservedV1.accessed_files` entry carries the name, IANA media type, byte length, and stable `sha256/sha1/md5` matching the raw bytes.
 
 ```bash
 ./converse-attach ./notes.pdf                        # default prompt
 ./converse-attach ./chart.png "what is in this image?"
 ```
 
-### Via Converse with an S3-hosted attachment (`_accessed_files` S3-source path)
-
-`./converse-attach-s3 <s3-uri> [prompt]` sends a document or image whose `source` is an S3 URI rather than inline bytes — exercises `shared/s3.py::_resolve_s3_attachment`'s HeadObject + optional GetObject path in the Lambda. The deployed Lambda must have `s3:GetObject` on the bucket (via the `BedrockBodyOffloadS3Bucket` CFN parameter or an equivalent grant), and the object must exist and be readable by the Bedrock service.
-
-```bash
-./converse-attach-s3 s3://my-bucket/report.pdf
-./converse-attach-s3 s3://my-bucket/logo.png "describe this logo"
-```
+Bedrock's MIL preserves small text documents inline, so text runs exercise `_accessed_files`' inline-bytes branch. Images (and larger documents) are auto-offloaded to the MIL-managed S3 bucket, so image runs exercise `shared/s3.py::_resolve_s3_attachment`'s HeadObject + GetObject path instead — one script covers both.
 
 ### Via Claude Code exercising the `Read` tool (`_accessed_files` tool-result path)
 
