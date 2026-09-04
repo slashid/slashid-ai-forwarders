@@ -8,7 +8,9 @@ Values Anthropic emits (as of 2026-01):
     refusal, malformed_model_output
 
 Callers use ``STOP_REASONS.get(raw or "", "unknown")`` — dict miss on
-unknown / empty / None falls through to ``"unknown"`` naturally.
+unknown / empty falls through to ``"unknown"`` naturally. The ``or ""``
+is only needed to satisfy ty's overload match on the ``dict[str, ...]``
+key type; runtime ``.get(None, default)`` would also work fine.
 """
 
 from __future__ import annotations

@@ -10,7 +10,9 @@ wire model retains ``guardrail_intervened`` for historical-event
 deserialization compatibility, but normalizers must not emit it.
 
 Callers use ``STOP_REASONS.get(raw or "", "unknown")`` — dict miss on
-unknown / empty / None falls through to ``"unknown"`` naturally.
+unknown / empty falls through to ``"unknown"`` naturally. The ``or ""``
+is only needed to satisfy ty's overload match on the ``dict[str, ...]``
+key type; runtime ``.get(None, default)`` would also work fine.
 """
 
 from __future__ import annotations
