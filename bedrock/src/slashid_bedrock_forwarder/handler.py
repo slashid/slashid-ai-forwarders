@@ -33,12 +33,14 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1, build_event
+from slashid_ai_forwarder_core.normalize.finalize import finalize
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
-from slashid_ai_forwarder_core.s3 import resolve_offloaded_bodies
 from slashid_ai_forwarder_core.sink import push_invocations
 
 from .config import Config, load_config
+from .converse_attachments import extract_converse_attachments
 from .mil_normalize import normalize_record
+from .s3 import resolve_offloaded_bodies
 
 log = logging.getLogger()
 log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
@@ -119,11 +121,25 @@ def _log_event(event: AIInvocationObservedV1) -> None:
 
 
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
-    """Resolve offloaded MIL bodies, normalize, build + push events."""
+    """Resolve offloaded MIL bodies, normalize, extract attachments, build + push events."""
     await resolve_offloaded_bodies(records)
-    normalized_records: list[tuple[NormalizedInvocation, dict[str, Any]]] = [
-        (normalize_record(record), record) for record in records
-    ]
+
+    async def _prepare(record: dict[str, Any]) -> tuple[NormalizedInvocation, dict[str, Any]]:
+        normalized = normalize_record(record)
+        attachments = await extract_converse_attachments(
+            record,
+            include_raw_content=config.include_raw_content,
+            max_content_size=config.max_content_size,
+        )
+        normalized.accessed_files.extend(attachments)
+        finalize(
+            normalized,
+            include_raw_content=config.include_raw_content,
+            max_content_size=config.max_content_size,
+        )
+        return normalized, record
+
+    prepared = await asyncio.gather(*(_prepare(r) for r in records))
 
     built_or_none = await asyncio.gather(
         *(
@@ -133,7 +149,7 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
                 include_raw_content=config.include_raw_content,
                 max_content_size=config.max_content_size,
             )
-            for normalized, record in normalized_records
+            for normalized, record in prepared
         )
     )
     events = [e for e in built_or_none if e is not None]

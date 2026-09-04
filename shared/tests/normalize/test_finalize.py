@@ -76,17 +76,35 @@ def test_finalize_preserves_pre_existing_entries() -> None:
     assert names == ["/attach/pdf", "/tmp/x.txt"]
 
 
-def test_finalize_is_not_idempotent() -> None:
-    """A second call re-appends the same tool-result files (documented
-    non-idempotency — callers invoke exactly once per invocation).
-
-    This test locks in the behaviour so accidental idempotency would fail
-    it, forcing a design conversation."""
+def test_finalize_is_idempotent_via_cross_dedup() -> None:
+    """A second call skips the tool-result files whose (name, sha256) already
+    appears in ``normalized.accessed_files`` — the cross-path dedup ensures
+    idempotency for identical inputs. Preserves pre-refactor wire behaviour
+    where the shared _accessed_files walk deduped attachments and
+    tool-results in a single ``seen`` set."""
     n = _invocation_with_read("/tmp/x.txt", "hello")
     finalize(n, include_raw_content=False, max_content_size=100_000)
     finalize(n, include_raw_content=False, max_content_size=100_000)
-    assert len(n.accessed_files) == 2
-    assert n.accessed_files[0] == n.accessed_files[1]
+    assert len(n.accessed_files) == 1
+
+
+def test_finalize_cross_dedup_against_attachment() -> None:
+    """A tool-result whose (name, sha256) matches a pre-existing attachment
+    entry is skipped — the cross-path dedup between vendor attachment
+    extractors and the tool-result extractor."""
+    import hashlib as _h
+
+    n = _invocation_with_read("/tmp/x.txt", "hello")
+    n.accessed_files.append(
+        AIAccessedFile(
+            name="/tmp/x.txt",
+            content_hashes={"sha256": _h.sha256(b"hello").hexdigest()},
+            byte_length=5,
+        )
+    )
+    finalize(n, include_raw_content=False, max_content_size=100_000)
+    assert len(n.accessed_files) == 1
+    assert n.accessed_files[0].byte_length == 5
 
 
 def test_finalize_returns_same_instance() -> None:

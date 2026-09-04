@@ -7,6 +7,9 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
     "slashid-ai-forwarder-core",
+    # Owns S3 attachment resolution + MIL body offload — moved from shared/
+    # in Phase 2.1.
+    "aioboto3>=15.0",
 ]
 
 [tool.uv.sources]

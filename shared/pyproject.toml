@@ -10,13 +10,6 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
     "tenacity>=9.0",
-    # aioboto3 is here (rather than in bedrock/) because
-    # slashid_ai_forwarder_core.events._accessed_files lazily imports
-    # slashid_ai_forwarder_core.s3._resolve_s3_attachment. Making the
-    # attachment resolver injectable (so shared/events.py is vendor-
-    # neutral and non-AWS forwarders don't pull aioboto3) is tracked
-    # as a Phase 2 cleanup.
-    "aioboto3>=15.0",
     "pydantic-extra-types>=2.10",
 ]
 
