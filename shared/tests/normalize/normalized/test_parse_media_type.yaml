@@ -1,0 +1,19 @@
+id: registered_bare
+raw: text/plain
+expected: text/plain
+---
+id: registered_with_parameters
+raw: "text/plain; charset=utf-8"
+expected: text/plain
+---
+id: registered_with_whitespace
+raw: "  application/json  "
+expected: application/json
+---
+id: empty_string
+raw: ""
+expected: null
+---
+id: none
+raw: null
+expected: null

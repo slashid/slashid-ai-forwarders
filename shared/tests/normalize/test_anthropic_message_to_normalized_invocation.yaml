@@ -1,0 +1,188 @@
+id: text_round_trip
+req:
+  messages:
+    - role: user
+      content: [{type: text, text: "hi"}]
+response:
+  type: message
+  role: assistant
+  content: [{type: text, text: "hello"}]
+  stop_reason: end_turn
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "hello", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: system_str_prepended
+req:
+  system: "You are helpful."
+  messages:
+    - role: user
+      content: [{type: text, text: "hi"}]
+response:
+  type: message
+  role: assistant
+  content: [{type: text, text: "hello"}]
+  stop_reason: end_turn
+expected:
+  input:
+    messages:
+      - role: system
+        content: [{kind: text, text: "You are helpful.", tool_is_error: false}]
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "hello", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: system_list_form_concatenated
+req:
+  system:
+    - {type: text, text: "You are helpful."}
+    - {type: text, text: " Always be brief."}
+  messages:
+    - role: user
+      content: [{type: text, text: "hi"}]
+response:
+  type: message
+  role: assistant
+  content: [{type: text, text: "hello"}]
+  stop_reason: end_turn
+expected:
+  input:
+    messages:
+      - role: system
+        content: [{kind: text, text: "You are helpful. Always be brief.", tool_is_error: false}]
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "hello", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: tool_use_response_marks_client
+req:
+  messages:
+    - role: user
+      content: [{type: text, text: "search for cats"}]
+response:
+  type: message
+  role: assistant
+  content:
+    - type: tool_use
+      id: toolu_1
+      name: web_search
+      input: {query: "cats"}
+  stop_reason: tool_use
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "search for cats", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content:
+        - kind: tool_use
+          tool_use_id: toolu_1
+          tool_name: web_search
+          tool_input: {query: "cats"}
+          tool_is_error: false
+          tool_executor: client
+    stop_reason: tool_use
+---
+id: tool_result_in_user_turn
+req:
+  messages:
+    - role: user
+      content:
+        - type: tool_result
+          tool_use_id: toolu_1
+          content: "the answer is 42"
+          is_error: false
+response:
+  type: message
+  role: assistant
+  content: [{type: text, text: "thanks"}]
+  stop_reason: end_turn
+expected:
+  input:
+    messages:
+      - role: user
+        content:
+          - kind: tool_result
+            tool_use_id: toolu_1
+            tool_output: "the answer is 42"
+            tool_is_error: false
+            tool_executor: client
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "thanks", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: thinking_block_becomes_reasoning
+req:
+  messages:
+    - role: user
+      content: [{type: text, text: "hi"}]
+response:
+  type: message
+  role: assistant
+  content:
+    - {type: thinking, thinking: "the user said hi", signature: "sig_1"}
+    - {type: text, text: "hello"}
+  stop_reason: end_turn
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content:
+        - kind: reasoning
+          text: "the user said hi"
+          tool_is_error: false
+        - kind: text
+          text: "hello"
+          tool_is_error: false
+    stop_reason: end_turn
+---
+id: null_tool_use_input_becomes_empty_dict
+req:
+  messages:
+    - role: user
+      content: [{type: text, text: "hi"}]
+response:
+  type: message
+  role: assistant
+  content:
+    - {type: tool_use, id: toolu_x, name: noop}
+  stop_reason: tool_use
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content:
+        - kind: tool_use
+          tool_use_id: toolu_x
+          tool_name: noop
+          tool_input: {}
+          tool_is_error: false
+          tool_executor: client
+    stop_reason: tool_use

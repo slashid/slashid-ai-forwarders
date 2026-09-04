@@ -153,10 +153,9 @@ def test_converse_tool_config_round_trip() -> None:
     }
     cfg = ConverseToolConfig.model_validate(raw)
     assert cfg.tools[0].toolSpec.name == "read"
-    assert (
-        cfg.tools[0].toolSpec.inputSchema.json_
-        == raw["tools"][0]["toolSpec"]["inputSchema"]["json"]
-    )
+    input_schema = cfg.tools[0].toolSpec.inputSchema
+    assert input_schema is not None
+    assert input_schema.json_ == raw["tools"][0]["toolSpec"]["inputSchema"]["json"]
     assert cfg.model_dump(by_alias=True, exclude_none=True) == raw
 
 
@@ -177,3 +176,94 @@ def test_converse_tool_config_empty_list() -> None:
 # future test authors who might reach for it.
 _ = ConverseTool
 _ = ConverseToolSpec
+
+
+# ==========================================================================
+# Request-side schemas (Phase 2, Chunk 4)
+# ==========================================================================
+
+
+def test_converse_request_body_minimal() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import ConverseRequestBody
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [{"role": "user", "content": [{"text": "hi"}]}],
+        }
+    )
+    assert body.messages[0].role == "user"
+    assert body.system is None
+    assert body.toolConfig is None
+
+
+def test_converse_request_body_system_list_form() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import ConverseRequestBody
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "system": [{"text": "You are helpful."}],
+            "messages": [{"role": "user", "content": [{"text": "hi"}]}],
+        }
+    )
+    assert body.system is not None
+    assert body.system[0].text == "You are helpful."
+
+
+def test_converse_request_body_ignores_non_content_settings() -> None:
+    """inferenceConfig, additionalModelRequestFields, guardrailConfig — all dropped."""
+    from slashid_ai_forwarder_core.normalize.converse.schema import ConverseRequestBody
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [{"role": "user", "content": [{"text": "hi"}]}],
+            "inferenceConfig": {"maxTokens": 4096, "temperature": 0.7},
+            "additionalModelRequestFields": {"top_k": 40},
+            "guardrailConfig": {"guardrailIdentifier": "g_1"},
+        }
+    )
+    assert not hasattr(body, "inferenceConfig")
+    assert not hasattr(body, "additionalModelRequestFields")
+
+
+def test_converse_request_message_role_widened() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import ConverseRequestBody
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {"role": "user", "content": [{"text": "hi"}]},
+                {"role": "assistant", "content": [{"text": "hello"}]},
+                {"role": "user", "content": [{"text": "how are you"}]},
+            ],
+        }
+    )
+    assert [m.role for m in body.messages] == ["user", "assistant", "user"]
+
+
+def test_converse_tool_result_block_in_user_message() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import (
+        ConverseRequestBody,
+        ConverseToolResultBlock,
+    )
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "toolResult": {
+                                "toolUseId": "tooluse_1",
+                                "content": [{"text": "the answer is 42"}],
+                                "status": "success",
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+    block = body.messages[0].content[0]
+    assert isinstance(block, ConverseToolResultBlock)
+    assert block.toolResult.toolUseId == "tooluse_1"

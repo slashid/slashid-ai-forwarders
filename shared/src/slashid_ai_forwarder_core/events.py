@@ -15,11 +15,18 @@ import logging
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .content_utils import strip_cat_n, truncate_middle
+
+if TYPE_CHECKING:
+    # events.py already has ``from __future__ import annotations`` so
+    # annotations resolve lazily. A runtime import here would create a
+    # circular import at module load: types.py imports AIInvocationTokens /
+    # AIStopReason / AITool / AIToolServer from events.py.
+    from .normalize.normalized.types import NormalizedInvocation
 
 log = logging.getLogger(__name__)
 
@@ -362,73 +369,6 @@ def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
         server, tool = name.split("__", 1)
         return tool, server, "runtime"
     return name, "builtin", "runtime"
-
-
-def _short_hash(obj: str | dict[str, object]) -> str:
-    if isinstance(obj, str):
-        data = obj.encode()
-    else:
-        data = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(data).hexdigest()[:16]
-
-
-def _available_tools(
-    record: dict[str, Any],
-) -> tuple[list[AIToolServer], list[AITool], dict[str, str]]:
-    """Return (tool_servers, tools, raw_name_to_tool_id) from the record's toolConfig."""
-    body = (record.get("input") or {}).get("inputBodyJson") or {}
-    if not isinstance(body, dict):
-        return [], [], {}
-    tool_config = body.get("toolConfig") or {}
-    raw_tools = tool_config.get("tools") or []
-
-    servers_by_id: dict[str, AIToolServer] = {}
-    tools: list[AITool] = []
-    raw_to_id: dict[str, str] = {}
-
-    for entry in raw_tools:
-        spec = (entry or {}).get("toolSpec") or {}
-        raw_name = spec.get("name")
-        if not raw_name:
-            continue
-
-        tool_name, server_name, server_kind = parse_tool_name(raw_name)
-        schema = (spec.get("inputSchema") or {}).get("json") or {}
-        description = spec.get("description") or None
-
-        # Server ID: name + kind (servers carry no other distinguishing data).
-        server_id = _short_hash({"name": server_name, "kind": server_kind})
-
-        # Tool ID: full canonical spec — same name with different description,
-        # schema, or annotations is a different tool.
-        tool_id = _short_hash(
-            {
-                "server": server_name,
-                "name": tool_name,
-                "description": description,
-                "input_schema": schema or None,
-            }
-        )
-
-        if server_id not in servers_by_id:
-            servers_by_id[server_id] = AIToolServer(
-                id=server_id,
-                name=server_name,
-                kind=server_kind,
-            )
-
-        tools.append(
-            AITool(
-                id=tool_id,
-                name=tool_name,
-                tool_server_id=server_id,
-                description=description,
-                input_schema=json.dumps(schema, separators=(",", ":")) if schema else None,
-            )
-        )
-        raw_to_id[raw_name] = tool_id
-
-    return list(servers_by_id.values()), tools, raw_to_id
 
 
 async def _accessed_files(
@@ -824,104 +764,84 @@ def _extract_otel(content: Any) -> _OtelCtx:
     return (None, None)
 
 
-def _iter_content_blocks(messages: list[Any]) -> Any:
-    """Yield each content block across all messages (skipping malformed entries)."""
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        for block in msg.get("content") or []:
-            if isinstance(block, dict):
-                yield block
+def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
+    """Collect completed tool invocations from the canonical input messages.
 
+    Only tool_result blocks after the last assistant message count — that's
+    the pair-complete slice for this turn (the assistant just consumed
+    those results). tool_id correlation goes:
 
-def _used_tools(record: dict[str, Any], raw_name_to_id: dict[str, str]) -> list[AIToolUse]:
-    """Collect completed tool invocations visible in this record.
+        tool_result.tool_use_id
+          → NormalizedContent(kind="tool_use", tool_name=<raw wire name>)
+          → parse_tool_name → (parsed_name, server_name)
+          → (server_name, parsed_name) → AITool.id (via tools_declared)
 
-    Only tool_result blocks in the input *after the last assistant message*
-    are emitted — that's the pair-complete slice for this turn (the
-    assistant just consumed those results). Their tool_id is resolved by
-    matching `tool_use_id` against prior tool_use blocks in the same input
-    history. Anthropic and Converse shapes handled side-by-side.
-
-    In-flight calls (a `tool_use` sitting in this record's output with no
-    result yet) are deferred — the pair will appear on the next invocation
-    once the client posts the result back.
+    In-flight calls (``tool_use`` in this record's output with no matching
+    ``tool_result`` yet) are deferred to the next invocation event.
     """
-    input_body = (record.get("input") or {}).get("inputBodyJson")
-    if not isinstance(input_body, dict):
+    input_messages = (normalized.input.messages or []) if normalized.input else []
+    if not input_messages:
         return []
-    input_messages: list[Any] = list(input_body.get("messages") or [])
 
-    # tool_use_id → raw tool name, from prior assistant tool_use blocks
-    # (both Anthropic and Converse shapes).
+    # (server_name, parsed_tool_name) → AITool.id
+    tools = normalized.input.tools_declared or []
+    servers = normalized.input.tool_servers or []
+    server_name_by_id = {s.id: s.name or "builtin" for s in servers}
+    id_by_key: dict[tuple[str, str], str] = {}
+    for tool in tools:
+        server_name = server_name_by_id.get(tool.tool_server_id or "") or "builtin"
+        if tool.name:
+            id_by_key[(server_name, tool.name)] = tool.id
+
+    # tool_use_id → raw wire tool name, from any tool_use block in the history.
     name_by_use_id: dict[str, str] = {}
-    for block in _iter_content_blocks(input_messages):
-        if block.get("type") == "tool_use":
-            uid = block.get("id")
-            name = block.get("name")
-            if isinstance(uid, str) and isinstance(name, str):
-                name_by_use_id[uid] = name
-        elif isinstance(block.get("toolUse"), dict):
-            tu = block["toolUse"]
-            uid = tu.get("toolUseId")
-            name = tu.get("name")
-            if isinstance(uid, str) and isinstance(name, str):
-                name_by_use_id[uid] = name
+    for msg in input_messages:
+        for block in msg.content:
+            if block.kind == "tool_use" and block.tool_use_id and block.tool_name:
+                name_by_use_id[block.tool_use_id] = block.tool_name
 
-    # Fresh region: everything after the last assistant message. Earlier
-    # tool_results were already reported on prior invocation events.
+    # Fresh region: everything after the last assistant message.
     last_assistant = max(
-        (
-            i
-            for i, m in enumerate(input_messages)
-            if isinstance(m, dict) and m.get("role") == "assistant"
-        ),
+        (i for i, m in enumerate(input_messages) if m.role == "assistant"),
         default=-1,
     )
     fresh_messages = input_messages[last_assistant + 1 :]
 
     used: list[AIToolUse] = []
     seen: set[str] = set()
-    for block in _iter_content_blocks(fresh_messages):
-        if block.get("type") == "tool_result":
-            uid = block.get("tool_use_id")
-            # Anthropic: `is_error` is optional; absence = success.
-            raw_is_error = block.get("is_error")
-            is_error = raw_is_error if isinstance(raw_is_error, bool) else False
-            trace_id, span_id = _extract_otel(block.get("content"))
-        elif isinstance(block.get("toolResult"), dict):
-            tr = block["toolResult"]
-            uid = tr.get("toolUseId")
-            # Converse: `status` is optional and only Claude 3 populates it.
-            # Absence = success (there's no other outcome carrier on the wire).
-            is_error = tr.get("status") == "error"
-            trace_id, span_id = _extract_otel(tr.get("content"))
-        else:
-            continue
-        if not isinstance(uid, str) or uid in seen:
-            continue
-        name = name_by_use_id.get(uid)
-        tool_id = raw_name_to_id.get(name or "")
-        if not tool_id:
-            # Result references a tool we can't identify (tool_use missing
-            # from input history, or toolConfig omits it). Skip — an entry
-            # with no tool_id has no analytic value.
-            continue
-        seen.add(uid)
-        used.append(
-            AIToolUse(
-                tool_id=tool_id,
-                tool_use_id=uid,
-                is_error=is_error,
-                trace_id=trace_id,
-                span_id=span_id,
+    for msg in fresh_messages:
+        for block in msg.content:
+            if block.kind != "tool_result" or not block.tool_use_id:
+                continue
+            uid = block.tool_use_id
+            if uid in seen:
+                continue
+            raw_name = name_by_use_id.get(uid)
+            if not raw_name:
+                continue
+            parsed_name, server_name, _kind = parse_tool_name(raw_name)
+            tool_id = id_by_key.get((server_name, parsed_name))
+            if not tool_id:
+                # Result references a tool we can't identify (tool_use
+                # missing from input history, or tools_declared omits it).
+                # Skip — an entry with no tool_id has no analytic value.
+                continue
+            trace_id, span_id = _extract_otel(block.tool_output)
+            seen.add(uid)
+            used.append(
+                AIToolUse(
+                    tool_id=tool_id,
+                    tool_use_id=uid,
+                    is_error=block.tool_is_error,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                )
             )
-        )
-
     return used
 
 
 async def build_event(
+    normalized: NormalizedInvocation,
     record: dict[str, Any],
     *,
     include_raw_content: bool = False,
@@ -947,8 +867,9 @@ async def build_event(
         # anyway, and a placeholder would pollute the AI subgraph.
         return None
 
-    servers, tools, raw_to_id = _available_tools(record)
-    used = _used_tools(record, raw_to_id)
+    servers = normalized.input.tool_servers or []
+    tools = normalized.input.tools_declared or []
+    used = _used_tools(normalized)
 
     inp = record.get("input") or {}
     out = record.get("output") or {}
@@ -994,12 +915,12 @@ async def build_event(
         used_tools=used or None,
         stop_reason=_stop_reason(record),
         input=_build_content(
-            inp.get("inputBodyJson"),
+            normalized.input.model_dump(mode="json", exclude_none=True),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),
         output=_build_content(
-            out.get("outputBodyJson"),
+            normalized.output.model_dump(mode="json", exclude_none=True),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),

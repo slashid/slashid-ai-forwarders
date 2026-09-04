@@ -5,11 +5,11 @@ Usage (from any test module in any subproject):
     from slashid_ai_forwarder_core.testing import yaml_pytest
 
     @yaml_pytest()
-    def test_anthropic_message_to_converse(
-        body: AnthropicMessage,
-        expected: ConverseResponse,
+    def test_anthropic_tools_to_converse_tool_config(
+        body: list[AnthropicToolDeclaration],
+        expected: ConverseToolConfig,
     ) -> None:
-        assert message_to_converse(body) == expected
+        assert tools_to_converse_tool_config(body) == expected
 
 Defaults (both keyword-only, overridable):
 

@@ -193,3 +193,72 @@ AnthropicStreamEvent = (
     | AnthropicContentBlockStop
     | AnthropicPing
 )
+
+
+# --------------------------------------------------------------------------
+# Request-side schemas (Phase 2)
+# --------------------------------------------------------------------------
+
+
+class AnthropicSystemBlock(_LenientModel):
+    """One entry of the list form of ``AnthropicRequestBody.system``.
+
+    Anthropic's system prompt can be a bare string OR a list of
+    ``{type: "text", text: ...}`` blocks (with cache_control markers etc.
+    ignored by _LenientModel).
+    """
+
+    type: Literal["text"] = "text"
+    text: str = ""
+
+
+class AnthropicToolResultBlock(_LenientModel):
+    """User-turn content block carrying a tool execution result back to the model.
+
+    Not part of the response-side ``AnthropicContentBlock`` union — only
+    valid inside request messages with ``role="user"``.
+    ``is_error`` defaults to False (absence = success, per Anthropic's docs).
+    """
+
+    type: Literal["tool_result"]
+    tool_use_id: str
+    content: JsonValue = None  # str | list[block] | dict — kept as JsonValue
+    is_error: bool = False
+
+
+AnthropicRequestContentBlock = (
+    AnthropicTextBlock
+    | AnthropicToolUseBlock
+    | AnthropicThinkingBlock
+    | AnthropicToolResultBlock
+    | AnthropicUnknownBlock
+)
+# Superset of the response-side content-block union: adds
+# AnthropicToolResultBlock, which only ever appears in user-turn content.
+
+
+class AnthropicRequestMessage(_LenientModel):
+    """One message in ``AnthropicRequestBody.messages``.
+
+    ``role`` is broader than the response side (which is only "assistant"):
+    request-side messages are the conversation history, so both user and
+    assistant turns appear.
+    """
+
+    role: Literal["user", "assistant"]
+    content: list[AnthropicRequestContentBlock]
+
+
+class AnthropicRequestBody(_LenientModel):
+    """The request body sent to Anthropic's Messages API.
+
+    Content-relevant fields only — non-content settings (max_tokens,
+    temperature, top_p, stream, metadata, ...) are dropped via
+    _LenientModel's extra="ignore". Those are how, not what, and
+    shouldn't affect content hashing.
+    """
+
+    system: str | list[AnthropicSystemBlock] | None = None
+    messages: list[AnthropicRequestMessage]
+    tools: list[AnthropicToolDeclaration] | None = None
+    tool_choice: JsonValue = None  # loose — not walked by normalizers today

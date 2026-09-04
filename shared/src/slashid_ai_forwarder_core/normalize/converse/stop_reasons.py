@@ -1,0 +1,32 @@
+"""Converse ``stopReason`` string → canonical ``AIStopReason``.
+
+Vocabulary reference (AWS Bedrock ConverseResponse.stopReason):
+    https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseResponse.html
+
+Design note — ``guardrail_intervened`` folds into ``content_filtered``:
+that's the canonical target for content-policy stops across every
+vendor (matches OpenAI ``content_filter`` and Gemini ``SAFETY``). The
+wire model retains ``guardrail_intervened`` for historical-event
+deserialization compatibility, but normalizers must not emit it.
+
+Callers use ``STOP_REASONS.get(raw or "", "unknown")`` — dict miss on
+unknown / empty falls through to ``"unknown"`` naturally. The ``or ""``
+is only needed to satisfy ty's overload match on the ``dict[str, ...]``
+key type; runtime ``.get(None, default)`` would also work fine.
+"""
+
+from __future__ import annotations
+
+from ...events import AIStopReason
+
+STOP_REASONS: dict[str, AIStopReason] = {
+    "end_turn": "end_turn",
+    "max_tokens": "max_tokens",
+    "stop_sequence": "stop_sequence",
+    "tool_use": "tool_use",
+    "content_filtered": "content_filtered",
+    "guardrail_intervened": "content_filtered",  # deliberate fold — see module docstring
+    "malformed_model_output": "malformed_model_output",
+    "malformed_tool_use": "malformed_tool_use",
+    "model_context_window_exceeded": "model_context_window_exceeded",
+}

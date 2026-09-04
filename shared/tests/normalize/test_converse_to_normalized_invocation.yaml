@@ -1,0 +1,123 @@
+id: text_round_trip_no_system
+req:
+  messages:
+    - role: user
+      content: [{text: "hi"}]
+response:
+  output:
+    message:
+      role: assistant
+      content: [{text: "hello"}]
+  stopReason: end_turn
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "hello", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: system_prompt_prepended_at_index_zero
+req:
+  system:
+    - {text: "You are helpful."}
+  messages:
+    - role: user
+      content: [{text: "hi"}]
+response:
+  output:
+    message:
+      role: assistant
+      content: [{text: "hello"}]
+  stopReason: end_turn
+expected:
+  input:
+    messages:
+      - role: system
+        content: [{kind: text, text: "You are helpful.", tool_is_error: false}]
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "hello", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: tool_use_output_marks_client_executor
+req:
+  messages:
+    - role: user
+      content: [{text: "search for cats"}]
+response:
+  output:
+    message:
+      role: assistant
+      content:
+        - toolUse:
+            toolUseId: tooluse_1
+            name: web_search
+            input: {query: "cats"}
+  stopReason: tool_use
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "search for cats", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content:
+        - kind: tool_use
+          tool_use_id: tooluse_1
+          tool_name: web_search
+          tool_input: {query: "cats"}
+          tool_is_error: false
+          tool_executor: client
+    stop_reason: tool_use
+---
+id: guardrail_intervened_folds_to_content_filtered
+req:
+  messages:
+    - role: user
+      content: [{text: "hi"}]
+response:
+  output:
+    message:
+      role: assistant
+      content: [{text: ""}]
+  stopReason: guardrail_intervened
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "", tool_is_error: false}]
+    stop_reason: content_filtered
+---
+id: unknown_stop_reason_falls_through
+req:
+  messages:
+    - role: user
+      content: [{text: "hi"}]
+response:
+  output:
+    message:
+      role: assistant
+      content: [{text: "hello"}]
+  stopReason: something_new
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "hi", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "hello", tool_is_error: false}]
+    stop_reason: unknown
