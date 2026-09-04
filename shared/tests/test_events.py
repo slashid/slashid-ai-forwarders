@@ -1352,6 +1352,83 @@ async def test_accessed_files_unknown_tool_ignored() -> None:
     assert event.accessed_files is None
 
 
+async def test_accessed_files_anthropic_tool_error_skips_hashing() -> None:
+    """Anthropic Read tool with is_error=True → no accessed_files entry.
+
+    Rationale: on error paths ``tool_result.content`` is an error message,
+    not the file's actual bytes. Hashing it would attribute the error
+    string to the file path and mislead downstream consumers who read
+    ``accessed_files.content_hashes`` as "the file's real content". The
+    tool-failure signal is preserved on the paired ``used_tools`` entry.
+    """
+    record = _record_with_messages(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tu_err",
+                        "name": "Read",
+                        "input": {"file_path": "/etc/hostname"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu_err",
+                        "is_error": True,
+                        "content": "permission denied — file not readable",
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(converse_dict_to_normalized(record), record)
+    assert event is not None
+    # No accessed_files entry: the tool errored, so we don't hash the
+    # error-message body under the file's name.
+    assert event.accessed_files is None
+
+
+async def test_accessed_files_converse_tool_error_skips_hashing() -> None:
+    """Converse Read tool with status="error" → no accessed_files entry."""
+    record = _record_with_messages(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "tu_err_cv",
+                            "name": "Read",
+                            "input": {"file_path": "/etc/hostname"},
+                        }
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "tu_err_cv",
+                            "status": "error",
+                            "content": [{"text": "permission denied"}],
+                        }
+                    }
+                ],
+            },
+        ],
+    )
+    event = await build_event(converse_dict_to_normalized(record), record)
+    assert event is not None
+    assert event.accessed_files is None
+
+
 async def test_accessed_files_tool_result_only_last_turn() -> None:
     """Tool results from before the last assistant message are ignored."""
     content_old = "old file content"

@@ -627,16 +627,30 @@ async def _accessed_files(
         for block in msg.get("content") or []:
             if not isinstance(block, dict):
                 continue
-            # Anthropic shape: {type: "tool_result", tool_use_id, content}
-            # Converse shape:  {toolResult: {toolUseId, content}}
+            # Anthropic shape: {type: "tool_result", tool_use_id, content, is_error?}
+            # Converse shape:  {toolResult: {toolUseId, content, status?}}
             if block.get("type") == "tool_result":
                 uid = block.get("tool_use_id")
                 raw_content = block.get("content")
+                # Anthropic: `is_error` is optional; absence = success.
+                is_error = block.get("is_error") is True
             elif "toolResult" in block:
                 tr = block["toolResult"] or {}
                 uid = tr.get("toolUseId")
                 raw_content = tr.get("content")
+                # Converse: `status` is optional (only Claude 3 sets it); absent = success.
+                is_error = tr.get("status") == "error"
             else:
+                continue
+
+            # On error paths, `content` is the tool's error message body — not
+            # the file bytes. Hashing it would attribute the error string to
+            # the file name and mislead any downstream consumer that reads
+            # `accessed_files.content_hashes` as "the file's real content".
+            # The corresponding entry in `used_tools` still carries the
+            # is_error flag, so the invocation-level tool-failure signal is
+            # preserved.
+            if is_error:
                 continue
 
             tu = tool_use_by_id.get(uid or "")
