@@ -74,6 +74,34 @@ Requires the AWS CLI and `jq`. For a GUI alternative, the [Bedrock Playground](h
 ./claude "explore this repo" # one-shot
 ```
 
+### Via Converse with a local attachment (`_accessed_files` inline-bytes path)
+
+`./converse-attach <file> [prompt]` base64-encodes a local file, sends it as a Converse `document` (pdf/csv/txt/md/html/doc/docx/xls/xlsx) or `image` (png/jpeg/gif/webp) block, and validates that the emitted `AIInvocationObservedV1.accessed_files` entry carries the file name, IANA media type, byte length, and stable `sha256/sha1/md5` matching the raw bytes.
+
+```bash
+./converse-attach ./notes.pdf                        # default prompt
+./converse-attach ./chart.png "what is in this image?"
+```
+
+### Via Converse with an S3-hosted attachment (`_accessed_files` S3-source path)
+
+`./converse-attach-s3 <s3-uri> [prompt]` sends a document or image whose `source` is an S3 URI rather than inline bytes — exercises `shared/s3.py::_resolve_s3_attachment`'s HeadObject + optional GetObject path in the Lambda. The deployed Lambda must have `s3:GetObject` on the bucket (via the `BedrockBodyOffloadS3Bucket` CFN parameter or an equivalent grant), and the object must exist and be readable by the Bedrock service.
+
+```bash
+./converse-attach-s3 s3://my-bucket/report.pdf
+./converse-attach-s3 s3://my-bucket/logo.png "describe this logo"
+```
+
+### Via Claude Code exercising the `Read` tool (`_accessed_files` tool-result path)
+
+Claude Code's `Read` tool result is correlated back to the file it opened; the forwarder hashes the returned bytes (after `strip_cat_n` strips Claude Code's `n\thello` line-number prefix) and emits an `AIAccessedFile` with the tool's `file_path` argument as the name. Any prompt that reliably fires the `Read` tool works — e.g.:
+
+```bash
+./claude "please Read /etc/hostname and repeat the contents verbatim"
+```
+
+The same code path also covers OpenCode / Amazon Q Developer / Gemini CLI (`ReadFile`, `read_file`, `view_file`) and the Claude computer-use text-editor tool (`str_replace_based_edit_tool`) — different tool names, same `_READ_TOOLS` table in `shared/src/slashid_ai_forwarder_core/events.py`.
+
 ## Releases
 
 Tagged releases publish two artifacts to GitHub Releases:

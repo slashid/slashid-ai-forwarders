@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Smoke-test the forwarder's ``_accessed_files`` S3-source branch: invoke
+# Converse with a document or image whose ``source`` is an S3 URI (not
+# inline bytes). Exercises ``shared/s3.py::_resolve_s3_attachment``'s
+# HeadObject + optional GetObject path in the Lambda: the resolver looks
+# up ``Content-Type`` / byte length via HEAD, optionally streams the body
+# via GET (gated by ``max_fetch_bytes``), and populates the
+# ``AIAccessedFile`` with a stable hash when full bytes were fetched or a
+# stub with hash=None when only HEAD succeeded.
+#
+# Preconditions:
+#   - the S3 object exists in the specified bucket;
+#   - the DEPLOYED Lambda has s3:GetObject on it (via the CFN template's
+#     ``BedrockBodyOffloadS3Bucket`` parameter or an equivalent IAM grant);
+#   - the caller (you) can also read it, so Bedrock itself can fetch the
+#     attachment when serving the Converse call.
+#
+# Uses the IAM credentials already in your AWS SDK chain.
+#
+# Usage:
+#   ./converse-attach-s3 <s3-uri> [prompt]
+#
+# Examples:
+#   ./converse-attach-s3 s3://my-bucket/report.pdf
+#   ./converse-attach-s3 s3://my-bucket/logo.png "describe this logo"
+#   MODEL_ID=us.amazon.nova-lite-v1:0 ./converse-attach-s3 s3://my-bucket/notes.txt
+#
+# Requires: aws CLI, jq.
+
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "error: jq is required" >&2
+  exit 1
+fi
+
+S3_URI="${1:?usage: ./converse-attach-s3 <s3-uri> [prompt]}"
+if [[ "$S3_URI" != s3://* ]]; then
+  echo "error: expected s3:// URI, got: $S3_URI" >&2
+  exit 1
+fi
+
+ext="${S3_URI##*.}"
+ext_lower="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
+case "$ext_lower" in
+  pdf|csv|txt|md|html|doc|docx|xls|xlsx)
+    KIND="document"
+    FORMAT="$ext_lower"
+    DEFAULT_PROMPT="Summarize this document in one sentence."
+    ;;
+  jpg)
+    KIND="image"
+    FORMAT="jpeg"
+    DEFAULT_PROMPT="Describe this image in one sentence."
+    ;;
+  png|jpeg|gif|webp)
+    KIND="image"
+    FORMAT="$ext_lower"
+    DEFAULT_PROMPT="Describe this image in one sentence."
+    ;;
+  *)
+    echo "error: unsupported file extension .$ext in $S3_URI" >&2
+    echo "supported: pdf, csv, txt, md, html, doc, docx, xls, xlsx (documents);" >&2
+    echo "           png, jpeg, jpg, gif, webp (images)" >&2
+    exit 1
+    ;;
+esac
+
+PROMPT="${2:-$DEFAULT_PROMPT}"
+
+if [[ "$KIND" == "document" ]]; then
+  RAW_NAME="$(basename "$S3_URI")"
+  NAME="$(printf '%s' "${RAW_NAME%.*}" | tr -c 'A-Za-z0-9 ()[]-' '_')"
+  [[ -z "$NAME" ]] && NAME="document"
+  ATTACH_JSON="$(jq -nc \
+    --arg name "$NAME" \
+    --arg fmt "$FORMAT" \
+    --arg uri "$S3_URI" \
+    '{document: {name: $name, format: $fmt, source: {s3Location: {uri: $uri}}}}')"
+else
+  ATTACH_JSON="$(jq -nc \
+    --arg fmt "$FORMAT" \
+    --arg uri "$S3_URI" \
+    '{image: {format: $fmt, source: {s3Location: {uri: $uri}}}}')"
+fi
+
+MESSAGES="$(jq -nc \
+  --arg text "$PROMPT" \
+  --argjson attach "$ATTACH_JSON" \
+  '[{role: "user", content: [$attach, {text: $text}]}]')"
+
+export AWS_REGION="${AWS_REGION:-us-east-2}"
+MODEL_ID="${MODEL_ID:-us.amazon.nova-pro-v1:0}"
+
+aws bedrock-runtime converse \
+  --model-id "$MODEL_ID" \
+  --messages "$MESSAGES"
