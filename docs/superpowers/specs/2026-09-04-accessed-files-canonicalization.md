@@ -61,21 +61,35 @@ Three well-separated units, each with a single responsibility:
 
 ## Canonical type change
 
-Add one optional field to `NormalizedInvocation` in `shared/src/slashid_ai_forwarder_core/normalize/normalized/types.py`:
+Add one field to `NormalizedInvocation` in `shared/src/slashid_ai_forwarder_core/normalize/normalized/types.py`, and — drive-by — flip every list-typed field on both `NormalizedInvocation` and `NormalizedInvocationInput` from nullable-default-None to non-nullable-default-`[]`:
 
 ```python
+class NormalizedInvocationInput(_LenientModel):
+    messages: list[NormalizedMessage] = Field(default_factory=list)          # was: | None = None
+    tools_declared: list[AITool] = Field(default_factory=list)               # was: | None = None
+    tool_servers: list[AIToolServer] = Field(default_factory=list)           # was: | None = None
+
+
 class NormalizedInvocation(_LenientModel):
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     input: NormalizedInvocationInput = Field(default_factory=NormalizedInvocationInput)
     output: NormalizedInvocationOutput = Field(default_factory=NormalizedInvocationOutput)
-    accessed_files: list[AIAccessedFile] | None = None                # NEW
+    accessed_files: list[AIAccessedFile] = Field(default_factory=list)       # NEW
 ```
 
-**Placement rationale.** Top-level, not nested under `input` — `accessed_files` accumulates from two very different sources (attachments in messages, tool_result contents) and the traversal never needs the input/output split. Top-level also mirrors the wire shape (`AIInvocationObservedV1.accessed_files` is top-level).
+**Placement rationale.** `accessed_files` sits top-level (not nested under `input`) — it accumulates from two very different sources (attachments in messages, tool_result contents) and the traversal never needs the input/output split. Top-level also mirrors the wire shape (`AIInvocationObservedV1.accessed_files` is top-level).
+
+**Non-null default rationale.** These fields are always written by the vendor's `to_normalized_invocation` (messages/tools_declared/tool_servers) or by `finalize` (accessed_files) — there's no meaningful "unpopulated" state, and consumers currently paper over the None case with `or []` guards at every read. Non-null default drops those guards. The wire-model boundary keeps its `or None` at construction (`accessed_files=normalized.accessed_files or None`, `available_tools=normalized.input.tools_declared or None`, etc.) so `AIInvocationObservedV1.model_dump(mode="json", exclude_none=True)` still omits empty lists on the wire — no wire-behavior change.
+
+**Callsite simplifications this enables** (all get done as part of the same chunk):
+
+- `converse/normalize.py::_to_input` and `anthropic/normalize.py::_request_to_input`: drop the `or None` on their `NormalizedInvocationInput(messages=... or None, ...)` construction sites. Just pass the built lists.
+- `shared/events.py::_used_tools` and `build_event`: drop the `or []` on `normalized.input.messages` / `tools_declared` / `tool_servers` reads. Traverse the lists directly.
+- Wire-event boundary in `build_event`: still uses `or None` on the field-assignment side, preserving current wire semantics.
+
+**No wire model changes.** `AIAccessedFile` in `shared/src/slashid_ai_forwarder_core/events.py` stays exactly as-is. `AIInvocationObservedV1.accessed_files` stays exactly as-is. `build_event` just reads `normalized.accessed_files` and assigns it to the wire event's `accessed_files` field (with `or None`).
 
 **No new `NormalizedContent` kinds.** The `Literal["text", "image", "audio", "document", "tool_use", "tool_result", "reasoning"]` union already includes `image` and `document` from Phase 2, but they were forward-looking placeholders — no code populates them today, and no consumer reads them. This refactor leaves them unused. Attachments are metadata *about* the invocation (what files were touched), not part of the conversational flow the LLM sees as messages. Modeling them as `NormalizedContent` blocks would require adding a `raw_bytes: bytes | None` field to `NormalizedContent` and inflating every attachment into a message-nested block, which is a bigger canonical extension and doesn't buy anything build_event needs. If a future consumer needs attachments-as-content-blocks (e.g. for prompt-injection scanning), we revisit — but not now.
-
-**No wire model changes.** `AIAccessedFile` in `shared/src/slashid_ai_forwarder_core/events.py` stays exactly as-is. `AIInvocationObservedV1.accessed_files` stays exactly as-is. `build_event` just reads `normalized.accessed_files` and assigns it to the wire event's `accessed_files` field.
 
 ## Module layout
 
@@ -146,13 +160,11 @@ def finalize(
     against ``normalized.accessed_files``).
     """
     tool_files = extract_tool_result_files(
-        normalized.input.messages or [],
+        normalized.input.messages,
         include_raw_content=include_raw_content,
         max_content_size=max_content_size,
     )
-    if tool_files:
-        existing = list(normalized.accessed_files or [])
-        normalized.accessed_files = existing + tool_files
+    normalized.accessed_files.extend(tool_files)
     return normalized
 ```
 
@@ -188,7 +200,7 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
             include_raw_content=config.include_raw_content,
             max_content_size=config.max_content_size,
         )
-        normalized.accessed_files = attachments or None
+        normalized.accessed_files.extend(attachments)
         normalized = finalize(
             normalized,
             include_raw_content=config.include_raw_content,
@@ -343,7 +355,7 @@ Structurally, this is `shared/events._accessed_files` minus the tool-result sect
 
 Five chunks, each on its own commit:
 
-**Chunk 1 — Canonical type field.** Add `NormalizedInvocation.accessed_files` field with default `None`. No populators yet; no consumers yet. Add round-trip test coverage in `test_types_round_trip.py`.
+**Chunk 1 — Canonical type field + list-default drive-by.** Add `NormalizedInvocation.accessed_files: list[AIAccessedFile] = Field(default_factory=list)`. Flip `NormalizedInvocationInput.{messages, tools_declared, tool_servers}` from `list[...] | None = None` to `list[...] = Field(default_factory=list)`. Update the two vendor `_to_input` / `_request_to_input` sites to drop `or None`. Update `shared/events.py::_used_tools` and `build_event` to drop `or []` on canonical reads (keep `or None` on wire-event assignment). No populators for `accessed_files` yet; no consumers yet. Extend `test_types_round_trip.py` for the new field and for the non-null-default behaviour.
 
 **Chunk 2 — Shared OTel leaf + tool-result extractor.** Create `shared/normalize/normalized/otel.py` with `_extract_otel` + helpers (`_otel_from_dict`, `_otel_from_text`, `_OTEL_KEY`, regex constants). Create `shared/normalize/normalized/tool_results.py` with `extract_tool_result_files`, `_READ_TOOLS`, `_ToolSpec`. Both import `_extract_otel` from the leaf `otel.py`. Update `shared/events.py::_used_tools` to import `_extract_otel` from `normalize/normalized/otel.py` (no logic change) and delete the inline copy. Add tests for both new modules.
 
