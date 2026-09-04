@@ -74,6 +74,27 @@ Requires the AWS CLI and `jq`. For a GUI alternative, the [Bedrock Playground](h
 ./claude "explore this repo" # one-shot
 ```
 
+### Via Converse with a local attachment (`_accessed_files` document + image paths)
+
+`./converse-attach <file> [prompt]` base64-encodes a local file, sends it as a Converse `document` (pdf/csv/txt/md/html/doc/docx/xls/xlsx) or `image` (png/jpeg/gif/webp) block, and validates that the emitted `AIInvocationObservedV1.accessed_files` entry carries the name, IANA media type, byte length, and stable `sha256/sha1/md5` matching the raw bytes.
+
+```bash
+./converse-attach ./notes.pdf                        # default prompt
+./converse-attach ./chart.png "what is in this image?"
+```
+
+Bedrock's MIL preserves small text documents inline, so text runs exercise `_accessed_files`' inline-bytes branch. Images (and larger documents) are auto-offloaded to the MIL-managed S3 bucket, so image runs exercise `shared/s3.py::_resolve_s3_attachment`'s HeadObject + GetObject path instead — one script covers both.
+
+### Via Claude Code exercising the `Read` tool (`_accessed_files` tool-result path)
+
+Claude Code's `Read` tool result is correlated back to the file it opened; the forwarder hashes the returned bytes (after `strip_cat_n` strips Claude Code's `n\thello` line-number prefix) and emits an `AIAccessedFile` with the tool's `file_path` argument as the name. Any prompt that reliably fires the `Read` tool works — e.g.:
+
+```bash
+./claude "please Read /etc/hostname and repeat the contents verbatim"
+```
+
+The same code path also covers OpenCode / Amazon Q Developer / Gemini CLI (`ReadFile`, `read_file`, `view_file`) and the Claude computer-use text-editor tool (`str_replace_based_edit_tool`) — different tool names, same `_READ_TOOLS` table in `shared/src/slashid_ai_forwarder_core/events.py`.
+
 ## Releases
 
 Tagged releases publish two artifacts to GitHub Releases:

@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Smoke-test the forwarder's ``_accessed_files`` inline-bytes branch:
+# invoke Converse with a locally-attached document or image, base64-encoded
+# into the request. Confirms that the resulting AIInvocationObservedV1
+# ``accessed_files`` entry carries the file name, IANA media type, byte
+# length, and stable content hash matching ``sha256/sha1/md5`` of the file's
+# bytes.
+#
+# Uses the IAM credentials already in your AWS SDK chain (env,
+# ~/.aws/credentials, or ``aws sso login``).
+#
+# Usage:
+#   ./converse-attach <file> [prompt]
+#
+# Examples:
+#   ./converse-attach ./notes.pdf                     # default prompt
+#   ./converse-attach ./chart.png "what is in this image?"
+#   MODEL_ID=us.amazon.nova-lite-v1:0 ./converse-attach ./doc.txt
+#
+# Format detection: reads the file's extension and maps to the Bedrock
+# Converse ``format`` enum (documents: pdf/csv/txt/md/html/doc/docx/xls/xlsx;
+# images: png/jpeg/gif/webp — jpg auto-canonicalised to jpeg).
+#
+# Requires: aws CLI, jq, base64.
+
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "error: jq is required (used to build the request JSON safely)" >&2
+  exit 1
+fi
+if ! command -v base64 >/dev/null 2>&1; then
+  echo "error: base64 is required" >&2
+  exit 1
+fi
+
+FILE_PATH="${1:?usage: ./converse-attach <file> [prompt]}"
+if [[ ! -f "$FILE_PATH" ]]; then
+  echo "error: file not found: $FILE_PATH" >&2
+  exit 1
+fi
+
+ext="${FILE_PATH##*.}"
+ext_lower="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')"
+case "$ext_lower" in
+  pdf|csv|txt|md|html|doc|docx|xls|xlsx)
+    KIND="document"
+    FORMAT="$ext_lower"
+    DEFAULT_PROMPT="Summarize this document in one sentence."
+    ;;
+  jpg)
+    KIND="image"
+    FORMAT="jpeg"  # Bedrock canonicalises jpg → jpeg
+    DEFAULT_PROMPT="Describe this image in one sentence."
+    ;;
+  png|jpeg|gif|webp)
+    KIND="image"
+    FORMAT="$ext_lower"
+    DEFAULT_PROMPT="Describe this image in one sentence."
+    ;;
+  *)
+    echo "error: unsupported file extension .$ext" >&2
+    echo "supported: pdf, csv, txt, md, html, doc, docx, xls, xlsx (documents);" >&2
+    echo "           png, jpeg, jpg, gif, webp (images)" >&2
+    exit 1
+    ;;
+esac
+
+PROMPT="${2:-$DEFAULT_PROMPT}"
+
+# Portable base64 (Linux `-w0`, macOS/BSD wrap by default → strip newlines).
+B64="$(base64 <"$FILE_PATH" | tr -d '\n')"
+
+if [[ "$KIND" == "document" ]]; then
+  # Sanitize the basename for Bedrock's document.name (alphanumeric + spaces +
+  # hyphens + parens + square brackets, no dots).
+  RAW_NAME="$(basename "$FILE_PATH")"
+  NAME="$(printf '%s' "${RAW_NAME%.*}" | tr -c 'A-Za-z0-9 ()[]-' '_')"
+  # Trim if we somehow produced an empty name.
+  [[ -z "$NAME" ]] && NAME="document"
+  ATTACH_JSON="$(jq -nc \
+    --arg name "$NAME" \
+    --arg fmt "$FORMAT" \
+    --arg bytes "$B64" \
+    '{document: {name: $name, format: $fmt, source: {bytes: $bytes}}}')"
+else
+  ATTACH_JSON="$(jq -nc \
+    --arg fmt "$FORMAT" \
+    --arg bytes "$B64" \
+    '{image: {format: $fmt, source: {bytes: $bytes}}}')"
+fi
+
+MESSAGES="$(jq -nc \
+  --arg text "$PROMPT" \
+  --argjson attach "$ATTACH_JSON" \
+  '[{role: "user", content: [$attach, {text: $text}]}]')"
+
+export AWS_REGION="${AWS_REGION:-us-east-2}"
+MODEL_ID="${MODEL_ID:-us.amazon.nova-pro-v1:0}"
+
+aws bedrock-runtime converse \
+  --model-id "$MODEL_ID" \
+  --messages "$MESSAGES"
