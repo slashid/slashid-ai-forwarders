@@ -11,6 +11,7 @@ import pytest
 
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
+    _strip_empty_top,
     build_event,
     parse_tool_name,
 )
@@ -799,9 +800,10 @@ async def test_content_fields_default_to_hash_only() -> None:
     assert event is not None
     assert event.input is not None
 
-    # Hash the canonical input serialization — same as build_event does.
+    # Hash the canonical input serialization — same as build_event does
+    # (empty top-level containers stripped for pre-drive-by hash stability).
     canonical_input = json.dumps(
-        normalized.input.model_dump(mode="json", exclude_none=True),
+        _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
@@ -827,9 +829,10 @@ async def test_content_fields_include_raw_when_opted_in() -> None:
     assert event is not None
     assert event.input is not None
     assert event.input.redacted_text is not None
-    # Canonical serialization is deterministic; compare via re-serialization.
+    # Canonical serialization is deterministic; compare via re-serialization
+    # (matches build_event: empty top-level containers stripped for hash stability).
     canonical = json.dumps(
-        normalized.input.model_dump(mode="json", exclude_none=True),
+        _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
         sort_keys=True,
         separators=(",", ":"),
     )

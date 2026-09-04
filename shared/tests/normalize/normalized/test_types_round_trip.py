@@ -115,3 +115,31 @@ def test_normalized_content_byte_length_non_negative() -> None:
     NormalizedContent(kind="text", byte_length=42)
     with pytest.raises(ValidationError):
         NormalizedContent(kind="text", byte_length=-1)
+
+
+def test_normalized_invocation_input_list_defaults() -> None:
+    """List fields on NormalizedInvocationInput default to [] not None."""
+    i = NormalizedInvocationInput()
+    assert i.messages == []
+    assert i.tools_declared == []
+    assert i.tool_servers == []
+
+
+def test_normalized_invocation_accessed_files_default() -> None:
+    """accessed_files defaults to [] and can be extended in-place."""
+    from slashid_ai_forwarder_core.events import AIAccessedFile
+
+    n = NormalizedInvocation()
+    assert n.accessed_files == []
+    n.accessed_files.append(AIAccessedFile(name="/tmp/x"))
+    assert len(n.accessed_files) == 1
+
+
+def test_normalized_invocation_accessed_files_round_trip() -> None:
+    """model_dump / model_validate preserves accessed_files."""
+    from slashid_ai_forwarder_core.events import AIAccessedFile
+
+    n = NormalizedInvocation(accessed_files=[AIAccessedFile(name="/tmp/x", byte_length=42)])
+    dumped = n.model_dump(mode="json", exclude_none=True)
+    reparsed = NormalizedInvocation.model_validate(dumped)
+    assert reparsed.accessed_files == n.accessed_files

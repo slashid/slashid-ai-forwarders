@@ -306,6 +306,20 @@ def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
     return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
 
 
+def _strip_empty_top(d: dict[str, Any]) -> dict[str, Any]:
+    """Drop keys whose value is an empty container.
+
+    Preserves the pre-drive-by wire content-hash stability: before the
+    non-null-default-list refactor, empty list fields on
+    NormalizedInvocationInput were serialized as ``None`` and dropped by
+    ``exclude_none=True``. Now they're always ``[]`` and would otherwise
+    show up in the dumped dict as ``{"tools_declared": [], "tool_servers": []}``
+    — changing every content hash. Strip at the boundary so the hashed
+    bytes match pre-drive-by behavior.
+    """
+    return {k: v for k, v in d.items() if v}
+
+
 def _build_content(
     body: Any, *, include_text: bool, max_content_size: int
 ) -> AIInvocationContent | None:
@@ -779,13 +793,13 @@ def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
     In-flight calls (``tool_use`` in this record's output with no matching
     ``tool_result`` yet) are deferred to the next invocation event.
     """
-    input_messages = (normalized.input.messages or []) if normalized.input else []
+    input_messages = normalized.input.messages
     if not input_messages:
         return []
 
     # (server_name, parsed_tool_name) → AITool.id
-    tools = normalized.input.tools_declared or []
-    servers = normalized.input.tool_servers or []
+    tools = normalized.input.tools_declared
+    servers = normalized.input.tool_servers
     server_name_by_id = {s.id: s.name or "builtin" for s in servers}
     id_by_key: dict[tuple[str, str], str] = {}
     for tool in tools:
@@ -867,8 +881,8 @@ async def build_event(
         # anyway, and a placeholder would pollute the AI subgraph.
         return None
 
-    servers = normalized.input.tool_servers or []
-    tools = normalized.input.tools_declared or []
+    servers = normalized.input.tool_servers
+    tools = normalized.input.tools_declared
     used = _used_tools(normalized)
 
     inp = record.get("input") or {}
@@ -915,12 +929,12 @@ async def build_event(
         used_tools=used or None,
         stop_reason=_stop_reason(record),
         input=_build_content(
-            normalized.input.model_dump(mode="json", exclude_none=True),
+            _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),
         output=_build_content(
-            normalized.output.model_dump(mode="json", exclude_none=True),
+            _strip_empty_top(normalized.output.model_dump(mode="json", exclude_none=True)),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),
