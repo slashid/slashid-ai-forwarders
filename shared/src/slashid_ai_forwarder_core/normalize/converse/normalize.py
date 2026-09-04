@@ -27,7 +27,7 @@ from .schema import (
     ConverseToolResultBlock,
     ConverseToolUseBlock,
 )
-from .stop_reasons import map as map_converse_stop_reason
+from .stop_reasons import STOP_REASONS
 
 
 def to_normalized_invocation(
@@ -133,7 +133,7 @@ def _to_output(response: ConverseResponse) -> NormalizedInvocationOutput:
     content = _translate_response_content(message.content)
     return NormalizedInvocationOutput(
         message=NormalizedMessage(role=message.role, content=content),
-        stop_reason=map_converse_stop_reason(response.stopReason),
+        stop_reason=STOP_REASONS.get(response.stopReason or "", "unknown"),
     )
 
 

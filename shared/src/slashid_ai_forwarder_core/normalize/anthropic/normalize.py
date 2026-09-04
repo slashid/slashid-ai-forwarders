@@ -43,7 +43,7 @@ from .schema import (
     AnthropicToolUseBlock,
     AnthropicUsage,
 )
-from .stop_reasons import map as map_anthropic_stop_reason
+from .stop_reasons import STOP_REASONS
 
 log = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:
             # AnthropicUnknownBlock: skipped silently.
     return NormalizedInvocationOutput(
         message=NormalizedMessage(role="assistant", content=content),
-        stop_reason=map_anthropic_stop_reason(msg.stop_reason),
+        stop_reason=STOP_REASONS.get(msg.stop_reason or "", "unknown"),
     )
 
 
@@ -354,5 +354,5 @@ def _stream_to_output(
 
     return NormalizedInvocationOutput(
         message=NormalizedMessage(role="assistant", content=content),
-        stop_reason=map_anthropic_stop_reason(stop_reason),
+        stop_reason=STOP_REASONS.get(stop_reason or "", "unknown"),
     )
