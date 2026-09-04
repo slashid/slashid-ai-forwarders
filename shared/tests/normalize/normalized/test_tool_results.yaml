@@ -1,0 +1,139 @@
+id: read_cat_n_content_hashes_raw_bytes
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_1
+        tool_name: Read
+        tool_input: {file_path: "/repo/main.py"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_1
+        tool_output: "     1\tline1\n     2\tline2\n"
+        tool_is_error: false
+expected:
+  - name: "/repo/main.py"
+    byte_length: 12   # "line1\nline2\n" = 12 bytes
+    media_type: text/x-python
+---
+id: readfile_plain_content
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_2
+        tool_name: ReadFile
+        tool_input: {path: "/repo/config.json"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_2
+        tool_output: "{}"
+        tool_is_error: false
+expected:
+  - name: "/repo/config.json"
+    byte_length: 2
+    media_type: application/json
+---
+id: is_error_skips_entry
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_err
+        tool_name: Read
+        tool_input: {file_path: "/etc/hostname"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_err
+        tool_output: "permission denied"
+        tool_is_error: true
+expected: []
+---
+id: unknown_tool_ignored
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_bash
+        tool_name: Bash
+        tool_input: {command: "ls"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_bash
+        tool_output: "total 8\n..."
+        tool_is_error: false
+expected: []
+---
+id: tool_use_without_result_defers
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_pending
+        tool_name: Read
+        tool_input: {file_path: "/tmp/pending.txt"}
+        tool_is_error: false
+expected: []
+---
+id: converse_list_content_concatenated
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_conv
+        tool_name: Read
+        tool_input: {file_path: "/tmp/multi.txt"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_conv
+        tool_output:
+          - {text: "     1\tfoo\n"}
+          - {text: "     2\tbar\n"}
+        tool_is_error: false
+expected:
+  - name: "/tmp/multi.txt"
+    byte_length: 8   # "foo\nbar\n"
+    media_type: text/plain
+---
+id: tool_result_only_last_turn
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_old
+        tool_name: Read
+        tool_input: {file_path: "/tmp/old.txt"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_old
+        tool_output: "old content"
+        tool_is_error: false
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_new
+        tool_name: Read
+        tool_input: {file_path: "/tmp/new.txt"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_new
+        tool_output: "new content"
+        tool_is_error: false
+expected:
+  - name: "/tmp/new.txt"
+    byte_length: 11
+    media_type: text/plain
