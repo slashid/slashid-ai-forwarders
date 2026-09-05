@@ -787,6 +787,43 @@ async def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
         )
 
 
+def test_aws_identity_details_kind_defaults_to_aws() -> None:
+    """Discriminator field for the future GCPIdentityDetails union sibling.
+
+    Construction without an explicit `kind` gets the default "aws". Every
+    wire-emitted Bedrock event carries `"kind": "aws"` after this change.
+    """
+    from slashid_ai_forwarder_core.events import AWSIdentityDetails
+
+    ident = AWSIdentityDetails(principal_arn="arn:aws:iam::1:user/x")
+    assert ident.kind == "aws"
+    dumped = ident.model_dump(mode="json", exclude_none=True)
+    assert dumped == {"kind": "aws", "principal_arn": "arn:aws:iam::1:user/x"}
+
+
+def test_aws_identity_details_kind_literal_enforced() -> None:
+    """Only the literal "aws" is accepted for kind — protects the future
+    discriminated union from Bedrock-side typos."""
+    from pydantic import ValidationError
+
+    from slashid_ai_forwarder_core.events import AWSIdentityDetails
+
+    with pytest.raises(ValidationError):
+        AWSIdentityDetails(
+            kind="gcp",  # ty: ignore[invalid-argument-type]
+            principal_arn="arn:aws:iam::1:user/x",
+        )
+
+
+def test_aws_identity_details_round_trip() -> None:
+    """model_validate → model_dump is lossless; kind field survives."""
+    from slashid_ai_forwarder_core.events import AWSIdentityDetails
+
+    raw = {"kind": "aws", "principal_arn": "arn:aws:iam::1:user/x", "access_key_id": "AKIA..."}
+    ident = AWSIdentityDetails.model_validate(raw)
+    assert ident.model_dump(mode="json", exclude_none=True) == raw
+
+
 async def test_content_fields_default_to_hash_only() -> None:
     """include_raw_content=False (default): hash + mime + bytes, no text."""
     body = {"messages": [{"role": "user", "content": [{"text": "secret prompt"}]}]}
@@ -861,8 +898,10 @@ async def test_build_event_wire_form() -> None:
     assert "connection_id" not in wire
     assert "identifier_from_source" not in wire
     assert "identity_source_type" not in wire
-    # The new identity shape.
+    # The new identity shape — `kind` discriminator prepared for the
+    # future AWSIdentityDetails | GCPIdentityDetails union.
     assert wire["identity_details"] == {
+        "kind": "aws",
         "principal_arn": "arn:aws:iam::123456789012:user/alice",
         "access_key_id": "AKIAEXAMPLE",
     }

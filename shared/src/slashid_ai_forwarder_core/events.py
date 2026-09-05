@@ -158,10 +158,18 @@ class AIToolServer(_WireModel):
 class AWSIdentityDetails(_WireModel):
     """AWS-source shape of AIInvocationObservedV1.identity_details.
 
-    `principal_arn` identifies the caller; `access_key_id` enables the
+    ``principal_arn`` identifies the caller; ``access_key_id`` enables the
     server's AssumeRole-chain unrolling when set.
+
+    ``kind`` is the discriminator field for the future ``identity_details``
+    union (``AWSIdentityDetails | GCPIdentityDetails``). Defaults to
+    ``"aws"``; every wire-emitted AWS event carries the tag from this
+    version onwards. Downstream consumers that ``model_validate`` events
+    off disk must include ``"kind": "aws"`` in serialized identity_details
+    dicts.
     """
 
+    kind: Literal["aws"] = "aws"
     principal_arn: str
     access_key_id: str | None = None
 
