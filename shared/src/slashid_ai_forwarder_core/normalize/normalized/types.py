@@ -19,7 +19,7 @@ from typing import Literal
 from pydantic import Field, JsonValue, NonNegativeInt
 from pydantic_extra_types.mime_types import MimeType
 
-from ...events import AIInvocationTokens, AIStopReason, AITool, AIToolServer
+from ...events import AIAccessedFile, AIInvocationTokens, AIStopReason, AITool, AIToolServer
 from .._base import _LenientModel
 
 # ``.._base`` reaches ``normalize/_base`` (two levels up: normalized/ → normalize/).
@@ -66,11 +66,15 @@ class NormalizedInvocationInput(_LenientModel):
     deliberately excluded: they're vendor-specific settings, not content.
     Excluding them means "same conversation with different sampling
     parameters" hashes to the same input — a feature, not a bug.
+
+    List fields default to ``[]`` (not ``None``) — populators always run,
+    so there's no meaningful "unpopulated" state. Consumers can traverse
+    without an ``or []`` guard.
     """
 
-    messages: list[NormalizedMessage] | None = None
-    tools_declared: list[AITool] | None = None
-    tool_servers: list[AIToolServer] | None = None
+    messages: list[NormalizedMessage] = Field(default_factory=list)
+    tools_declared: list[AITool] = Field(default_factory=list)
+    tool_servers: list[AIToolServer] = Field(default_factory=list)
 
 
 class NormalizedInvocationOutput(_LenientModel):
@@ -94,3 +98,4 @@ class NormalizedInvocation(_LenientModel):
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     input: NormalizedInvocationInput = Field(default_factory=NormalizedInvocationInput)
     output: NormalizedInvocationOutput = Field(default_factory=NormalizedInvocationOutput)
+    accessed_files: list[AIAccessedFile] = Field(default_factory=list)

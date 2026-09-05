@@ -75,5 +75,5 @@ def test_converse_dict_to_normalized_missing_input_body_yields_empty_input() -> 
         },
     }
     normalized = converse_dict_to_normalized(record)
-    assert normalized.input.messages is None
+    assert normalized.input.messages == []
     assert normalized.output.stop_reason == "end_turn"

@@ -12,14 +12,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .content_utils import strip_cat_n, truncate_middle
+from .content_utils import truncate_middle
+from .normalize.normalized.otel import extract_otel
 
 if TYPE_CHECKING:
     # events.py already has ``from __future__ import annotations`` so
@@ -29,24 +28,6 @@ if TYPE_CHECKING:
     from .normalize.normalized.types import NormalizedInvocation
 
 log = logging.getLogger(__name__)
-
-
-class _ToolSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    field_name: str
-    cleanup: Callable[[str], str] | None = None
-
-
-# Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
-_READ_TOOLS: dict[str, _ToolSpec] = {
-    "Read": _ToolSpec(field_name="file_path", cleanup=strip_cat_n),  # Claude Code (cat-n output)
-    "ReadFile": _ToolSpec(field_name="path"),  # OpenCode, Amazon Q Developer, Gemini CLI
-    "read_file": _ToolSpec(field_name="path"),  # snake_case variants
-    "view_file": _ToolSpec(field_name="path"),  # some agents
-    "str_replace_based_edit_tool": _ToolSpec(
-        field_name="path"
-    ),  # Claude computer-use text editor view
-}
 
 
 # Enum mirrors of the OpenAPI schema. Kept as Literal so pydantic both
@@ -306,6 +287,20 @@ def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
     return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
 
 
+def _strip_empty_top(d: dict[str, Any]) -> dict[str, Any]:
+    """Drop keys whose value is an empty container.
+
+    Preserves the pre-drive-by wire content-hash stability: before the
+    non-null-default-list refactor, empty list fields on
+    NormalizedInvocationInput were serialized as ``None`` and dropped by
+    ``exclude_none=True``. Now they're always ``[]`` and would otherwise
+    show up in the dumped dict as ``{"tools_declared": [], "tool_servers": []}``
+    — changing every content hash. Strip at the boundary so the hashed
+    bytes match pre-drive-by behavior.
+    """
+    return {k: v for k, v in d.items() if v}
+
+
 def _build_content(
     body: Any, *, include_text: bool, max_content_size: int
 ) -> AIInvocationContent | None:
@@ -371,399 +366,6 @@ def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
     return name, "builtin", "runtime"
 
 
-async def _accessed_files(
-    record: dict[str, Any],
-    *,
-    include_raw_content: bool,
-    max_content_size: int,
-) -> list[AIAccessedFile]:
-    """Extract document and image attachments from Converse-shape input messages.
-
-    Converse document block:
-      messages[].content[]{document:{name, format, source:{bytes:<base64>}}}
-    Converse image block:
-      messages[].content[]{image:{format, source:{bytes:<base64>}}}
-      (images carry no name)
-
-    Only considers messages after the last assistant message — files in
-    earlier turns were already reported in prior invocations.
-
-    S3-sourced attachments are resolved inline via HeadObject + optional
-    GetObject (gated by max_fetch_bytes). Files are deduplicated by
-    (name, content_hash).
-    """
-    import asyncio
-    import base64 as _b64
-    import mimetypes
-
-    from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
-
-    def _mime_from_name(name: str | None) -> str | None:
-        if not name:
-            return None
-        mt, _ = mimetypes.guess_type(name)
-        return mt or None
-
-    # Bedrock Converse format enum → IANA media types.
-    # Document canonical list: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html
-    # Image canonical list:    https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageBlock.html
-    _DOC_MIME: dict[str, str] = {
-        # document formats
-        "pdf": "application/pdf",
-        "csv": "text/csv",
-        "txt": "text/plain",
-        "md": "text/markdown",
-        "html": "text/html",
-        "doc": "application/msword",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls": "application/vnd.ms-excel",
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        # image formats
-        "png": "image/png",
-        "jpeg": "image/jpeg",
-        "gif": "image/gif",
-        "webp": "image/webp",
-    }
-
-    body = (record.get("input") or {}).get("inputBodyJson")
-    if not isinstance(body, dict):
-        return []
-    files: list[AIAccessedFile] = []
-    seen: set[tuple[str | None, str | None]] = set()
-
-    def _decode_b64(val: Any) -> bytes | None:
-        if not val:
-            return None
-        try:
-            return _b64.b64decode(val)
-        except Exception:
-            return None
-
-    def _add(
-        name: str | None,
-        media_type: str | None,
-        raw_bytes: bytes | None,
-        length: int | None = None,
-        partial_head: bytes | None = None,
-        partial_tail: bytes | None = None,
-    ) -> None:
-        # Full bytes → stable hashes. Partial fetch → no hashes (bytes are incomplete).
-        if raw_bytes is not None:
-            content_hashes: dict[str, str] | None = {
-                "sha256": hashlib.sha256(raw_bytes).hexdigest(),
-                "sha1": hashlib.sha1(raw_bytes).hexdigest(),
-                "md5": hashlib.md5(raw_bytes).hexdigest(),
-            }
-        else:
-            content_hashes = None
-        key = (name, content_hashes["sha256"] if content_hashes else None)
-        if key in seen:
-            return
-        seen.add(key)
-        if include_raw_content:
-            if raw_bytes is not None:
-                redacted = truncate_middle(raw_bytes.decode(errors="replace"), max_content_size)
-            elif partial_head is not None and partial_tail is not None:
-                head_str = partial_head.decode(errors="replace")
-                tail_str = partial_tail.decode(errors="replace")
-                combined = head_str + "…" + tail_str
-                redacted = truncate_middle(combined, max_content_size)
-            else:
-                redacted = None
-        else:
-            redacted = None
-        files.append(
-            AIAccessedFile(
-                name=name,
-                content_hashes=content_hashes,
-                media_type=media_type,
-                byte_length=len(raw_bytes) if raw_bytes is not None else length,
-                redacted_content=redacted,
-            )
-        )
-
-    messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]
-    last_assistant = max(
-        (i for i, m in enumerate(messages) if m.get("role") == "assistant"),
-        default=-1,
-    )
-
-    # Collect all S3 source blocks from the current turn so we can resolve
-    # them concurrently before building the file list.
-    s3_sources: list[dict[str, Any]] = []
-    for msg in messages[last_assistant + 1 :]:
-        for block in msg.get("content") or []:
-            if not isinstance(block, dict):
-                continue
-            for key in ("document", "image"):
-                item = block.get(key)
-                if isinstance(item, dict):
-                    src = item.get("source") or {}
-                    if "s3Location" in src or "s3Uri" in src:
-                        s3_sources.append(src)
-
-    if s3_sources:
-        sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
-
-        async def _guarded(src: dict[str, Any]) -> None:
-            async with sem:
-                await _resolve_s3_attachment(src, max_content_size=max_content_size)
-
-        await asyncio.gather(*(_guarded(src) for src in s3_sources))
-
-    for msg in messages[last_assistant + 1 :]:
-        for block in msg.get("content") or []:
-            if not isinstance(block, dict):
-                continue
-
-            if "document" in block:
-                doc = block["document"] or {}
-                fmt = doc.get("format") or None
-                source = doc.get("source") or {}
-                name = doc.get("name") or None
-                if "bytes" in source:
-                    raw_bytes = _decode_b64(source["bytes"])
-                    _add(
-                        name=name,
-                        media_type=(
-                            _DOC_MIME.get(fmt, f"application/{fmt}")
-                            if fmt
-                            else _mime_from_name(name)
-                        ),
-                        raw_bytes=raw_bytes,
-                    )
-                else:
-                    uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
-                    file_name = name or uri
-                    # Guess from URI when name has no extension (e.g. "report" vs "report.pdf").
-                    mime_hint = _mime_from_name(file_name) or _mime_from_name(uri)
-                    if "_resolved_byte_length" not in source:
-                        # HEAD failed (permissions, object missing, etc.) — emit
-                        # a stub so callers know the file was referenced.
-                        _add(
-                            name=file_name,
-                            media_type=mime_hint,
-                            raw_bytes=None,
-                        )
-                    else:
-                        # fmt → map → HeadObject ContentType → filename guess
-                        media_type = (
-                            _DOC_MIME.get(fmt, f"application/{fmt}")
-                            if fmt
-                            else source.get("_resolved_content_type") or mime_hint
-                        )
-                        _add(
-                            name=file_name,
-                            media_type=media_type,
-                            raw_bytes=source.get("_resolved_bytes"),
-                            length=source.get("_resolved_byte_length"),
-                            partial_head=source.get("_resolved_head_bytes"),
-                            partial_tail=source.get("_resolved_tail_bytes"),
-                        )
-
-            elif "image" in block:
-                img = block["image"] or {}
-                fmt = img.get("format") or None
-                source = img.get("source") or {}
-                if "bytes" in source:
-                    raw_bytes = _decode_b64(source["bytes"])
-                    _add(
-                        name=None,
-                        media_type=_DOC_MIME.get(fmt, f"image/{fmt}") if fmt else None,
-                        raw_bytes=raw_bytes,
-                    )
-                else:
-                    uri = (source.get("s3Location") or {}).get("uri") or source.get("s3Uri") or None
-                    if "_resolved_byte_length" not in source:
-                        _add(
-                            name=uri,
-                            media_type=_mime_from_name(uri),
-                            raw_bytes=None,
-                        )
-                    else:
-                        media_type = (
-                            _DOC_MIME.get(fmt, f"image/{fmt}")
-                            if fmt
-                            else source.get("_resolved_content_type") or _mime_from_name(uri)
-                        )
-                        _add(
-                            name=uri,
-                            media_type=media_type,
-                            raw_bytes=source.get("_resolved_bytes"),
-                            length=source.get("_resolved_byte_length"),
-                            partial_head=source.get("_resolved_head_bytes"),
-                            partial_tail=source.get("_resolved_tail_bytes"),
-                        )
-
-    # --- tool-result files ---------------------------------------------------
-
-    # Build a lookup of tool_use_id → {name, input} from all assistant messages.
-    tool_use_by_id: dict[str, dict[str, Any]] = {}
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        for block in msg.get("content") or []:
-            if not isinstance(block, dict):
-                continue
-            # Anthropic shape: {type: "tool_use", id, name, input}
-            # Converse shape:  {toolUse: {toolUseId, name, input}}
-            if block.get("type") == "tool_use":
-                uid = block.get("id")
-                if uid:
-                    tool_use_by_id[uid] = {
-                        "name": block.get("name"),
-                        "input": block.get("input") or {},
-                    }
-            elif "toolUse" in block:
-                tu = block["toolUse"] or {}
-                uid = tu.get("toolUseId")
-                if uid:
-                    tool_use_by_id[uid] = {
-                        "name": tu.get("name"),
-                        "input": tu.get("input") or {},
-                    }
-
-    for msg in messages[last_assistant + 1 :]:
-        for block in msg.get("content") or []:
-            if not isinstance(block, dict):
-                continue
-            # Anthropic shape: {type: "tool_result", tool_use_id, content}
-            # Converse shape:  {toolResult: {toolUseId, content}}
-            if block.get("type") == "tool_result":
-                uid = block.get("tool_use_id")
-                raw_content = block.get("content")
-            elif "toolResult" in block:
-                tr = block["toolResult"] or {}
-                uid = tr.get("toolUseId")
-                raw_content = tr.get("content")
-            else:
-                continue
-
-            tu = tool_use_by_id.get(uid or "")
-            if not tu:
-                continue
-            spec = _READ_TOOLS.get(tu.get("name") or "")
-            if not spec:
-                continue
-
-            path = (tu["input"] or {}).get(spec.field_name) or None
-            if not path:
-                continue
-
-            def _apply_cleanup(text: str, _spec: _ToolSpec = spec) -> str:
-                return _spec.cleanup(text) if _spec.cleanup else text
-
-            # Hash the returned content when available.
-            content_bytes: bytes | None = None
-            if isinstance(raw_content, str):
-                content_bytes = _apply_cleanup(raw_content).encode()
-            elif isinstance(raw_content, list):
-                # Converse content array — concatenate text blocks
-                text = "".join(b.get("text", "") for b in raw_content if isinstance(b, dict))
-                if text:
-                    content_bytes = _apply_cleanup(text).encode()
-
-            _add(
-                name=path,
-                media_type=_mime_from_name(path),
-                raw_bytes=content_bytes,
-                length=len(content_bytes) if content_bytes is not None else None,
-            )
-
-    return files
-
-
-# $opentelemetry: the OTel context that MCP servers echo back on tool results
-# (see mcp-gate-demo CorrelationIdMiddleware). Wire shape:
-#   {"$opentelemetry": {"trace_id": "<32 hex>", "span_id": "<16 hex>"}}
-# Primary carrier is MCP `structuredContent`. Success path preserves it —
-# reaches Bedrock Converse either as a native `{json: {...}}` block or, when
-# the client stringifies, a JSON-encoded `{text: "..."}` block.
-# Error path: some MCP clients (Claude Code on Bedrock) drop structured
-# content entirely and forward only the text message, so the middleware
-# also embeds `[trace_id=<32 hex> span_id=<16 hex>]` as a trailing text
-# marker.
-_OTEL_KEY = "$opentelemetry"
-_TRACE_ID_HEX = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
-_SPAN_ID_HEX = re.compile(r"^[0-9a-f]{16}$", re.IGNORECASE)
-_OTEL_MARKER = re.compile(
-    r"\[trace_id=([0-9a-f]{32})\s+span_id=([0-9a-f]{16})\]",
-    re.IGNORECASE,
-)
-
-_OtelCtx = tuple[str | None, str | None]  # (trace_id, span_id)
-
-
-def _otel_from_dict(d: Any) -> _OtelCtx:
-    """Pull `$opentelemetry.{trace_id,span_id}` from a decoded structured-content dict."""
-    if not isinstance(d, dict):
-        return (None, None)
-    otel = d.get(_OTEL_KEY)
-    if not isinstance(otel, dict):
-        return (None, None)
-    raw_t = otel.get("trace_id")
-    raw_s = otel.get("span_id")
-    trace_id = raw_t.lower() if isinstance(raw_t, str) and _TRACE_ID_HEX.match(raw_t) else None
-    span_id = raw_s.lower() if isinstance(raw_s, str) and _SPAN_ID_HEX.match(raw_s) else None
-    return (trace_id, span_id)
-
-
-def _otel_from_text(text: str) -> _OtelCtx:
-    """Pull OTel context from a text block via either a JSON envelope or the
-    `[trace_id=<hex> span_id=<hex>]` marker (the fallback carrier used on
-    error paths where the client drops structuredContent).
-    """
-    stripped = text.strip()
-    if stripped and stripped[0] in "{[":
-        try:
-            parsed = json.loads(stripped)
-        except (json.JSONDecodeError, ValueError):
-            pass
-        else:
-            ctx = _otel_from_dict(parsed)
-            if ctx[0]:
-                return ctx
-    m = _OTEL_MARKER.search(text)
-    if m:
-        return (m.group(1).lower(), m.group(2).lower())
-    return (None, None)
-
-
-def _extract_otel(content: Any) -> _OtelCtx:
-    """Pull the MCP `$opentelemetry` context from a tool_result payload.
-
-    Handles both the Anthropic tool_result shape (string or list of blocks)
-    and the Converse toolResult shape (list of `{text}` / `{json}` / etc.
-    blocks). Returns (None, None) when the marker is absent.
-    """
-    if content is None:
-        return (None, None)
-    if isinstance(content, str):
-        return _otel_from_text(content)
-    if isinstance(content, dict):
-        # Rare — some clients pass structured content directly here.
-        return _otel_from_dict(content)
-    if not isinstance(content, list):
-        return (None, None)
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        # Converse `{json: {...}}` carries structured content natively.
-        if isinstance(block.get("json"), dict):
-            ctx = _otel_from_dict(block["json"])
-            if ctx[0]:
-                return ctx
-        # Text (Anthropic `{type: "text", text}`, Converse `{text}`) — may
-        # be a JSON-encoded envelope or carry the `[trace_id=… span_id=…]`
-        # marker.
-        text = block.get("text")
-        if isinstance(text, str):
-            ctx = _otel_from_text(text)
-            if ctx[0]:
-                return ctx
-    return (None, None)
-
-
 def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
     """Collect completed tool invocations from the canonical input messages.
 
@@ -779,13 +381,13 @@ def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
     In-flight calls (``tool_use`` in this record's output with no matching
     ``tool_result`` yet) are deferred to the next invocation event.
     """
-    input_messages = (normalized.input.messages or []) if normalized.input else []
+    input_messages = normalized.input.messages
     if not input_messages:
         return []
 
     # (server_name, parsed_tool_name) → AITool.id
-    tools = normalized.input.tools_declared or []
-    servers = normalized.input.tool_servers or []
+    tools = normalized.input.tools_declared
+    servers = normalized.input.tool_servers
     server_name_by_id = {s.id: s.name or "builtin" for s in servers}
     id_by_key: dict[tuple[str, str], str] = {}
     for tool in tools:
@@ -826,7 +428,7 @@ def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
                 # missing from input history, or tools_declared omits it).
                 # Skip — an entry with no tool_id has no analytic value.
                 continue
-            trace_id, span_id = _extract_otel(block.tool_output)
+            trace_id, span_id = extract_otel(block.tool_output)
             seen.add(uid)
             used.append(
                 AIToolUse(
@@ -867,8 +469,8 @@ async def build_event(
         # anyway, and a placeholder would pollute the AI subgraph.
         return None
 
-    servers = normalized.input.tool_servers or []
-    tools = normalized.input.tools_declared or []
+    servers = normalized.input.tool_servers
+    tools = normalized.input.tools_declared
     used = _used_tools(normalized)
 
     inp = record.get("input") or {}
@@ -915,19 +517,14 @@ async def build_event(
         used_tools=used or None,
         stop_reason=_stop_reason(record),
         input=_build_content(
-            normalized.input.model_dump(mode="json", exclude_none=True),
+            _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),
         output=_build_content(
-            normalized.output.model_dump(mode="json", exclude_none=True),
+            _strip_empty_top(normalized.output.model_dump(mode="json", exclude_none=True)),
             include_text=include_raw_content,
             max_content_size=max_content_size,
         ),
-        accessed_files=await _accessed_files(
-            record,
-            include_raw_content=include_raw_content,
-            max_content_size=max_content_size,
-        )
-        or None,
+        accessed_files=normalized.accessed_files or None,
     )

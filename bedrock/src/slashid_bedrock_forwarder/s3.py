@@ -24,14 +24,13 @@ from functools import cache
 from typing import Any
 
 import aioboto3
+from slashid_ai_forwarder_core.content_utils import SNAP_TOLERANCE
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
     wait_fixed,
 )
-
-from slashid_ai_forwarder_core.content_utils import SNAP_TOLERANCE
 
 log = logging.getLogger(__name__)
 

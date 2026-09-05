@@ -118,9 +118,9 @@ def _request_to_input(request: AnthropicRequestBody) -> NormalizedInvocationInpu
         (t.name, t.description, t.input_schema) for t in (request.tools or [])
     )
     return NormalizedInvocationInput(
-        messages=messages or None,
-        tools_declared=tools_declared or None,
-        tool_servers=tool_servers or None,
+        messages=messages,
+        tools_declared=tools_declared,
+        tool_servers=tool_servers,
     )
 
 

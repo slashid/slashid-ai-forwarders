@@ -67,9 +67,9 @@ def _to_input(request: ConverseRequestBody) -> NormalizedInvocationInput:
         )
     tools_declared, tool_servers = build_tools_declared(_iter_converse_tool_specs(request))
     return NormalizedInvocationInput(
-        messages=messages or None,
-        tools_declared=tools_declared or None,
-        tool_servers=tool_servers or None,
+        messages=messages,
+        tools_declared=tools_declared,
+        tool_servers=tool_servers,
     )
 
 

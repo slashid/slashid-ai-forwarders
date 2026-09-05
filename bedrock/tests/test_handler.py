@@ -168,3 +168,89 @@ def test_run_normalizes_after_offload_resolution(monkeypatch: pytest.MonkeyPatch
     assert ev.available_tools[0].name == "WebFetch"
     assert ev.available_tool_servers is not None
     assert len(ev.available_tool_servers) == 1
+
+
+def test_run_populates_accessed_files_from_both_extractors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: _run composes bedrock attachment extractor + shared
+    finalize; both paths' AIAccessedFile entries land on the wire event.
+    Also verifies the cross-path (name, sha256) dedup — a file surfaced
+    by both extractors appears once."""
+    content = b"shared content"
+    b64 = base64.b64encode(content).decode()
+    tool_use_id = "tu_dup"
+    # Layout so both extractors emit against the fresh region:
+    # - msg[0]: assistant tool_use (last assistant → fresh region is msg[1:])
+    # - msg[1]: user with the document attachment AND the tool_result for the
+    #   same file. Attachment extractor emits one entry (name, sha256=X);
+    #   tool_result extractor emits (name, sha256=X); finalize dedups.
+    converse_body = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id,
+                        "name": "Read",
+                        "input": {"file_path": "shared.txt"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "document": {
+                            "name": "shared.txt",
+                            "format": "txt",
+                            "source": {"bytes": b64},
+                        }
+                    },
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": content.decode(),
+                    },
+                ],
+            },
+        ]
+    }
+    record: dict[str, Any] = {
+        "requestId": "req-dedup",
+        "timestamp": "2026-06-30T02:00:00Z",
+        "modelId": "us.anthropic.claude-sonnet-4-6",
+        "region": "us-east-2",
+        "accountId": "123456789012",
+        "identity": {"arn": "arn:aws:iam::123456789012:user/alice"},
+        "input": {"inputTokenCount": 10, "inputBodyJson": converse_body},
+        "output": {"outputTokenCount": 5, "outputBodyJson": {"stopReason": "end_turn"}},
+    }
+
+    async def fake_resolve(records: list[dict[str, Any]]) -> None:
+        pass
+
+    captured: dict[str, Any] = {}
+
+    async def fake_push(
+        _client: Any,
+        events: list[Any],
+        **_kw: Any,
+    ) -> int:
+        captured["events"] = events
+        return len(events)
+
+    monkeypatch.setattr(handler, "resolve_offloaded_bodies", fake_resolve)
+    monkeypatch.setattr(handler, "push_invocations", fake_push)
+
+    config = Config(endpoint="https://api.slashid.com", push_token="t" * 32)
+    asyncio.run(_run([record], config))
+
+    assert "events" in captured
+    assert len(captured["events"]) == 1
+    ev = captured["events"][0]
+    assert ev.accessed_files is not None
+    assert len(ev.accessed_files) == 1  # deduped by (name, content_hash)
+    f = ev.accessed_files[0]
+    assert f.name == "shared.txt"
