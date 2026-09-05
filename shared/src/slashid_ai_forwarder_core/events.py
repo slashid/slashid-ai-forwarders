@@ -165,17 +165,39 @@ class AWSIdentityDetails(_WireModel):
     ``principal_arn`` identifies the caller; ``access_key_id`` enables the
     server's AssumeRole-chain unrolling when set.
 
-    ``kind`` is the discriminator field for the future ``identity_details``
+    ``kind`` is the discriminator field for the ``identity_details``
     union (``AWSIdentityDetails | GCPIdentityDetails``). Defaults to
-    ``"aws"``; every wire-emitted AWS event carries the tag from this
-    version onwards. Downstream consumers that ``model_validate`` events
-    off disk must include ``"kind": "aws"`` in serialized identity_details
+    ``"aws"``. Downstream consumers that ``model_validate`` events off
+    disk must include ``"kind": "aws"`` in serialized identity_details
     dicts.
     """
 
     kind: Literal["aws"] = "aws"
     principal_arn: str
     access_key_id: str | None = None
+
+
+class GCPIdentityDetails(_WireModel):
+    """GCP-source shape of AIInvocationObservedV1.identity_details.
+
+    All-optional for the Phase 3.1 Vertex forwarder — v1 does not
+    correlate identity per-invocation (BQ request-response logging rows
+    carry no principal), so events emit ``{"kind": "gcp"}`` and nothing
+    else. Later phases add audit-log correlation and populate the
+    ``principal_email`` / ``service_account_email`` / ``oauth_client_id``
+    fields as they become available.
+    """
+
+    kind: Literal["gcp"] = "gcp"
+    principal_email: str | None = None
+    service_account_email: str | None = None
+    oauth_client_id: str | None = None
+
+
+IdentityDetails = Annotated[
+    AWSIdentityDetails | GCPIdentityDetails,
+    Field(discriminator="kind"),
+]
 
 
 class AIAgentDetails(_WireModel):
@@ -227,13 +249,7 @@ class AIInvocationObservedV1(_WireModel):
 
     request_id: str
     timestamp: str
-    # Discriminated union prepared for the future GCP sibling — today only
-    # AWSIdentityDetails, so it's a single-variant union. Adding
-    # `GCPIdentityDetails` in the Vertex PR is a one-line widening.
-    identity_details: Annotated[
-        AWSIdentityDetails,
-        Field(discriminator="kind"),
-    ]
+    identity_details: IdentityDetails
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     # Name of the vendor format the record's outputBodyJson matched — set
@@ -267,17 +283,15 @@ class EventEnvelope(_WireModel):
     ``None`` on drop conditions and populate an ``EventEnvelope``
     otherwise; the shared builder never has to touch a raw record.
 
-    ``identity_details`` is a single-variant discriminated union today
-    (AWSIdentityDetails only) — matching ``AIInvocationObservedV1``.
-    Vertex adds ``GCPIdentityDetails`` in Phase 3.1, widening both.
+    ``identity_details`` is the same discriminated union as on
+    ``AIInvocationObservedV1``: vendor-specific envelope constructors
+    populate an ``AWSIdentityDetails`` or ``GCPIdentityDetails`` and the
+    shared builder passes it through unchanged.
     """
 
     request_id: str
     timestamp: str
-    identity_details: Annotated[
-        AWSIdentityDetails,
-        Field(discriminator="kind"),
-    ]
+    identity_details: IdentityDetails
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     parsed_as: str

@@ -10,6 +10,11 @@ invocation events.
 ``after_last_assistant`` is duck-typed via a ``.role`` attribute — works
 for ``NormalizedMessage`` (canonical) and for vendor-specific typed
 messages like ``ConverseRequestMessage``. Same rule, one implementation.
+
+Some vendors use a different string for the assistant turn:
+Gemini's ``GeminiContent.role`` is ``Literal["user", "model"]``. Pass
+``role_value="model"`` in that case; the default ``"assistant"`` covers
+NormalizedMessage and every other vendor shape we handle today.
 """
 
 from __future__ import annotations
@@ -28,15 +33,17 @@ class _MessageWithRole(Protocol):
 
 def after_last_assistant[MessageT: _MessageWithRole](
     messages: Sequence[MessageT],
+    *,
+    role_value: str = "assistant",
 ) -> Sequence[MessageT]:
     """Return the tail of ``messages`` starting just after the last
-    ``role == "assistant"`` message.
+    ``role == role_value`` message.
 
-    If no assistant message is present, returns the whole sequence
+    If no matching message is present, returns the whole sequence
     unchanged (every message is "fresh" for the first turn).
     """
     last_assistant = max(
-        (i for i, m in enumerate(messages) if m.role == "assistant"),
+        (i for i, m in enumerate(messages) if m.role == role_value),
         default=-1,
     )
     return messages[last_assistant + 1 :]
