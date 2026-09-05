@@ -698,10 +698,12 @@ def test_format_structural_exclusivity(expected_name: str, payload: Any) -> None
 
 async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
     """Full pipeline: unknown-format MIL record → normalize_record marks it
-    with _parsed_as="unknown" → build_event surfaces it on the wire event.
-    Identity, model, tokens survive; semantic fields (stop_reason, tools)
-    are None/empty."""
-    from slashid_ai_forwarder_core.events import build_event
+    with _parsed_as="unknown" → build_event_from_normalized surfaces it on
+    the wire event. Identity, model, tokens survive; semantic fields
+    (stop_reason, tools) are None/empty."""
+    from slashid_ai_forwarder_core.events import build_event_from_normalized
+
+    from slashid_bedrock_forwarder.event_envelope import bedrock_envelope
 
     record = {
         "schemaType": "ModelInvocationLog",
@@ -720,8 +722,9 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
         },
     }
     normalized = await normalize_record(record, config=_CONFIG)
-    event = await build_event(normalized, record, config=_CONFIG)
-    assert event is not None
+    envelope = bedrock_envelope(record)
+    assert envelope is not None
+    event = await build_event_from_normalized(normalized, envelope, config=_CONFIG)
     assert event.parsed_as == "unknown"
     # Semantic fields empty/None on unknown-shape records.
     assert event.stop_reason is None
@@ -735,7 +738,9 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
 
 async def test_e2e_anthropic_message_sets_parsed_as() -> None:
     """Happy path: Anthropic-message record → parsed_as="anthropic-message"."""
-    from slashid_ai_forwarder_core.events import build_event
+    from slashid_ai_forwarder_core.events import build_event_from_normalized
+
+    from slashid_bedrock_forwarder.event_envelope import bedrock_envelope
 
     record = {
         "timestamp": "2026-09-01T12:00:00Z",
@@ -758,14 +763,17 @@ async def test_e2e_anthropic_message_sets_parsed_as() -> None:
         },
     }
     normalized = await normalize_record(record, config=_CONFIG)
-    event = await build_event(normalized, record, config=_CONFIG)
-    assert event is not None
+    envelope = bedrock_envelope(record)
+    assert envelope is not None
+    event = await build_event_from_normalized(normalized, envelope, config=_CONFIG)
     assert event.parsed_as == "anthropic-message"
 
 
 async def test_e2e_converse_response_sets_parsed_as() -> None:
     """Happy path: native Converse response → parsed_as="bedrock-converse"."""
-    from slashid_ai_forwarder_core.events import build_event
+    from slashid_ai_forwarder_core.events import build_event_from_normalized
+
+    from slashid_bedrock_forwarder.event_envelope import bedrock_envelope
 
     record = {
         "timestamp": "2026-09-01T12:00:00Z",
@@ -786,6 +794,7 @@ async def test_e2e_converse_response_sets_parsed_as() -> None:
         },
     }
     normalized = await normalize_record(record, config=_CONFIG)
-    event = await build_event(normalized, record, config=_CONFIG)
-    assert event is not None
+    envelope = bedrock_envelope(record)
+    assert envelope is not None
+    event = await build_event_from_normalized(normalized, envelope, config=_CONFIG)
     assert event.parsed_as == "bedrock-converse"

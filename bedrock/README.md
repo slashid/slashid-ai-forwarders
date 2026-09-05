@@ -55,7 +55,7 @@ Once the CloudFormation template is deployed against a test AWS account, trigger
 
 ### Via AWS Converse (already-Converse pass-through path)
 
-`./converse` invokes a Bedrock native-Converse model — Nova Pro by default. MIL emits these records in Converse shape natively, so the normalizer's Anthropic branch is skipped entirely; this exercises the pass-through and validates that `build_event` handles Converse-shape input directly.
+`./converse` invokes a Bedrock native-Converse model — Nova Pro by default. MIL emits these records in Converse shape natively, so the normalizer's Anthropic branch is skipped entirely; this exercises the pass-through and validates that `build_event_from_normalized` handles Converse-shape input directly.
 
 ```bash
 ./converse                            # default prompt, Nova Pro

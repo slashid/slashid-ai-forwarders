@@ -13,7 +13,7 @@ extensions.
 
 ``normalize_record(record, *, config)`` returns the canonical shape (or
 an empty ``NormalizedInvocation()`` on fallthrough) and additionally
-sets ``record["_parsed_as"]`` so ``build_event`` can read it. Async —
+sets ``record["_parsed_as"]`` so ``bedrock_envelope`` can read it. Async —
 Converse's ``to_invocation`` may issue concurrent S3 attachment fetches.
 The config propagates through the dispatcher; vendor formats that don't
 currently model attachments accept it for signature parity and ignore it.
@@ -135,7 +135,7 @@ async def normalize_record(
     """Dispatch on the record's input+output body shapes → NormalizedInvocation.
 
     Sets ``record["_parsed_as"]`` to the matching format name, or
-    ``"unknown"`` on fallthrough — ``build_event`` reads this to populate
+    ``"unknown"`` on fallthrough — ``bedrock_envelope`` reads this to populate
     the wire field.
 
     Both request and response must validate for a format to match. If either
