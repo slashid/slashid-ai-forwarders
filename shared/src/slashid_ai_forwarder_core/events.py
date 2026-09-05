@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .content_utils import truncate_middle
 from .normalize.normalized.otel import extract_otel
+from .normalize.turn import after_last_assistant
 
 if TYPE_CHECKING:
     # events.py already has ``from __future__ import annotations`` so
@@ -386,16 +387,9 @@ def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
             if block.kind == "tool_use" and block.tool_use_id and block.tool_name:
                 name_by_use_id[block.tool_use_id] = block.tool_name
 
-    # Fresh region: everything after the last assistant message.
-    last_assistant = max(
-        (i for i, m in enumerate(input_messages) if m.role == "assistant"),
-        default=-1,
-    )
-    fresh_messages = input_messages[last_assistant + 1 :]
-
     used: list[AIToolUse] = []
     seen: set[str] = set()
-    for msg in fresh_messages:
+    for msg in after_last_assistant(input_messages):
         for block in msg.content:
             if block.kind != "tool_result" or not block.tool_use_id:
                 continue

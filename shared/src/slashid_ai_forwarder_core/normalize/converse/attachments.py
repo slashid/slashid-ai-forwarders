@@ -22,6 +22,7 @@ import mimetypes
 from ...config_base import BaseConfig
 from ...content_utils import truncate_middle
 from ...events import AIAccessedFile
+from ..turn import after_last_assistant
 from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
 from .schema import (
     ConverseDocumentBlock,
@@ -67,14 +68,7 @@ async def extract_attachments(
     ``MAX_PARALLEL_FETCHES``). Inline base64 attachments are decoded
     synchronously as the second pass walks messages.
     """
-    if not request.messages:
-        return []
-
-    last_assistant = max(
-        (i for i, m in enumerate(request.messages) if m.role == "assistant"),
-        default=-1,
-    )
-    fresh_messages = request.messages[last_assistant + 1 :]
+    fresh_messages = after_last_assistant(request.messages)
     if not fresh_messages:
         return []
 
