@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 from ...config_base import BaseConfig
 from ...content_utils import strip_cat_n, truncate_middle
 from ...events import AIAccessedFile
+from ..turn import after_last_assistant
 from .types import NormalizedMessage
 
 
@@ -77,13 +78,7 @@ def extract_tool_result_files(
             if block.kind == "tool_use" and block.tool_use_id and block.tool_name:
                 tool_use_by_id[block.tool_use_id] = (block.tool_name, block.tool_input)
 
-    # 2. Fresh region: everything after the last assistant message.
-    last_assistant = max(
-        (i for i, m in enumerate(messages) if m.role == "assistant"),
-        default=-1,
-    )
-
-    # 3. For each fresh tool_result, correlate + hash.
+    # 2. For each fresh tool_result, correlate + hash.
     # Dedup key is (name, sha256) — matches Phase 1 behaviour. Edge case:
     # if content bytes couldn't be derived (empty tool_output, list of
     # non-text blocks), sha256 falls to None, and multiple different
@@ -91,7 +86,7 @@ def extract_tool_result_files(
     # matches existing behaviour; live-safe.
     out: list[AIAccessedFile] = []
     seen: set[tuple[str, str | None]] = set()
-    for msg in messages[last_assistant + 1 :]:
+    for msg in after_last_assistant(messages):
         for block in msg.content:
             if block.kind != "tool_result" or not block.tool_use_id:
                 continue
