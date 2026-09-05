@@ -19,7 +19,11 @@ from typing import Protocol
 
 
 class _MessageWithRole(Protocol):
-    role: str
+    # Read-only property (not a bare attribute) so ty treats it as
+    # covariant — Literal["assistant" | ...] role fields on the concrete
+    # types satisfy the Protocol without invariant str-mismatch errors.
+    @property
+    def role(self) -> str: ...
 
 
 def after_last_assistant[MessageT: _MessageWithRole](
