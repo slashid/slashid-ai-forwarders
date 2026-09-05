@@ -1,9 +1,10 @@
 """Vendor-agnostic post-processing pass — populates canonical accessed_files
 with tool-result-derived entries.
 
-Composes on top of any vendor-side attachment extractor (e.g.
-``bedrock.converse_attachments.extract_converse_attachments``): the caller
-runs attachment extraction first (writes to ``normalized.accessed_files``),
+Composes on top of any vendor-side attachment extractor (e.g. the
+Converse document/image walker inside
+``normalize.converse.normalize.to_normalized_invocation``): the caller
+runs the vendor translate first (writes to ``normalized.accessed_files``),
 then calls ``finalize`` to append tool-result-derived entries in a single
 pass.
 
@@ -15,6 +16,7 @@ walk deduped attachments and tool-results in a single ``seen`` set.
 
 from __future__ import annotations
 
+from ..config_base import BaseConfig
 from .normalized.tool_results import extract_tool_result_files
 from .normalized.types import NormalizedInvocation
 
@@ -22,8 +24,7 @@ from .normalized.types import NormalizedInvocation
 def finalize(
     normalized: NormalizedInvocation,
     *,
-    include_raw_content: bool,
-    max_content_size: int,
+    config: BaseConfig,
 ) -> NormalizedInvocation:
     """Append tool-result files to ``normalized.accessed_files``. Returns the
     same instance (mutation, not clone) for chainable use.
@@ -34,8 +35,7 @@ def finalize(
     """
     tool_files = extract_tool_result_files(
         normalized.input.messages,
-        include_raw_content=include_raw_content,
-        max_content_size=max_content_size,
+        config=config,
     )
     seen: set[tuple[str | None, str | None]] = {
         (f.name, f.content_hashes.get("sha256") if f.content_hashes else None)

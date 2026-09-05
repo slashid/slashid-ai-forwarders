@@ -25,6 +25,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
+from ...config_base import BaseConfig
 from ...content_utils import strip_cat_n, truncate_middle
 from ...events import AIAccessedFile
 from .types import NormalizedMessage
@@ -55,8 +56,7 @@ _READ_TOOLS: dict[str, _ToolSpec] = {
 def extract_tool_result_files(
     messages: list[NormalizedMessage],
     *,
-    include_raw_content: bool,
-    max_content_size: int,
+    config: BaseConfig,
 ) -> list[AIAccessedFile]:
     """Walk canonical messages for _READ_TOOLS-matching tool_use/tool_result pairs.
 
@@ -117,8 +117,8 @@ def extract_tool_result_files(
                 name=path,
                 media_type=_mime_from_name(path),
                 content_bytes=content_bytes,
-                include_raw_content=include_raw_content,
-                max_content_size=max_content_size,
+                include_raw_content=config.include_raw_content,
+                max_content_size=config.max_content_size,
             )
             key = (path, file.content_hashes.get("sha256") if file.content_hashes else None)
             if key in seen:

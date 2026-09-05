@@ -6,8 +6,11 @@ import logging
 from typing import Any
 
 import pytest
+from slashid_ai_forwarder_core.config_base import BaseConfig
 
 from slashid_bedrock_forwarder.mil_normalize import normalize_record
+
+_CONFIG = BaseConfig(endpoint="http://test", push_token="test")
 
 # Minimal valid request bodies for each format — both request and response
 # must validate, so every test needs an inputBodyJson that satisfies the
@@ -20,7 +23,7 @@ _MIN_CONVERSE_REQUEST: dict[str, Any] = {
 }
 
 
-def test_already_converse_shape_passes_through() -> None:
+async def test_already_converse_shape_passes_through() -> None:
     """A Converse-shape record produces a NormalizedInvocation and leaves
     the raw record body untouched."""
     record: dict[str, Any] = {
@@ -37,7 +40,7 @@ def test_already_converse_shape_passes_through() -> None:
             }
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
     # Raw input body is preserved verbatim — no rewrite.
     assert record["input"]["inputBodyJson"] == {
         "toolConfig": {"tools": []},
@@ -48,7 +51,7 @@ def test_already_converse_shape_passes_through() -> None:
     assert normalized.output.stop_reason == "end_turn"
 
 
-def test_anthropic_tools_populate_tools_declared() -> None:
+async def test_anthropic_tools_populate_tools_declared() -> None:
     """Anthropic ``request.tools[]`` land on ``normalized.input.tools_declared``
     as canonical ``AITool`` / ``AIToolServer`` entries — no more on-record
     Converse rewrite. Raw input body stays untouched."""
@@ -74,7 +77,7 @@ def test_anthropic_tools_populate_tools_declared() -> None:
             }
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
     # Raw input body preserved verbatim — no toolConfig injection.
     assert "toolConfig" not in record["input"]["inputBodyJson"]
     assert normalized.input.tools_declared is not None
@@ -91,7 +94,7 @@ def test_anthropic_tools_populate_tools_declared() -> None:
     assert tool.tool_server_id == server.id
 
 
-def test_anthropic_stream_text_block_reconstructed() -> None:
+async def test_anthropic_stream_text_block_reconstructed() -> None:
     record = {
         "input": {"inputBodyJson": dict(_MIN_ANTHROPIC_REQUEST)},
         "output": {
@@ -116,7 +119,7 @@ def test_anthropic_stream_text_block_reconstructed() -> None:
             ]
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
     assert normalized.output is not None
     assert normalized.output.stop_reason == "end_turn"
     assert normalized.output.message is not None
@@ -124,7 +127,7 @@ def test_anthropic_stream_text_block_reconstructed() -> None:
     assert "".join(t or "" for t in text_parts) == "hello world"
 
 
-def test_anthropic_stream_tool_use_block_reconstructed() -> None:
+async def test_anthropic_stream_tool_use_block_reconstructed() -> None:
     record = {
         "input": {"inputBodyJson": dict(_MIN_ANTHROPIC_REQUEST)},
         "output": {
@@ -149,7 +152,7 @@ def test_anthropic_stream_tool_use_block_reconstructed() -> None:
             ]
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
     assert normalized.output is not None
     assert normalized.output.stop_reason == "tool_use"
     assert normalized.output.message is not None
@@ -160,7 +163,9 @@ def test_anthropic_stream_tool_use_block_reconstructed() -> None:
     assert tool_uses[0].tool_input == {"cmd": "ls"}
 
 
-def test_malformed_tool_input_json_does_not_leak_to_logs(caplog: pytest.LogCaptureFixture) -> None:
+async def test_malformed_tool_input_json_does_not_leak_to_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Regression for B3: malformed tool_use input_json log must not contain
     the raw buffer bytes — those can hold tool arguments and the customer's
     own log group would see them."""
@@ -187,7 +192,7 @@ def test_malformed_tool_input_json_does_not_leak_to_logs(caplog: pytest.LogCaptu
         },
     }
     caplog.set_level(logging.WARNING)
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
 
     relevant = [r for r in caplog.records if "tool_use input_json malformed" in r.getMessage()]
     assert relevant, "expected the malformed-input warning to fire"
@@ -198,7 +203,7 @@ def test_malformed_tool_input_json_does_not_leak_to_logs(caplog: pytest.LogCaptu
         assert "secret" not in msg
 
 
-def test_anthropic_nonstreaming_response_rewritten() -> None:
+async def test_anthropic_nonstreaming_response_rewritten() -> None:
     """Non-streaming InvokeModel-against-Anthropic response reaches
     canonical NormalizedInvocation shape.
 
@@ -230,7 +235,7 @@ def test_anthropic_nonstreaming_response_rewritten() -> None:
             }
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
 
     assert normalized.output is not None
     assert normalized.output.stop_reason == "tool_use"
@@ -246,7 +251,7 @@ def test_anthropic_nonstreaming_response_rewritten() -> None:
     assert content[1].tool_input == {"file_path": "/tmp/x"}
 
 
-def test_anthropic_nonstreaming_missing_type_field_not_touched() -> None:
+async def test_anthropic_nonstreaming_missing_type_field_not_touched() -> None:
     """A dict without the full `type` + `role` + `content` triad is not
     matched as an Anthropic message — it falls through to `unknown` and
     the raw body is preserved verbatim."""
@@ -259,14 +264,14 @@ def test_anthropic_nonstreaming_missing_type_field_not_touched() -> None:
         "input": {"inputBodyJson": dict(_MIN_ANTHROPIC_REQUEST)},
         "output": {"outputBodyJson": dict(ambiguous)},
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     # Raw body is preserved — we no longer mutate it.
     assert record["output"]["outputBodyJson"] == ambiguous
     # Neither request+response pair matches → unknown.
     assert record["_parsed_as"] == "unknown"
 
 
-def test_anthropic_nonstreaming_thinking_block_folded_into_text() -> None:
+async def test_anthropic_nonstreaming_thinking_block_folded_into_text() -> None:
     """`thinking` content blocks become plain text — consistent with the
     streaming reconstruction path, since downstream code only cares about
     text vs. tool_use."""
@@ -284,7 +289,7 @@ def test_anthropic_nonstreaming_thinking_block_folded_into_text() -> None:
             }
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
     assert normalized.output is not None
     assert normalized.output.message is not None
     content = normalized.output.message.content
@@ -295,7 +300,7 @@ def test_anthropic_nonstreaming_thinking_block_folded_into_text() -> None:
     ]
 
 
-def test_converse_response_not_reprocessed() -> None:
+async def test_converse_response_not_reprocessed() -> None:
     """A Converse-shape response passes through untouched — raw body preserved."""
     original = {
         "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
@@ -305,13 +310,13 @@ def test_converse_response_not_reprocessed() -> None:
         "input": {"inputBodyJson": dict(_MIN_CONVERSE_REQUEST)},
         "output": {"outputBodyJson": dict(original)},
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     # Raw output body preserved (no in-place rewrite).
     assert record["output"]["outputBodyJson"] == original
     assert record["_parsed_as"] == "bedrock-converse"
 
 
-def test_non_anthropic_stream_list_left_alone() -> None:
+async def test_non_anthropic_stream_list_left_alone() -> None:
     """A list of stream events that doesn't use Anthropic's event vocabulary
     is left in place. Non-Anthropic Bedrock streams (Nova, Titan, Cohere)
     use different `type` values; we don't own their normalization yet."""
@@ -329,7 +334,7 @@ def test_non_anthropic_stream_list_left_alone() -> None:
         },
         "output": {"outputBodyJson": list(nova_stream)},
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     # Output is untouched — we don't claim ownership of this shape.
     assert record["output"]["outputBodyJson"] == nova_stream
     # Input tools are also untouched (dispatch fell through — parsed_as="unknown").
@@ -337,7 +342,7 @@ def test_non_anthropic_stream_list_left_alone() -> None:
     assert record["_parsed_as"] == "unknown"
 
 
-def test_anthropic_message_backfills_missing_top_level_tokens() -> None:
+async def test_anthropic_message_backfills_missing_top_level_tokens() -> None:
     """Non-streaming Anthropic MIL records omit cache-token counts at the top
     level; the numbers are only in `body.usage`. Verified by live inspection
     of an InvokeModel call against `us.anthropic.claude-sonnet-4-6` on
@@ -369,7 +374,7 @@ def test_anthropic_message_backfills_missing_top_level_tokens() -> None:
             },
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     # Original MIL-populated fields untouched
     assert record["input"]["inputTokenCount"] == 600
     assert record["output"]["outputTokenCount"] == 76
@@ -378,7 +383,7 @@ def test_anthropic_message_backfills_missing_top_level_tokens() -> None:
     assert record["input"]["cacheWriteInputTokenCount"] == 17
 
 
-def test_anthropic_message_backfill_never_overrides_existing_mil_value() -> None:
+async def test_anthropic_message_backfill_never_overrides_existing_mil_value() -> None:
     """When MIL provides a top-level token count, it wins over `body.usage`."""
     record: dict[str, Any] = {
         "input": {
@@ -403,7 +408,7 @@ def test_anthropic_message_backfill_never_overrides_existing_mil_value() -> None
             },
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["input"]["inputTokenCount"] == 111
     assert record["input"]["cacheReadInputTokenCount"] == 222
     assert record["output"]["outputTokenCount"] == 333
@@ -411,7 +416,7 @@ def test_anthropic_message_backfill_never_overrides_existing_mil_value() -> None
     assert record["input"]["cacheWriteInputTokenCount"] == 999
 
 
-def test_anthropic_stream_backfills_tokens_from_usage_events() -> None:
+async def test_anthropic_stream_backfills_tokens_from_usage_events() -> None:
     """Streaming carries usage in `message_start` and `message_delta`; if
     MIL top-level counts happen to be missing on some record, we recover
     from the events. Defense-in-depth (streaming top-level fields are
@@ -449,14 +454,14 @@ def test_anthropic_stream_backfills_tokens_from_usage_events() -> None:
             ]
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["input"]["inputTokenCount"] == 50
     assert record["input"]["cacheReadInputTokenCount"] == 100
     assert record["input"]["cacheWriteInputTokenCount"] == 25
     assert record["output"]["outputTokenCount"] == 3
 
 
-def test_anthropic_stream_input_tools_populate_tools_declared() -> None:
+async def test_anthropic_stream_input_tools_populate_tools_declared() -> None:
     """Anthropic-stream dispatch populates ``tools_declared`` from
     ``request.tools[]`` — the raw record body stays untouched."""
     record = {
@@ -485,7 +490,7 @@ def test_anthropic_stream_input_tools_populate_tools_declared() -> None:
             ]
         },
     }
-    normalized = normalize_record(record)
+    normalized = await normalize_record(record, config=_CONFIG)
     # Raw input body preserved verbatim.
     assert "toolConfig" not in record["input"]["inputBodyJson"]
     # Canonical carries the tool declaration + reconstructed stop reason.
@@ -501,7 +506,7 @@ def test_anthropic_stream_input_tools_populate_tools_declared() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_dispatch_anthropic_message_sets_parsed_as() -> None:
+async def test_dispatch_anthropic_message_sets_parsed_as() -> None:
     record = {
         "input": {
             "inputBodyJson": {
@@ -518,11 +523,11 @@ def test_dispatch_anthropic_message_sets_parsed_as() -> None:
             }
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["_parsed_as"] == "anthropic-message"
 
 
-def test_dispatch_anthropic_stream_sets_parsed_as() -> None:
+async def test_dispatch_anthropic_stream_sets_parsed_as() -> None:
     record = {
         "input": {
             "inputBodyJson": {
@@ -547,11 +552,11 @@ def test_dispatch_anthropic_stream_sets_parsed_as() -> None:
             ]
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["_parsed_as"] == "anthropic-stream"
 
 
-def test_dispatch_native_converse_sets_parsed_as() -> None:
+async def test_dispatch_native_converse_sets_parsed_as() -> None:
     record = {
         "input": {"inputBodyJson": {"messages": [{"role": "user", "content": [{"text": "hi"}]}]}},
         "output": {
@@ -561,11 +566,11 @@ def test_dispatch_native_converse_sets_parsed_as() -> None:
             }
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["_parsed_as"] == "bedrock-converse"
 
 
-def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
+async def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     record = {
@@ -579,7 +584,7 @@ def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
         "output": {"outputBodyJson": {"totally": "unknown", "shape": [1, 2, 3]}},
     }
     with caplog.at_level(logging.WARNING, logger="slashid_bedrock_forwarder.mil_normalize"):
-        normalize_record(record)
+        await normalize_record(record, config=_CONFIG)
     assert record["_parsed_as"] == "unknown"
     assert any(
         "unrecognized MIL body shape" in r.message and "amazon.new-model-v1:0" in r.message
@@ -587,7 +592,7 @@ def test_dispatch_unknown_shape_marks_parsed_as_unknown_and_warns(
     )
 
 
-def test_dispatch_backfill_tokens_from_anthropic_message_usage() -> None:
+async def test_dispatch_backfill_tokens_from_anthropic_message_usage() -> None:
     # cache_creation_input_tokens should be copied to cacheWriteInputTokenCount.
     record = {
         "input": {"inputBodyJson": dict(_MIN_ANTHROPIC_REQUEST)},
@@ -604,13 +609,13 @@ def test_dispatch_backfill_tokens_from_anthropic_message_usage() -> None:
             }
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["input"]["cacheWriteInputTokenCount"] == 42
     assert record["input"]["inputTokenCount"] == 10
     assert record["output"]["outputTokenCount"] == 5
 
 
-def test_dispatch_backfill_tokens_idempotent_does_not_overwrite() -> None:
+async def test_dispatch_backfill_tokens_idempotent_does_not_overwrite() -> None:
     # If MIL already populated a field, backfill leaves it alone.
     record = {
         "input": {
@@ -626,7 +631,7 @@ def test_dispatch_backfill_tokens_idempotent_does_not_overwrite() -> None:
             }
         },
     }
-    normalize_record(record)
+    await normalize_record(record, config=_CONFIG)
     assert record["input"]["inputTokenCount"] == 999
 
 
@@ -714,8 +719,8 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
             "outputTokenCount": 3,
         },
     }
-    normalized = normalize_record(record)
-    event = await build_event(normalized, record)
+    normalized = await normalize_record(record, config=_CONFIG)
+    event = await build_event(normalized, record, config=_CONFIG)
     assert event is not None
     assert event.parsed_as == "unknown"
     # Semantic fields empty/None on unknown-shape records.
@@ -752,8 +757,8 @@ async def test_e2e_anthropic_message_sets_parsed_as() -> None:
             "outputTokenCount": 5,
         },
     }
-    normalized = normalize_record(record)
-    event = await build_event(normalized, record)
+    normalized = await normalize_record(record, config=_CONFIG)
+    event = await build_event(normalized, record, config=_CONFIG)
     assert event is not None
     assert event.parsed_as == "anthropic-message"
 
@@ -780,7 +785,7 @@ async def test_e2e_converse_response_sets_parsed_as() -> None:
             "outputTokenCount": 3,
         },
     }
-    normalized = normalize_record(record)
-    event = await build_event(normalized, record)
+    normalized = await normalize_record(record, config=_CONFIG)
+    event = await build_event(normalized, record, config=_CONFIG)
     assert event is not None
     assert event.parsed_as == "bedrock-converse"

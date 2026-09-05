@@ -38,9 +38,8 @@ from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvoc
 from slashid_ai_forwarder_core.sink import push_invocations
 
 from .config import Config, load_config
-from .converse_attachments import extract_converse_attachments
 from .mil_normalize import normalize_record
-from .s3 import resolve_offloaded_bodies
+from .mil_offload import resolve_offloaded_bodies
 
 log = logging.getLogger()
 log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
@@ -121,36 +120,18 @@ def _log_event(event: AIInvocationObservedV1) -> None:
 
 
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
-    """Resolve offloaded MIL bodies, normalize, extract attachments, build + push events."""
+    """Resolve offloaded MIL bodies, normalize (attachments extracted inline), push events."""
     await resolve_offloaded_bodies(records)
 
     async def _prepare(record: dict[str, Any]) -> tuple[NormalizedInvocation, dict[str, Any]]:
-        normalized = normalize_record(record)
-        attachments = await extract_converse_attachments(
-            record,
-            include_raw_content=config.include_raw_content,
-            max_content_size=config.max_content_size,
-        )
-        normalized.accessed_files.extend(attachments)
-        finalize(
-            normalized,
-            include_raw_content=config.include_raw_content,
-            max_content_size=config.max_content_size,
-        )
+        normalized = await normalize_record(record, config=config)
+        finalize(normalized, config=config)
         return normalized, record
 
     prepared = await asyncio.gather(*(_prepare(r) for r in records))
 
     built_or_none = await asyncio.gather(
-        *(
-            build_event(
-                normalized,
-                record,
-                include_raw_content=config.include_raw_content,
-                max_content_size=config.max_content_size,
-            )
-            for normalized, record in prepared
-        )
+        *(build_event(normalized, record, config=config) for normalized, record in prepared)
     )
     events = [e for e in built_or_none if e is not None]
     for e in events:

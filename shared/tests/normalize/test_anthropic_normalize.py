@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter
 
+from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
     extract_stream_usage,
 )
@@ -14,12 +15,17 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
 )
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
+
+def _config() -> BaseConfig:
+    return BaseConfig(endpoint="http://test", push_token="test")
+
+
 # --------------------------------------------------------------------------
 # Behaviour invariants for the Anthropic → NormalizedInvocation translates
 # --------------------------------------------------------------------------
 
 
-def test_anthropic_message_tool_use_with_null_input_becomes_empty_dict() -> None:
+async def test_anthropic_message_tool_use_with_null_input_becomes_empty_dict() -> None:
     """Byte-parity: falsy tool_use input (None or absent) becomes {} in the
     canonical NormalizedContent. Matters because model_dump of {} differs
     from model_dump of None on the wire — content-hash stability depends
@@ -45,14 +51,14 @@ def test_anthropic_message_tool_use_with_null_input_becomes_empty_dict() -> None
             "stop_reason": "tool_use",
         }
     )
-    normalized = message_to_normalized_invocation(request, response)
+    normalized = await message_to_normalized_invocation(request, response, config=_config())
     assert normalized.output.message is not None
     tool_block = normalized.output.message.content[0]
     assert tool_block.kind == "tool_use"
     assert tool_block.tool_input == {}  # not None, not missing
 
 
-def test_anthropic_stream_malformed_input_json_yields_empty_dict(
+async def test_anthropic_stream_malformed_input_json_yields_empty_dict(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Malformed input_json_delta reassembly: logs a WARNING (level +
@@ -92,7 +98,7 @@ def test_anthropic_stream_malformed_input_json_yields_empty_dict(
         logging.WARNING,
         logger="slashid_ai_forwarder_core.normalize.anthropic.normalize",
     ):
-        normalized = stream_to_normalized_invocation(request, stream)
+        normalized = await stream_to_normalized_invocation(request, stream, config=_config())
 
     assert normalized.output.message is not None
     block = normalized.output.message.content[0]

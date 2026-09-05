@@ -11,10 +11,12 @@ honestly reflect whether we understood the record.
 only the token backfill uses it; ``request`` is present for future
 extensions.
 
-``normalize_record(record) -> NormalizedInvocation`` returns the
-canonical shape (or an empty ``NormalizedInvocation()`` on fallthrough)
-and additionally sets ``record["_parsed_as"]`` so ``build_event`` can
-read it.
+``normalize_record(record, *, config)`` returns the canonical shape (or
+an empty ``NormalizedInvocation()`` on fallthrough) and additionally
+sets ``record["_parsed_as"]`` so ``build_event`` can read it. Async —
+Converse's ``to_invocation`` may issue concurrent S3 attachment fetches.
+The config propagates through the dispatcher; vendor formats that don't
+currently model attachments accept it for signature parity and ignore it.
 """
 
 from __future__ import annotations
@@ -22,9 +24,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import TypeAdapter, ValidationError
+from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
     extract_stream_usage,
     message_to_normalized_invocation,
@@ -48,6 +51,22 @@ from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvoc
 log = logging.getLogger(__name__)
 
 
+# Vendor ``to_invocation`` signature: takes the parsed request + response
+# plus a ``config: BaseConfig`` kwarg so Converse can populate
+# ``accessed_files``. Anthropic vendor variants ignore ``config`` today —
+# they preserve the signature for dispatch uniformity. Generic Protocol
+# (not a plain ``Callable``) preserves keyword-only ``config`` semantics
+# alongside the ``[TIn, TOut]`` parameterization on ``_Format``.
+class _ToInvocation[TIn, TOut](Protocol):
+    async def __call__(
+        self,
+        request: TIn,
+        response: TOut,
+        *,
+        config: BaseConfig,
+    ) -> NormalizedInvocation: ...
+
+
 @dataclass(frozen=True)
 class _Format[TIn, TOut]:
     """One row in the MIL format-dispatch table.
@@ -60,7 +79,7 @@ class _Format[TIn, TOut]:
     name: str
     request_adapter: TypeAdapter[TIn]
     response_adapter: TypeAdapter[TOut]
-    to_invocation: Callable[[TIn, TOut], NormalizedInvocation]
+    to_invocation: _ToInvocation[TIn, TOut]
     on_parse: Callable[[dict[str, Any], TIn, TOut], None] | None = None
 
 
@@ -108,7 +127,11 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
 ]
 
 
-def normalize_record(record: dict[str, Any]) -> NormalizedInvocation:
+async def normalize_record(
+    record: dict[str, Any],
+    *,
+    config: BaseConfig,
+) -> NormalizedInvocation:
     """Dispatch on the record's input+output body shapes → NormalizedInvocation.
 
     Sets ``record["_parsed_as"]`` to the matching format name, or
@@ -121,6 +144,11 @@ def normalize_record(record: dict[str, Any]) -> NormalizedInvocation:
     falls through and returns ``NormalizedInvocation()`` — envelope-side
     fields still emit (identity, model, tokens), only semantic detail is
     dropped.
+
+    ``config`` propagates to the vendor ``to_invocation`` (Converse uses
+    ``config.include_raw_content`` / ``config.max_content_size`` for
+    attachment redaction; the Anthropic variants accept-and-ignore for
+    signature parity).
     """
     in_body = (record.get("input") or {}).get("inputBodyJson")
     out_body = (record.get("output") or {}).get("outputBodyJson")
@@ -135,7 +163,7 @@ def normalize_record(record: dict[str, Any]) -> NormalizedInvocation:
             fmt.on_parse(record, parsed_in, parsed_out)
         record["_parsed_as"] = fmt.name
         log.debug("normalized record as %s", fmt.name)
-        return fmt.to_invocation(parsed_in, parsed_out)
+        return await fmt.to_invocation(parsed_in, parsed_out, config=config)
 
     log.warning(
         "unrecognized MIL body shape for model=%s request_id=%s",

@@ -83,7 +83,7 @@ Requires the AWS CLI and `jq`. For a GUI alternative, the [Bedrock Playground](h
 ./converse-attach ./chart.png "what is in this image?"
 ```
 
-Bedrock's MIL preserves small text documents inline, so text runs exercise `_accessed_files`' inline-bytes branch. Images (and larger documents) are auto-offloaded to the MIL-managed S3 bucket, so image runs exercise `shared/s3.py::_resolve_s3_attachment`'s HeadObject + GetObject path instead — one script covers both.
+Bedrock's MIL preserves small text documents inline, so text runs exercise `_accessed_files`' inline-bytes branch. Images (and larger documents) are auto-offloaded to the MIL-managed S3 bucket, so image runs exercise `shared/normalize/converse/s3.py::_resolve_s3_attachment`'s HeadObject + GetObject path instead — one script covers both.
 
 ### Via Claude Code exercising the `Read` tool (`_accessed_files` tool-result path)
 

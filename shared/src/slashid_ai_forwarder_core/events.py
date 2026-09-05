@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     # annotations resolve lazily. A runtime import here would create a
     # circular import at module load: types.py imports AIInvocationTokens /
     # AIStopReason / AITool / AIToolServer from events.py.
+    from .config_base import BaseConfig
     from .normalize.normalized.types import NormalizedInvocation
 
 log = logging.getLogger(__name__)
@@ -460,9 +461,8 @@ async def build_event(
     normalized: NormalizedInvocation,
     record: dict[str, Any],
     *,
-    include_raw_content: bool = False,
+    config: BaseConfig,
     model_region: str | None = None,
-    max_content_size: int = 100_000,
 ) -> AIInvocationObservedV1 | None:
     """Build the AIInvocationObservedV1 for a single MIL record.
 
@@ -470,9 +470,11 @@ async def build_event(
     objects share the listing prefix in some MIL layouts; they appear as
     pseudo-records with no identifying metadata).
 
-    `include_raw_content` defaults to off — by default we send hash, mime,
-    and byte length on `input`/`output` but no prompt text. Flip via the
-    SLASHID_INCLUDE_RAW_CONTENT env var (CFN parameter same name).
+    ``config.include_raw_content`` defaults to off — by default we send
+    hash, mime, and byte length on ``input``/``output`` but no prompt text.
+    Flip via the SLASHID_INCLUDE_RAW_CONTENT env var (CFN parameter same
+    name). ``_build_content`` stays typed on primitives; we unpack the
+    config here at the boundary.
     """
     if not record.get("requestId"):
         return None
@@ -532,13 +534,13 @@ async def build_event(
         stop_reason=_stop_reason(record),
         input=_build_content(
             _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
-            include_text=include_raw_content,
-            max_content_size=max_content_size,
+            include_text=config.include_raw_content,
+            max_content_size=config.max_content_size,
         ),
         output=_build_content(
             _strip_empty_top(normalized.output.model_dump(mode="json", exclude_none=True)),
-            include_text=include_raw_content,
-            max_content_size=max_content_size,
+            include_text=config.include_raw_content,
+            max_content_size=config.max_content_size,
         ),
         accessed_files=normalized.accessed_files or None,
     )

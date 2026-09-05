@@ -1,4 +1,4 @@
-"""Fetch MIL body-offload objects and file attachments from S3.
+"""Fetch MIL body-offload objects from S3.
 
 For large invocations (Claude Code's system prompt is the canonical case)
 MIL writes the main record to CloudWatch Logs with `inputBodyJson: null`
@@ -7,10 +7,9 @@ that follows ~30-60s later. This module fetches the offloaded bodies
 and merges them back into the record so downstream code can read the
 `toolConfig` / tool definitions uniformly.
 
-For document/image blocks with S3 sources (Converse `s3Location`), this
-module issues HeadObject to get byte length and, when the object is within
-the configured inline threshold, GetObject to populate content hash and
-optionally raw bytes.
+Attachment resolution for document/image blocks (Converse ``s3Location``)
+lives in ``shared/normalize/converse/s3.py`` — it's vendor-format-specific
+and rides on the shared aioboto3 dependency.
 
 All S3 calls use aioboto3 for native async I/O.
 """
@@ -24,7 +23,6 @@ from functools import cache
 from typing import Any
 
 import aioboto3
-from slashid_ai_forwarder_core.content_utils import SNAP_TOLERANCE
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -122,67 +120,6 @@ async def fetch_offloaded_body(
         log.warning("failed to fetch offloaded body %s: %s", s3_uri, e)
         return None
     return None  # unreachable but ty wants the explicit return
-
-
-async def _resolve_s3_attachment(source: dict[str, Any], *, max_content_size: int) -> None:
-    """HEAD + optional GET a Converse s3Location source block.
-
-    Stashes on the source dict:
-      `_resolved_byte_length`   — ContentLength from HeadObject
-      `_resolved_content_type`  — ContentType from HeadObject (media_type fallback)
-      `_resolved_bytes`         — full body when size == 0 or size <= max_content_size bytes
-      `_resolved_head_bytes`    — first chunk when file exceeds max_content_size (no hash)
-      `_resolved_tail_bytes`    — last chunk when file exceeds max_content_size (no hash)
-
-    When the file is larger than max_content_size, two Range GETs fetch
-    enough bytes for _truncate_middle to produce a well-formed snippet.
-    No content_hash is set for partial fetches since the bytes are incomplete.
-
-    All keys are read by `_accessed_files` in events.py.
-    """
-    from botocore.exceptions import ClientError
-
-    # Converse shape: source.s3Location.uri  — Bedrock Playground: source.s3Uri
-    s3_loc = source.get("s3Location") or {}
-    uri = s3_loc.get("uri") or source.get("s3Uri") or ""
-    parsed = _parse_s3_uri(uri)
-    if parsed is None:
-        return
-    bucket, key = parsed
-
-    async with _get_session().client("s3") as s3:
-        try:
-            head = await s3.head_object(Bucket=bucket, Key=key)
-        except ClientError:
-            return
-        size = int(head["ContentLength"])
-        source["_resolved_byte_length"] = size
-        if ct := head.get("ContentType"):
-            source["_resolved_content_type"] = ct
-
-        if size == 0:
-            source["_resolved_bytes"] = b""
-        elif size <= max_content_size:
-            try:
-                resp = await s3.get_object(Bucket=bucket, Key=key)
-                source["_resolved_bytes"] = await resp["Body"].read()
-            except ClientError:
-                pass
-        else:
-            # Fetch head and tail chunks — enough for _truncate_middle with snap tolerance.
-            chunk = max_content_size // 2 + SNAP_TOLERANCE
-            try:
-                head_resp = await s3.get_object(
-                    Bucket=bucket, Key=key, Range=f"bytes=0-{chunk - 1}"
-                )
-                source["_resolved_head_bytes"] = await head_resp["Body"].read()
-                tail_start = max(size - chunk, 0)
-                tail_resp = await s3.get_object(
-                    Bucket=bucket, Key=key, Range=f"bytes={tail_start}-{size - 1}"
-                )
-                source["_resolved_tail_bytes"] = await tail_resp["Body"].read()
-            except ClientError:
-                pass
 
 
 async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:

@@ -15,6 +15,7 @@ import json
 import logging
 from typing import Any, cast
 
+from ...config_base import BaseConfig
 from ..normalized.tools import build_tools_declared
 from ..normalized.types import (
     NormalizedContent,
@@ -71,16 +72,25 @@ def extract_stream_usage(events: list[AnthropicStreamEvent]) -> AnthropicUsage:
     return out
 
 
-def message_to_normalized_invocation(
+async def message_to_normalized_invocation(
     request: AnthropicRequestBody,
     response: AnthropicMessage,
+    *,
+    config: BaseConfig,
 ) -> NormalizedInvocation:
     """Non-streaming Anthropic invocation → canonical NormalizedInvocation.
 
     Direct walks on both sides (no composition through Converse) —
     Anthropic-side fields (cache_control markers, is_error on tool_result
     blocks, thinking signatures) preserved without a lossy hop.
+
+    ``async def`` for dispatch uniformity with Converse (which awaits S3
+    fetches); this function has no actual await points today.
+    ``config`` is accepted for signature parity and ignored — Anthropic
+    vendor formats don't carry attachment shapes today (a future
+    ``input_image`` walker would consume it).
     """
+    del config  # unused today; parity with Converse
     return NormalizedInvocation(
         input=_request_to_input(request),
         output=_message_to_output(response),
@@ -209,7 +219,7 @@ def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:
 # --------------------------------------------------------------------------
 
 
-def anthropic_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: ignore[type-arg]
+async def anthropic_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: ignore[type-arg]
     """Convenience adapter: MIL/Anthropic-dict record → NormalizedInvocation.
 
     Best-effort on each side — validation failure falls back to the empty
@@ -220,6 +230,9 @@ def anthropic_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type:
     Non-streaming (``AnthropicMessage``) shape only — streaming records
     should route through ``mil_normalize.normalize_record`` in the Bedrock
     forwarder.
+
+    ``async def`` for dispatch uniformity with the Converse sibling
+    ``converse_dict_to_normalized``; no actual awaits inside today.
     """
     from pydantic import TypeAdapter, ValidationError
 
@@ -248,16 +261,21 @@ def anthropic_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type:
     return NormalizedInvocation(input=input_side, output=output_side)
 
 
-def stream_to_normalized_invocation(
+async def stream_to_normalized_invocation(
     request: AnthropicRequestBody,
     response: list[AnthropicStreamEvent],
+    *,
+    config: BaseConfig,
 ) -> NormalizedInvocation:
     """Streaming Anthropic invocation → canonical.
 
     Same shape as ``message_to_normalized_invocation``; the output side
     runs a state-machine over the SSE event stream, producing
     NormalizedContent blocks directly with no Converse hop.
+
+    See ``message_to_normalized_invocation`` for the async / kwargs note.
     """
+    del config  # unused today; parity with Converse
     return NormalizedInvocation(
         input=_request_to_input(request),
         output=_stream_to_output(response),
