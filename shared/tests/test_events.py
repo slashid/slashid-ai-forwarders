@@ -824,6 +824,50 @@ def test_aws_identity_details_round_trip() -> None:
     assert ident.model_dump(mode="json", exclude_none=True) == raw
 
 
+def test_ai_invocation_observed_v1_identity_details_discriminator() -> None:
+    """AIInvocationObservedV1.identity_details is a discriminated (single-variant
+    for now) union — validating a dict without `kind` fails, ensuring downstream
+    replay/fixture tooling stays honest about the tag.
+
+    Vertex's future GCPIdentityDetails joins the union in Phase 3.1; this test
+    locks in that the discriminator is already wired here."""
+    from pydantic import ValidationError
+
+    from slashid_ai_forwarder_core.events import (
+        AIInvocationObservedV1,
+        AIModel,
+        AWSIdentityDetails,
+    )
+
+    # Constructed via the pydantic model — kind defaults from AWSIdentityDetails.
+    event = AIInvocationObservedV1(
+        request_id="r",
+        timestamp="t",
+        identity_details=AWSIdentityDetails(principal_arn="arn:x"),
+        model=AIModel(id="m"),
+        parsed_as="anthropic-message",
+    )
+    assert event.identity_details.kind == "aws"
+
+    # Wire-form model_validate REQUIRES the tag — the discriminator won't
+    # infer it. A serialized dict without "kind" fails.
+    raw_no_kind: dict[str, Any] = {
+        "request_id": "r",
+        "timestamp": "t",
+        "identity_details": {"principal_arn": "arn:x"},
+        "model": {"id": "m"},
+        "parsed_as": "anthropic-message",
+    }
+    with pytest.raises(ValidationError):
+        AIInvocationObservedV1.model_validate(raw_no_kind)
+
+    # With the tag, validate succeeds.
+    raw_with_kind = {**raw_no_kind, "identity_details": {"kind": "aws", "principal_arn": "arn:x"}}
+    reparsed = AIInvocationObservedV1.model_validate(raw_with_kind)
+    assert isinstance(reparsed.identity_details, AWSIdentityDetails)
+    assert reparsed.identity_details.principal_arn == "arn:x"
+
+
 async def test_content_fields_default_to_hash_only() -> None:
     """include_raw_content=False (default): hash + mime + bytes, no text."""
     body = {"messages": [{"role": "user", "content": [{"text": "secret prompt"}]}]}

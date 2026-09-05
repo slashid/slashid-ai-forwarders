@@ -13,7 +13,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -223,7 +223,13 @@ class AIInvocationObservedV1(_WireModel):
 
     request_id: str
     timestamp: str
-    identity_details: AWSIdentityDetails
+    # Discriminated union prepared for the future GCP sibling — today only
+    # AWSIdentityDetails, so it's a single-variant union. Adding
+    # `GCPIdentityDetails` in the Vertex PR is a one-line widening.
+    identity_details: Annotated[
+        AWSIdentityDetails,
+        Field(discriminator="kind"),
+    ]
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     # Name of the vendor format the record's outputBodyJson matched — set
