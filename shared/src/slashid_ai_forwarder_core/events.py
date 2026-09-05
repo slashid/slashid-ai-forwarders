@@ -13,7 +13,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -158,10 +158,18 @@ class AIToolServer(_WireModel):
 class AWSIdentityDetails(_WireModel):
     """AWS-source shape of AIInvocationObservedV1.identity_details.
 
-    `principal_arn` identifies the caller; `access_key_id` enables the
+    ``principal_arn`` identifies the caller; ``access_key_id`` enables the
     server's AssumeRole-chain unrolling when set.
+
+    ``kind`` is the discriminator field for the future ``identity_details``
+    union (``AWSIdentityDetails | GCPIdentityDetails``). Defaults to
+    ``"aws"``; every wire-emitted AWS event carries the tag from this
+    version onwards. Downstream consumers that ``model_validate`` events
+    off disk must include ``"kind": "aws"`` in serialized identity_details
+    dicts.
     """
 
+    kind: Literal["aws"] = "aws"
     principal_arn: str
     access_key_id: str | None = None
 
@@ -215,7 +223,13 @@ class AIInvocationObservedV1(_WireModel):
 
     request_id: str
     timestamp: str
-    identity_details: AWSIdentityDetails
+    # Discriminated union prepared for the future GCP sibling — today only
+    # AWSIdentityDetails, so it's a single-variant union. Adding
+    # `GCPIdentityDetails` in the Vertex PR is a one-line widening.
+    identity_details: Annotated[
+        AWSIdentityDetails,
+        Field(discriminator="kind"),
+    ]
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     # Name of the vendor format the record's outputBodyJson matched — set
