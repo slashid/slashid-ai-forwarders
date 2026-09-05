@@ -1,4 +1,12 @@
-"""Unit tests for the pure transformation logic in `events`."""
+"""Unit tests for the pure transformation logic in `events`.
+
+Envelope-derivation tests (identity extraction, model catalog lookup,
+stop-reason coercion, request-id drop, timestamp normalisation) live in
+``bedrock/tests/test_event_envelope.py`` — they exercise the Bedrock
+vendor half. Here we test only the pure
+``build_event_from_normalized`` shared builder, feeding it an ad-hoc
+``EventEnvelope`` when a record-driven fixture is convenient.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +19,12 @@ import pytest
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
+    AIInvocationTokens,
+    AIModel,
+    AWSIdentityDetails,
+    EventEnvelope,
     _strip_empty_top,
-    build_event,
+    build_event_from_normalized,
     parse_tool_name,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
@@ -47,6 +59,12 @@ async def test_parse_tool_name(name: str, expected: tuple[str, str, str]) -> Non
 
 
 def _mil_record(**overrides: Any) -> dict[str, Any]:
+    """Bedrock-shaped fixture used only to feed ``_envelope`` below.
+
+    Kept here (rather than imported from bedrock/) so shared tests stay
+    self-contained: the pure shared builder should work off any
+    ``EventEnvelope`` regardless of how it was constructed.
+    """
     base: dict[str, Any] = {
         "requestId": "req-1",
         "timestamp": "2026-06-01T12:00:00Z",
@@ -63,12 +81,53 @@ def _mil_record(**overrides: Any) -> dict[str, Any]:
     return base
 
 
+def _envelope(record: dict[str, Any]) -> EventEnvelope:
+    """Ad-hoc ``EventEnvelope`` built from a Bedrock-shaped fixture.
+
+    Test-side duplicate of bedrock/event_envelope.py's extraction so the
+    shared suite has no dependency on the bedrock package. Fewer branches
+    than the real thing: assumes ``requestId`` and ``identity.arn`` are
+    both present — record-drop-on-missing-* behaviour is tested in
+    bedrock/tests/test_event_envelope.py against the real function.
+    """
+    ident = record.get("identity") or {}
+    principal = ident.get("resolved_arn") or ident.get("arn") or ""
+    identity = AWSIdentityDetails(
+        principal_arn=principal,
+        access_key_id=ident.get("accessKeyId") or None,
+    )
+    inp = record.get("input") or {}
+    out = record.get("output") or {}
+    raw_model_id = str(record.get("modelId") or "")
+
+    obody = out.get("outputBodyJson")
+    stop_raw = obody.get("stopReason") if isinstance(obody, dict) else None
+    stop_reason = stop_raw if stop_raw in {"end_turn", "tool_use"} else None
+
+    return EventEnvelope(
+        request_id=str(record["requestId"]),
+        timestamp=record.get("timestamp", "2026-06-01T12:00:00+00:00"),
+        identity_details=identity,
+        model=AIModel(id=raw_model_id, raw_model_id=raw_model_id or None),
+        tokens=AIInvocationTokens(
+            input=int(inp.get("inputTokenCount") or 0),
+            output=int(out.get("outputTokenCount") or 0),
+            cache_read=int(inp.get("cacheReadInputTokenCount") or 0),
+            cache_write=int(inp.get("cacheWriteInputTokenCount") or 0),
+            reasoning=0,
+        ),
+        parsed_as=record.get("_parsed_as", "unknown"),
+        stop_reason=stop_reason,
+    )
+
+
 async def test_build_event_minimal() -> None:
     record = _mil_record()
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert isinstance(event, AIInvocationObservedV1)
     assert event.request_id == "req-1"
     assert event.identity_details.principal_arn == "arn:aws:iam::123456789012:user/alice"
@@ -85,51 +144,6 @@ async def test_build_event_minimal() -> None:
     assert event.used_tools is None
     assert event.available_agents is None
     assert event.used_agent_ids is None
-
-
-async def test_build_event_skips_records_without_request_id() -> None:
-    record = _mil_record()
-    del record["requestId"]
-    assert (
-        await build_event(
-            await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-        )
-        is None
-    )
-
-
-async def test_build_event_omits_access_key_when_missing() -> None:
-    record = _mil_record(identity={"arn": "arn:aws:iam::123:user/bob"})
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    assert event.identity_details.principal_arn == "arn:aws:iam::123:user/bob"
-    assert event.identity_details.access_key_id is None
-
-
-async def test_build_event_skips_record_without_identity() -> None:
-    """Regression for R1: a record with no usable principal ARN should drop,
-    not ship as `identity_details.principal_arn = ""`."""
-    record = _mil_record()
-    record["identity"] = {}  # no arn, no resolved_arn
-    assert (
-        await build_event(
-            await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-        )
-        is None
-    )
-
-
-async def test_build_event_skips_record_with_no_identity_block() -> None:
-    record = _mil_record()
-    del record["identity"]
-    assert (
-        await build_event(
-            await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-        )
-        is None
-    )
 
 
 async def test_build_event_with_tools_and_used_ids() -> None:
@@ -171,10 +185,11 @@ async def test_build_event_with_tools_and_used_ids() -> None:
             },
         },
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.available_tool_servers is not None
     assert event.available_tools is not None
 
@@ -264,10 +279,11 @@ async def test_used_tools_converse_error_status_maps_to_is_error() -> None:
             },
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is not None
     assert len(event.used_tools) == 1
     assert event.used_tools[0].is_error is True
@@ -295,8 +311,9 @@ async def test_used_tools_anthropic_shape_is_error_flag() -> None:
             },
         ],
     )
-    event = await build_event(await anthropic_dict_to_normalized(record), record, config=_config())
-    assert event is not None
+    event = await build_event_from_normalized(
+        await anthropic_dict_to_normalized(record), _envelope(record), config=_config()
+    )
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is True
 
@@ -334,10 +351,11 @@ async def test_used_tools_extracts_trace_id_from_converse_json_block() -> None:
             },
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
     assert event.used_tools[0].span_id == "1" * 16
@@ -373,10 +391,11 @@ async def test_used_tools_extracts_trace_id_from_stringified_structured_content(
             },
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
     assert event.used_tools[0].span_id == "2" * 16
@@ -406,8 +425,9 @@ async def test_used_tools_extracts_trace_id_from_anthropic_string_content() -> N
             },
         ],
     )
-    event = await build_event(await anthropic_dict_to_normalized(record), record, config=_config())
-    assert event is not None
+    event = await build_event_from_normalized(
+        await anthropic_dict_to_normalized(record), _envelope(record), config=_config()
+    )
     assert event.used_tools is not None
     assert event.used_tools[0].trace_id == trace_id
     assert event.used_tools[0].span_id == "3" * 16
@@ -455,18 +475,18 @@ async def test_used_tools_propagates_tool_use_id_across_vendors() -> None:
             },
         ],
     )
-    a_event = await build_event(
+    a_event = await build_event_from_normalized(
         await anthropic_dict_to_normalized(anthropic_record),
-        anthropic_record,
+        _envelope(anthropic_record),
         config=_config(),
     )
-    c_event = await build_event(
+    c_event = await build_event_from_normalized(
         await converse_dict_to_normalized(converse_record, config=_config()),
-        converse_record,
+        _envelope(converse_record),
         config=_config(),
     )
-    assert a_event is not None and a_event.used_tools is not None
-    assert c_event is not None and c_event.used_tools is not None
+    assert a_event.used_tools is not None
+    assert c_event.used_tools is not None
     assert a_event.used_tools[0].tool_use_id == "toolu_anth"
     assert c_event.used_tools[0].tool_use_id == "tu_conv"
 
@@ -500,8 +520,9 @@ async def test_used_tools_extracts_otel_from_text_marker_on_error() -> None:
             },
         ],
     )
-    event = await build_event(await anthropic_dict_to_normalized(record), record, config=_config())
-    assert event is not None
+    event = await build_event_from_normalized(
+        await anthropic_dict_to_normalized(record), _envelope(record), config=_config()
+    )
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is True
     assert event.used_tools[0].trace_id == trace_id
@@ -529,10 +550,11 @@ async def test_used_tools_missing_status_defaults_to_success() -> None:
             },
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is False
 
@@ -553,8 +575,9 @@ async def test_used_tools_anthropic_missing_is_error_defaults_to_success() -> No
             },
         ],
     )
-    event = await build_event(await anthropic_dict_to_normalized(record), record, config=_config())
-    assert event is not None
+    event = await build_event_from_normalized(
+        await anthropic_dict_to_normalized(record), _envelope(record), config=_config()
+    )
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is False
 
@@ -594,10 +617,11 @@ async def test_used_tools_defers_output_tool_use_without_result() -> None:
             {"toolUse": {"toolUseId": "tu_new", "name": "Bash", "input": {}}},
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is not None
     # Only the pair-complete entry emits. tu_new (output-only) waits for its
     # result on a future invocation event.
@@ -625,10 +649,11 @@ async def test_used_tools_skips_result_without_matching_tool_use() -> None:
             },
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is None
 
 
@@ -658,10 +683,11 @@ async def test_used_tools_ignores_prior_tool_results_before_last_assistant() -> 
             {"role": "user", "content": [{"text": "continue"}]},
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is None
 
 
@@ -696,10 +722,11 @@ async def test_used_tools_wire_form_matches_new_schema() -> None:
             },
         ],
     )
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     assert event.used_tools is not None
     tool_id = event.used_tools[0].tool_id
     wire = event.model_dump(mode="json", exclude_none=True)
@@ -740,13 +767,12 @@ async def test_tool_id_differs_for_different_schema() -> None:
             "properties": {"url": {"type": "string"}, "depth": {"type": "integer"}},
         }
     )
-    ev1 = await build_event(
-        await converse_dict_to_normalized(r1, config=_config()), r1, config=_config()
+    ev1 = await build_event_from_normalized(
+        await converse_dict_to_normalized(r1, config=_config()), _envelope(r1), config=_config()
     )
-    ev2 = await build_event(
-        await converse_dict_to_normalized(r2, config=_config()), r2, config=_config()
+    ev2 = await build_event_from_normalized(
+        await converse_dict_to_normalized(r2, config=_config()), _envelope(r2), config=_config()
     )
-    assert ev1 is not None and ev2 is not None
     assert ev1.available_tools is not None and ev2.available_tools is not None
     assert ev1.available_tools[0].id != ev2.available_tools[0].id
 
@@ -767,85 +793,19 @@ async def test_tool_id_differs_for_different_description() -> None:
 
     r1 = _record_with_desc("Run a shell command")
     r2 = _record_with_desc("Execute arbitrary shell commands with elevated privileges")
-    ev1 = await build_event(
-        await converse_dict_to_normalized(r1, config=_config()), r1, config=_config()
+    ev1 = await build_event_from_normalized(
+        await converse_dict_to_normalized(r1, config=_config()), _envelope(r1), config=_config()
     )
-    ev2 = await build_event(
-        await converse_dict_to_normalized(r2, config=_config()), r2, config=_config()
+    ev2 = await build_event_from_normalized(
+        await converse_dict_to_normalized(r2, config=_config()), _envelope(r2), config=_config()
     )
-    assert ev1 is not None and ev2 is not None
     assert ev1.available_tools is not None and ev2.available_tools is not None
     assert ev1.available_tools[0].id != ev2.available_tools[0].id
-
-
-async def test_build_event_populates_raw_model_id() -> None:
-    # No region in base record → no catalog lookup → id falls back to raw
-    record = _mil_record()
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    assert event.model.id == "us.anthropic.claude-sonnet-4-6"
-    assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
-    assert event.model.name is None
-    assert event.model.provider is None
-
-
-async def test_build_event_uses_arn_as_id_when_raw_is_arn() -> None:
-    arn = "arn:aws:bedrock:us-east-2:851725497009:inference-profile/us.anthropic.claude-sonnet-4-6"
-    record = _mil_record(modelId=arn, region="us-east-2")
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    # Raw is already an ARN → used directly, no catalog needed
-    assert event.model.id == arn
-    assert event.model.raw_model_id == arn
-
-
-async def test_build_event_enriches_model_from_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
-    from slashid_ai_forwarder_core import model_catalog
-
-    monkeypatch.setattr(
-        model_catalog,
-        "_catalogs",
-        {
-            "us-east-2": {
-                "anthropic.claude-sonnet-4-6": model_catalog.ModelInfo(
-                    arn="arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6",
-                    name="Claude Sonnet 4.6",
-                    provider="Anthropic",
-                )
-            }
-        },
-    )
-    record = _mil_record(modelId="us.anthropic.claude-sonnet-4-6", region="us-east-2")
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    assert (
-        event.model.id == "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-6"
-    )
-    assert event.model.name == "Claude Sonnet 4.6"
-    assert event.model.provider == "Anthropic"
-    assert event.model.raw_model_id == "us.anthropic.claude-sonnet-4-6"
-
-
-async def test_unknown_stop_reason_falls_back_to_unknown() -> None:
-    record = _mil_record(output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "wat"}})
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    assert event.stop_reason == "unknown"
 
 
 async def test_invalid_stop_reason_literal_rejected_on_construction() -> None:
     """Pydantic Literal type rejects values outside the AIStopReason enum."""
     from pydantic import ValidationError
-
-    from slashid_ai_forwarder_core.events import AIInvocationObservedV1, AIModel, AWSIdentityDetails
 
     with pytest.raises(ValidationError):
         AIInvocationObservedV1(
@@ -864,8 +824,6 @@ def test_aws_identity_details_kind_defaults_to_aws() -> None:
     Construction without an explicit `kind` gets the default "aws". Every
     wire-emitted Bedrock event carries `"kind": "aws"` after this change.
     """
-    from slashid_ai_forwarder_core.events import AWSIdentityDetails
-
     ident = AWSIdentityDetails(principal_arn="arn:aws:iam::1:user/x")
     assert ident.kind == "aws"
     dumped = ident.model_dump(mode="json", exclude_none=True)
@@ -877,8 +835,6 @@ def test_aws_identity_details_kind_literal_enforced() -> None:
     discriminated union from Bedrock-side typos."""
     from pydantic import ValidationError
 
-    from slashid_ai_forwarder_core.events import AWSIdentityDetails
-
     with pytest.raises(ValidationError):
         AWSIdentityDetails(
             kind="gcp",  # ty: ignore[invalid-argument-type]
@@ -888,8 +844,6 @@ def test_aws_identity_details_kind_literal_enforced() -> None:
 
 def test_aws_identity_details_round_trip() -> None:
     """model_validate → model_dump is lossless; kind field survives."""
-    from slashid_ai_forwarder_core.events import AWSIdentityDetails
-
     raw = {"kind": "aws", "principal_arn": "arn:aws:iam::1:user/x", "access_key_id": "AKIA..."}
     ident = AWSIdentityDetails.model_validate(raw)
     assert ident.model_dump(mode="json", exclude_none=True) == raw
@@ -903,12 +857,6 @@ def test_ai_invocation_observed_v1_identity_details_discriminator() -> None:
     Vertex's future GCPIdentityDetails joins the union in Phase 3.1; this test
     locks in that the discriminator is already wired here."""
     from pydantic import ValidationError
-
-    from slashid_ai_forwarder_core.events import (
-        AIInvocationObservedV1,
-        AIModel,
-        AWSIdentityDetails,
-    )
 
     # Constructed via the pydantic model — kind defaults from AWSIdentityDetails.
     event = AIInvocationObservedV1(
@@ -939,6 +887,31 @@ def test_ai_invocation_observed_v1_identity_details_discriminator() -> None:
     assert reparsed.identity_details.principal_arn == "arn:x"
 
 
+def test_event_envelope_identity_details_discriminator() -> None:
+    """EventEnvelope carries the same discriminated identity_details union as
+    AIInvocationObservedV1 — both widen together in Phase 3.1."""
+    from pydantic import ValidationError
+
+    env = EventEnvelope(
+        request_id="r",
+        timestamp="t",
+        identity_details=AWSIdentityDetails(principal_arn="arn:x"),
+        model=AIModel(id="m"),
+        parsed_as="anthropic-message",
+    )
+    assert env.identity_details.kind == "aws"
+
+    raw_no_kind: dict[str, Any] = {
+        "request_id": "r",
+        "timestamp": "t",
+        "identity_details": {"principal_arn": "arn:x"},
+        "model": {"id": "m"},
+        "parsed_as": "anthropic-message",
+    }
+    with pytest.raises(ValidationError):
+        EventEnvelope.model_validate(raw_no_kind)
+
+
 async def test_content_fields_default_to_hash_only() -> None:
     """include_raw_content=False (default): hash + mime + bytes, no text."""
     body = {"messages": [{"role": "user", "content": [{"text": "secret prompt"}]}]}
@@ -947,11 +920,10 @@ async def test_content_fields_default_to_hash_only() -> None:
         output={"outputTokenCount": 1, "outputBodyJson": {"stopReason": "end_turn"}},
     )
     normalized = await converse_dict_to_normalized(record, config=_config())
-    event = await build_event(normalized, record, config=_config())
-    assert event is not None
+    event = await build_event_from_normalized(normalized, _envelope(record), config=_config())
     assert event.input is not None
 
-    # Hash the canonical input serialization — same as build_event does
+    # Hash the canonical input serialization — same as build_event_from_normalized does
     # (empty top-level containers stripped for pre-drive-by hash stability).
     canonical_input = json.dumps(
         _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
@@ -976,12 +948,14 @@ async def test_content_fields_include_raw_when_opted_in() -> None:
         output={"outputTokenCount": 1, "outputBodyJson": {"stopReason": "end_turn"}},
     )
     normalized = await converse_dict_to_normalized(record, config=_config())
-    event = await build_event(normalized, record, config=_config(include_raw_content=True))
-    assert event is not None
+    event = await build_event_from_normalized(
+        normalized, _envelope(record), config=_config(include_raw_content=True)
+    )
     assert event.input is not None
     assert event.input.redacted_text is not None
     # Canonical serialization is deterministic; compare via re-serialization
-    # (matches build_event: empty top-level containers stripped for hash stability).
+    # (matches build_event_from_normalized: empty top-level containers stripped
+    # for hash stability).
     canonical = json.dumps(
         _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
         sort_keys=True,
@@ -993,8 +967,7 @@ async def test_content_fields_include_raw_when_opted_in() -> None:
 async def test_content_field_none_when_body_absent() -> None:
     record = _mil_record(input={"inputTokenCount": 1}, output={"outputTokenCount": 1})
     normalized = await converse_dict_to_normalized(record, config=_config())
-    event = await build_event(normalized, record, config=_config())
-    assert event is not None
+    event = await build_event_from_normalized(normalized, _envelope(record), config=_config())
     # Input side: normalized.input is empty → model_dump produces {} → _build_content returns None.
     assert event.input is None
     # Output side: normalized.output.stop_reason defaults to "unknown" → dumps to
@@ -1005,10 +978,11 @@ async def test_content_field_none_when_body_absent() -> None:
 
 async def test_build_event_wire_form() -> None:
     record = _mil_record()
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        _envelope(record),
+        config=_config(),
     )
-    assert event is not None
     wire = event.model_dump(mode="json", exclude_none=True)
     # Spec dropped these; they must not show up in the JSON we send.
     assert "org_id" not in wire
@@ -1046,38 +1020,14 @@ async def test_build_event_truncates_redacted_text() -> None:
             "inputBodyJson": {"messages": [{"role": "user", "content": [{"text": "x" * 200}]}]},
         }
     )
-    event = await build_event(
+    event = await build_event_from_normalized(
         await converse_dict_to_normalized(
             record, config=_config(include_raw_content=True, max_content_size=20)
         ),
-        record,
+        _envelope(record),
         config=_config(include_raw_content=True, max_content_size=20),
     )
-    assert event is not None
     assert event.input is not None
     assert event.input.redacted_text is not None
     assert len(event.input.redacted_text) <= 20
     assert "…" in event.input.redacted_text
-
-
-async def test_build_event_populates_parsed_as_from_record() -> None:
-    # normalize_record sets record["_parsed_as"]; build_event surfaces
-    # it on the wire model.
-    record = _mil_record()
-    record["_parsed_as"] = "anthropic-message"
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    assert event.parsed_as == "anthropic-message"
-
-
-async def test_build_event_parsed_as_defaults_to_unknown() -> None:
-    # If _parsed_as is missing (bypass path — defensive; not exercised in
-    # normal handler flow), build_event falls back to "unknown".
-    record = _mil_record()  # no _parsed_as set
-    event = await build_event(
-        await converse_dict_to_normalized(record, config=_config()), record, config=_config()
-    )
-    assert event is not None
-    assert event.parsed_as == "unknown"

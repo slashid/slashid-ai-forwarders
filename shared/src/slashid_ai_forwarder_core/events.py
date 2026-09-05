@@ -1,10 +1,13 @@
-"""MIL record → AIInvocationObservedV1 transformation.
+"""NormalizedInvocation + EventEnvelope → AIInvocationObservedV1 transformation.
 
-Pure logic: no I/O. Builds AIInvocationObservedV1 envelopes for
-POST /nhi/events/ai-invocations. Models mirror the SlashID OpenAPI
-schemas (see `~/slashid/ng-evangelion/spec/openapi.yaml`, components
-AIInvocationObservedV1 et al). `model_dump(mode="json", exclude_none=True)`
-produces wire-compatible payloads.
+Pure logic: no I/O, no vendor-specific record parsing. Vendor forwarders
+(bedrock's ``event_envelope.bedrock_envelope``, future Vertex equivalent)
+extract an ``EventEnvelope`` from their record shape and pass it in
+alongside the canonical ``NormalizedInvocation``. Models mirror the
+SlashID OpenAPI schemas (see ``~/slashid/ng-evangelion/spec/openapi.yaml``,
+components ``AIInvocationObservedV1`` et al).
+``model_dump(mode="json", exclude_none=True)`` produces wire-compatible
+payloads.
 """
 
 from __future__ import annotations
@@ -12,7 +15,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -252,54 +254,36 @@ class AIInvocationObservedV1(_WireModel):
     accessed_files: list[AIAccessedFile] | None = None
 
 
-# --- record parsing ---------------------------------------------------------
+class EventEnvelope(_WireModel):
+    """Vendor-neutral inputs to ``build_event_from_normalized``.
 
-# Bedrock / Anthropic stop reasons map 1:1 onto the AIStopReason enum once we
-# fall back to "unknown" for anything not in the union.
-_STOP_REASON_VALUES: frozenset[str] = frozenset(
-    [
-        "end_turn",
-        "max_tokens",
-        "stop_sequence",
-        "tool_use",
-        "pause_turn",
-        "refusal",
-        "guardrail_intervened",
-        "content_filtered",
-        "malformed_model_output",
-        "malformed_tool_use",
-        "model_context_window_exceeded",
-        "unknown",
-    ]
-)
+    Every field maps 1:1 onto a top-level ``AIInvocationObservedV1``
+    field the record-derived envelope owns (as opposed to
+    normalized-conversation-derived fields like ``available_tools``,
+    ``used_tools``, ``input``/``output``, ``accessed_files``, which stay
+    with the pure shared builder). Vendor-specific envelope constructors
+    (Bedrock's ``bedrock_envelope``, Vertex's future equivalent) return
+    ``None`` on drop conditions and populate an ``EventEnvelope``
+    otherwise; the shared builder never has to touch a raw record.
 
-
-def _ts(record: dict[str, Any]) -> str:
-    raw = record.get("timestamp") or record.get("eventTime") or ""
-    if not raw:
-        return datetime.now(tz=UTC).isoformat()
-    if isinstance(raw, str) and raw.endswith("Z"):
-        return raw[:-1] + "+00:00"
-    return str(raw)
-
-
-def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
-    """Build identity_details from MIL's `identity` block.
-
-    MIL gives us the assumed-role ARN directly; we forward it raw and let
-    the server-side AssumeRole unroller resolve it to a human IAM user via
-    `access_key_id` when present.
-
-    Returns None when neither `arn` nor `resolved_arn` is set — callers
-    should drop the event rather than ship `principal_arn = ""` and let
-    the server reject (or worse, accept) bad-data placeholders.
+    ``identity_details`` is a single-variant discriminated union today
+    (AWSIdentityDetails only) — matching ``AIInvocationObservedV1``.
+    Vertex adds ``GCPIdentityDetails`` in Phase 3.1, widening both.
     """
-    ident = record.get("identity") or {}
-    principal = ident.get("resolved_arn") or ident.get("arn") or ""
-    if not principal:
-        return None
-    access_key = ident.get("accessKeyId") or None
-    return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
+
+    request_id: str
+    timestamp: str
+    identity_details: Annotated[
+        AWSIdentityDetails,
+        Field(discriminator="kind"),
+    ]
+    model: AIModel
+    tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
+    parsed_as: str
+    stop_reason: AIStopReason | None = None
+
+
+# --- record parsing ---------------------------------------------------------
 
 
 def _strip_empty_top(d: dict[str, Any]) -> dict[str, Any]:
@@ -342,21 +326,6 @@ def _build_content(
         byte_length=len(serialized),
         redacted_text=redacted_text,
     )
-
-
-def _stop_reason(record: dict[str, Any]) -> AIStopReason | None:
-    obody = (record.get("output") or {}).get("outputBodyJson")
-    # Non-Anthropic streams reach us as raw lists (see mil_normalize.py — we
-    # only normalize shapes we own). Skip cleanly instead of crashing on .get().
-    if not isinstance(obody, dict):
-        return None
-    raw = obody.get("stopReason")
-    if not isinstance(raw, str) or not raw:
-        return None
-    if raw in _STOP_REASON_VALUES:
-        # ty/pydantic narrows the union for us once `raw` is in the known set.
-        return raw  # type: ignore[return-value]
-    return "unknown"
 
 
 def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
@@ -457,81 +426,42 @@ def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
     return used
 
 
-async def build_event(
+async def build_event_from_normalized(
     normalized: NormalizedInvocation,
-    record: dict[str, Any],
+    envelope: EventEnvelope,
     *,
     config: BaseConfig,
-    model_region: str | None = None,
-) -> AIInvocationObservedV1 | None:
-    """Build the AIInvocationObservedV1 for a single MIL record.
+) -> AIInvocationObservedV1:
+    """Assemble an AIInvocationObservedV1 from a canonical invocation + envelope.
 
-    Returns None when the record lacks a `requestId` (body-offload S3
-    objects share the listing prefix in some MIL layouts; they appear as
-    pseudo-records with no identifying metadata).
+    Pure: reads only from ``normalized`` (canonical conversation shape)
+    and ``envelope`` (vendor-neutral top-level metadata). No record
+    access. Never returns ``None`` — record-level drop decisions
+    (missing requestId, missing identity) live in the vendor envelope
+    constructor; if the caller produced an ``EventEnvelope`` at all,
+    this always produces an event.
 
     ``config.include_raw_content`` defaults to off — by default we send
-    hash, mime, and byte length on ``input``/``output`` but no prompt text.
-    Flip via the SLASHID_INCLUDE_RAW_CONTENT env var (CFN parameter same
-    name). ``_build_content`` stays typed on primitives; we unpack the
-    config here at the boundary.
+    hash, mime, and byte length on ``input``/``output`` but no prompt
+    text. Flip via the SLASHID_INCLUDE_RAW_CONTENT env var (CFN
+    parameter same name). ``_build_content`` stays typed on primitives;
+    we unpack the config here at the boundary.
     """
-    if not record.get("requestId"):
-        return None
-
-    identity = _identity_details(record)
-    if identity is None:
-        # No usable principal ARN — server would reject identity_details
-        # anyway, and a placeholder would pollute the AI subgraph.
-        return None
-
     servers = normalized.input.tool_servers
     tools = normalized.input.tools_declared
     used = _used_tools(normalized)
 
-    inp = record.get("input") or {}
-    out = record.get("output") or {}
-    raw_model_id = str(record.get("modelId") or "")
-
-    region = model_region or str(record.get("region") or "")
-    model_info = None
-    if raw_model_id and region:
-        from .model_catalog import get_model_info
-
-        model_info = get_model_info(raw_model_id, region)
-
-    # model.id: use raw when it's already an ARN, else catalog ARN, else raw
-    model_id = (
-        raw_model_id
-        if raw_model_id.startswith("arn:")
-        else (model_info["arn"] if model_info else raw_model_id)
-    )
-
     return AIInvocationObservedV1(
-        request_id=str(record["requestId"]),
-        timestamp=_ts(record),
-        identity_details=identity,
-        model=AIModel(
-            id=model_id,
-            name=model_info["name"] if model_info else None,
-            provider=model_info["provider"] if model_info else None,
-            raw_model_id=raw_model_id or None,
-        ),
-        tokens=AIInvocationTokens(
-            input=int(inp.get("inputTokenCount") or 0),
-            output=int(out.get("outputTokenCount") or 0),
-            cache_read=int(inp.get("cacheReadInputTokenCount") or 0),
-            cache_write=int(inp.get("cacheWriteInputTokenCount") or 0),
-            reasoning=0,
-        ),
-        # ``_parsed_as`` is set by the envelope normalizer (bedrock's
-        # mil_normalize.normalize_record). Defensive fallback to "unknown"
-        # for code paths that skip normalization (none in production today).
-        parsed_as=record.get("_parsed_as", "unknown"),
+        request_id=envelope.request_id,
+        timestamp=envelope.timestamp,
+        identity_details=envelope.identity_details,
+        model=envelope.model,
+        tokens=envelope.tokens,
+        parsed_as=envelope.parsed_as,
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
-        stop_reason=_stop_reason(record),
+        stop_reason=envelope.stop_reason,
         input=_build_content(
             _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
             include_text=config.include_raw_content,

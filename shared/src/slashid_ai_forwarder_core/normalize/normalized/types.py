@@ -1,9 +1,9 @@
 """Canonical, vendor-neutral pydantic models for one AI invocation.
 
 Produced by each vendor's ``*_to_normalized_invocation(request, response)``
-translate; consumed by ``events.build_event`` (content hashing, tool-use
+translate; consumed by ``events.build_event_from_normalized`` (content hashing, tool-use
 extraction, log emission). The sub-model split (input vs output vs
-tokens) mirrors the wire event's shape and lets ``build_event`` hash each
+tokens) mirrors the wire event's shape and lets ``build_event_from_normalized`` hash each
 half independently via ``normalized.input.model_dump(...)`` /
 ``normalized.output.model_dump(...)``.
 
@@ -90,7 +90,7 @@ class NormalizedInvocation(_LenientModel):
     The sub-model split (``input`` / ``output`` / ``tokens``) mirrors the
     wire event's shape (``AIInvocationObservedV1.input`` /
     ``AIInvocationObservedV1.output`` / ``AIInvocationObservedV1.tokens``)
-    and lets ``build_event`` hash each half independently. An empty
+    and lets ``build_event_from_normalized`` hash each half independently. An empty
     ``NormalizedInvocation()`` is the ``parsed_as="unknown"`` fallthrough
     — every field defaults so no vendor is needed to construct one.
     """

@@ -32,12 +32,16 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
-from slashid_ai_forwarder_core.events import AIInvocationObservedV1, build_event
+from slashid_ai_forwarder_core.events import (
+    AIInvocationObservedV1,
+    build_event_from_normalized,
+)
 from slashid_ai_forwarder_core.normalize.finalize import finalize
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
 from slashid_ai_forwarder_core.sink import push_invocations
 
 from .config import Config, load_config
+from .event_envelope import bedrock_envelope
 from .mil_normalize import normalize_record
 from .mil_offload import resolve_offloaded_bodies
 
@@ -130,9 +134,15 @@ async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:
 
     prepared = await asyncio.gather(*(_prepare(r) for r in records))
 
-    built_or_none = await asyncio.gather(
-        *(build_event(normalized, record, config=config) for normalized, record in prepared)
-    )
+    async def _build(
+        normalized: NormalizedInvocation, record: dict[str, Any]
+    ) -> AIInvocationObservedV1 | None:
+        envelope = bedrock_envelope(record)
+        if envelope is None:
+            return None
+        return await build_event_from_normalized(normalized, envelope, config=config)
+
+    built_or_none = await asyncio.gather(*(_build(n, r) for n, r in prepared))
     events = [e for e in built_or_none if e is not None]
     for e in events:
         _log_event(e)
