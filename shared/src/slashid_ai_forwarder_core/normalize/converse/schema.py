@@ -158,15 +158,93 @@ class ConverseToolResultBlock(_StrictModel):
     toolResult: ConverseToolResultContent
 
 
+# --------------------------------------------------------------------------
+# Attachment source shapes — document and image blocks
+#
+# Bedrock Converse document/image source is either inline base64 ``bytes`` OR
+# an ``s3Location`` object with a ``uri``. ``_LenientModel`` so we tolerate
+# other unmodelled fields (e.g. ``s3Location`` has extra ownership fields we
+# don't consume).
+# --------------------------------------------------------------------------
+
+
+class ConverseS3Location(_LenientModel):
+    """The ``s3Location`` object inside a document/image source."""
+
+    uri: str
+
+
+class ConverseDocumentSource(_LenientModel):
+    """Source inside a document block — inline bytes or an ``s3Location``.
+
+    ``s3Uri`` is the Bedrock Playground variant of the S3 reference; the
+    canonical Converse shape uses ``s3Location.uri``. Both are modeled here
+    so the attachment resolver can accept either.
+    """
+
+    bytes: str | None = None  # base64-encoded wire
+    s3Location: ConverseS3Location | None = None
+    s3Uri: str | None = None
+
+
+class ConverseImageSource(_LenientModel):
+    """Source inside an image block — inline bytes or an ``s3Location``.
+
+    See ``ConverseDocumentSource`` for the ``s3Uri`` note.
+    """
+
+    bytes: str | None = None  # base64-encoded wire
+    s3Location: ConverseS3Location | None = None
+    s3Uri: str | None = None
+
+
+class ConverseDocumentContent(_LenientModel):
+    """Inner ``document`` payload — ``{name, format, source}``."""
+
+    name: str | None = None
+    format: str | None = None
+    source: ConverseDocumentSource
+
+
+class ConverseImageContent(_LenientModel):
+    """Inner ``image`` payload — ``{format, source}``."""
+
+    format: str | None = None
+    source: ConverseImageSource
+
+
+class ConverseDocumentBlock(_StrictModel):
+    """User-turn content block carrying a document attachment.
+
+    Key-tagged with ``document``; strict so smart-union prefers this variant
+    over ``ConverseUnknownBlock`` when the key IS present.
+    """
+
+    document: ConverseDocumentContent
+
+
+class ConverseImageBlock(_StrictModel):
+    """User-turn content block carrying an image attachment.
+
+    Key-tagged with ``image``; strict so smart-union prefers this variant
+    over ``ConverseUnknownBlock`` when the key IS present.
+    """
+
+    image: ConverseImageContent
+
+
 ConverseRequestContentBlock = (
     ConverseTextBlock
     | ConverseToolUseBlock
     | ConverseReasoningBlock
     | ConverseToolResultBlock
+    | ConverseDocumentBlock
+    | ConverseImageBlock
     | ConverseUnknownBlock
 )
 # Superset of response-side ConverseContentBlock, adding
-# ConverseToolResultBlock for user-turn content.
+# ConverseToolResultBlock for user-turn content plus
+# ConverseDocumentBlock / ConverseImageBlock for attachment references.
 
 
 class ConverseRequestMessage(_LenientModel):

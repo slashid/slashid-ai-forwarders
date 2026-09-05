@@ -267,3 +267,161 @@ def test_converse_tool_result_block_in_user_message() -> None:
     block = body.messages[0].content[0]
     assert isinstance(block, ConverseToolResultBlock)
     assert block.toolResult.toolUseId == "tooluse_1"
+
+
+def test_converse_document_block_inline_bytes() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import (
+        ConverseDocumentBlock,
+        ConverseRequestBody,
+    )
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "document": {
+                                "name": "notes.txt",
+                                "format": "txt",
+                                "source": {"bytes": "aGVsbG8="},
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+    block = body.messages[0].content[0]
+    assert isinstance(block, ConverseDocumentBlock)
+    assert block.document.name == "notes.txt"
+    assert block.document.format == "txt"
+    assert block.document.source.bytes == "aGVsbG8="
+    assert block.document.source.s3Location is None
+
+
+def test_converse_document_block_s3_source() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import (
+        ConverseDocumentBlock,
+        ConverseRequestBody,
+    )
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "document": {
+                                "name": "report.pdf",
+                                "format": "pdf",
+                                "source": {
+                                    "s3Location": {"uri": "s3://my-bucket/report.pdf"},
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+    block = body.messages[0].content[0]
+    assert isinstance(block, ConverseDocumentBlock)
+    assert block.document.source.bytes is None
+    assert block.document.source.s3Location is not None
+    assert block.document.source.s3Location.uri == "s3://my-bucket/report.pdf"
+
+
+def test_converse_image_block_inline_bytes() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import (
+        ConverseImageBlock,
+        ConverseRequestBody,
+    )
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "image": {
+                                "format": "png",
+                                "source": {"bytes": "iVBORw0KGgo="},
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+    block = body.messages[0].content[0]
+    assert isinstance(block, ConverseImageBlock)
+    assert block.image.format == "png"
+    assert block.image.source.bytes == "iVBORw0KGgo="
+
+
+def test_converse_image_block_s3_source() -> None:
+    from slashid_ai_forwarder_core.normalize.converse.schema import (
+        ConverseImageBlock,
+        ConverseRequestBody,
+    )
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "image": {
+                                "format": "jpeg",
+                                "source": {
+                                    "s3Location": {"uri": "s3://my-bucket/photo.jpg"},
+                                },
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+    )
+    block = body.messages[0].content[0]
+    assert isinstance(block, ConverseImageBlock)
+    assert block.image.source.bytes is None
+    assert block.image.source.s3Location is not None
+    assert block.image.source.s3Location.uri == "s3://my-bucket/photo.jpg"
+
+
+def test_converse_s3_location_ignores_extra_fields() -> None:
+    """s3Location commonly carries owner-account etc. — those get dropped by
+    the _LenientModel base."""
+    from slashid_ai_forwarder_core.normalize.converse.schema import ConverseS3Location
+
+    loc = ConverseS3Location.model_validate({"uri": "s3://b/k", "bucketOwner": "123456789012"})
+    assert loc.uri == "s3://b/k"
+    assert loc.model_dump(exclude_none=True) == {"uri": "s3://b/k"}
+
+
+def test_converse_unknown_block_still_catches_video() -> None:
+    """After adding document/image to the union, other unknown keys still
+    fall through to ConverseUnknownBlock."""
+    from slashid_ai_forwarder_core.normalize.converse.schema import (
+        ConverseRequestBody,
+        ConverseUnknownBlock,
+    )
+
+    body = ConverseRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"video": {"format": "mp4", "source": {"bytes": "..."}}}],
+                },
+            ],
+        }
+    )
+    block = body.messages[0].content[0]
+    assert isinstance(block, ConverseUnknownBlock)

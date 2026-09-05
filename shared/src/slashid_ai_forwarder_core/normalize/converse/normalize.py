@@ -1,14 +1,21 @@
 """Bedrock Converse request+response → canonical NormalizedInvocation.
 
-Public API: ``to_normalized_invocation(request, response)`` — a joint
-translate that walks both halves into their canonical shape. Internal
-``_to_input`` / ``_to_output`` helpers are unexported (underscored);
-callers should stick to the joint entry point so system-prompt handling
-and other cross-half invariants stay centralized.
+Public API: ``to_normalized_invocation(request, response, *, config)`` — a
+joint translate that walks both halves into their canonical shape AND
+populates ``accessed_files`` via ``attachments.extract_attachments`` for
+document/image blocks. Internal ``_to_input`` / ``_to_output`` helpers
+are unexported (underscored); callers should stick to the joint entry
+point so system-prompt handling and other cross-half invariants stay
+centralized.
+
+Attachment extraction lives in the sibling ``attachments`` module — this
+module is responsible for the message-and-tool-declaration shape; the
+attachment walker is a big enough concern to warrant its own file.
 """
 
 from __future__ import annotations
 
+from ...config_base import BaseConfig
 from ..normalized.tools import build_tools_declared
 from ..normalized.types import (
     NormalizedContent,
@@ -17,6 +24,7 @@ from ..normalized.types import (
     NormalizedInvocationOutput,
     NormalizedMessage,
 )
+from .attachments import extract_attachments
 from .schema import (
     ConverseContentBlock,
     ConverseReasoningBlock,
@@ -30,14 +38,28 @@ from .schema import (
 from .stop_reasons import STOP_REASONS
 
 
-def to_normalized_invocation(
+async def to_normalized_invocation(
     request: ConverseRequestBody,
     response: ConverseResponse,
+    *,
+    config: BaseConfig,
 ) -> NormalizedInvocation:
-    """Map a Converse request+response pair → canonical NormalizedInvocation."""
+    """Map a Converse request+response pair → canonical NormalizedInvocation.
+
+    Populates ``accessed_files`` with document/image attachment entries
+    extracted from the fresh-turn user messages. S3-sourced attachments
+    are resolved concurrently (bounded by ``MAX_PARALLEL_FETCHES``); inline
+    base64 entries are decoded synchronously.
+
+    ``config.include_raw_content`` / ``config.max_content_size`` only
+    affect the ``AIAccessedFile.redacted_content`` snippet — the wire
+    hashes, byte_length, and media_type are always populated.
+    """
+    accessed_files = await extract_attachments(request, config=config)
     return NormalizedInvocation(
         input=_to_input(request),
         output=_to_output(response),
+        accessed_files=accessed_files,
     )
 
 
@@ -117,8 +139,10 @@ def _translate_request_content(
                 rc = block.reasoningContent
                 text = (rc.reasoningText.text if rc.reasoningText else "") or ""
                 out.append(NormalizedContent(kind="reasoning", text=text))
-            # ConverseUnknownBlock: silently skipped (matches Phase 1.1
-            # behaviour for unmodeled block types).
+            # ConverseDocumentBlock / ConverseImageBlock / ConverseUnknownBlock:
+            # silently skipped on the message-content side — attachment metadata
+            # rides on ``normalized.accessed_files`` instead (see
+            # ``attachments.extract_attachments``).
     return out
 
 
@@ -179,7 +203,11 @@ _REQUEST_ADAPTER = TypeAdapter(ConverseRequestBody)
 _RESPONSE_ADAPTER = TypeAdapter(ConverseResponse)
 
 
-def converse_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: ignore[type-arg]
+async def converse_dict_to_normalized(
+    record: dict,  # type: ignore[type-arg]
+    *,
+    config: BaseConfig,
+) -> NormalizedInvocation:
     """Convenience adapter: MIL/Converse-dict record → NormalizedInvocation.
 
     Best-effort on each side — validation failure falls back to the empty
@@ -193,20 +221,29 @@ def converse_dict_to_normalized(record: dict) -> NormalizedInvocation:  # type: 
     in_body = (record.get("input") or {}).get("inputBodyJson")
     out_body = (record.get("output") or {}).get("outputBodyJson")
 
-    input_side: NormalizedInvocationInput
+    parsed_in: ConverseRequestBody | None
     try:
         parsed_in = _REQUEST_ADAPTER.validate_python(in_body)
     except ValidationError:
-        input_side = NormalizedInvocationInput()
-    else:
-        input_side = _to_input(parsed_in)
+        parsed_in = None
 
-    output_side: NormalizedInvocationOutput
+    parsed_out: ConverseResponse | None
     try:
         parsed_out = _RESPONSE_ADAPTER.validate_python(out_body)
     except ValidationError:
-        output_side = NormalizedInvocationOutput()
-    else:
-        output_side = _to_output(parsed_out)
+        parsed_out = None
 
-    return NormalizedInvocation(input=input_side, output=output_side)
+    if parsed_in is not None:
+        accessed_files = await extract_attachments(parsed_in, config=config)
+        input_side = _to_input(parsed_in)
+    else:
+        accessed_files = []
+        input_side = NormalizedInvocationInput()
+
+    output_side = _to_output(parsed_out) if parsed_out is not None else NormalizedInvocationOutput()
+
+    return NormalizedInvocation(
+        input=input_side,
+        output=output_side,
+        accessed_files=accessed_files,
+    )

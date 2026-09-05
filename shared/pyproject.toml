@@ -13,6 +13,13 @@ dependencies = [
     "pydantic-extra-types>=2.10",
 ]
 
+[project.optional-dependencies]
+# Bedrock Converse attachment resolution (S3 HeadObject + GetObject).
+# Pulled in by ``slashid-ai-forwarder-core[converse]``; the Bedrock
+# forwarder depends on this extra. Non-Converse forwarders (Vertex)
+# don't need aioboto3.
+converse = ["aioboto3>=15.0"]
+
 [dependency-groups]
 dev = [
     "pyyaml>=6.0",

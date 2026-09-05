@@ -173,10 +173,11 @@ def test_run_normalizes_after_offload_resolution(monkeypatch: pytest.MonkeyPatch
 def test_run_populates_accessed_files_from_both_extractors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end: _run composes bedrock attachment extractor + shared
-    finalize; both paths' AIAccessedFile entries land on the wire event.
-    Also verifies the cross-path (name, sha256) dedup — a file surfaced
-    by both extractors appears once."""
+    """End-to-end: _run composes shared Converse attachment extraction (inside
+    ``to_normalized_invocation``) + shared ``finalize``; both paths'
+    AIAccessedFile entries land on the wire event. Also verifies the
+    cross-path (name, sha256) dedup — a file surfaced by both extractors
+    appears once."""
     content = b"shared content"
     b64 = base64.b64encode(content).decode()
     tool_use_id = "tu_dup"
@@ -191,10 +192,11 @@ def test_run_populates_accessed_files_from_both_extractors(
                 "role": "assistant",
                 "content": [
                     {
-                        "type": "tool_use",
-                        "id": tool_use_id,
-                        "name": "Read",
-                        "input": {"file_path": "shared.txt"},
+                        "toolUse": {
+                            "toolUseId": tool_use_id,
+                            "name": "Read",
+                            "input": {"file_path": "shared.txt"},
+                        }
                     }
                 ],
             },
@@ -209,13 +211,22 @@ def test_run_populates_accessed_files_from_both_extractors(
                         }
                     },
                     {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": content.decode(),
+                        "toolResult": {
+                            "toolUseId": tool_use_id,
+                            "status": "success",
+                            "content": [{"text": content.decode()}],
+                        }
                     },
                 ],
             },
         ]
+    }
+    # Valid Converse response so the record matches the ``bedrock-converse``
+    # format — attachment extraction now rides inside dispatch and needs a
+    # valid vendor match.
+    converse_response = {
+        "output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}},
+        "stopReason": "end_turn",
     }
     record: dict[str, Any] = {
         "requestId": "req-dedup",
@@ -225,7 +236,7 @@ def test_run_populates_accessed_files_from_both_extractors(
         "accountId": "123456789012",
         "identity": {"arn": "arn:aws:iam::123456789012:user/alice"},
         "input": {"inputTokenCount": 10, "inputBodyJson": converse_body},
-        "output": {"outputTokenCount": 5, "outputBodyJson": {"stopReason": "end_turn"}},
+        "output": {"outputTokenCount": 5, "outputBodyJson": converse_response},
     }
 
     async def fake_resolve(records: list[dict[str, Any]]) -> None:

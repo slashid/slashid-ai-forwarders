@@ -1,6 +1,11 @@
-"""Migrated from shared/tests/test_events.py — attachment-focused subset of
-the former _accessed_files tests, now exercising the bedrock-side
-extract_converse_attachments directly."""
+"""Tests for Converse document/image attachment extraction.
+
+Migrated from ``bedrock/tests/test_converse_attachments.py`` when the
+extraction moved into the shared ``converse/attachments.py`` walking typed
+pydantic (``ConverseRequestBody``) instead of raw dicts. Exercises
+``extract_attachments`` via the public ``to_normalized_invocation`` entry
+point so both halves stay covered by real dispatch.
+"""
 
 from __future__ import annotations
 
@@ -10,42 +15,55 @@ from typing import Any
 
 import pytest
 
-from slashid_bedrock_forwarder.converse_attachments import extract_converse_attachments
+from slashid_ai_forwarder_core.config_base import BaseConfig
+from slashid_ai_forwarder_core.events import AIAccessedFile
+from slashid_ai_forwarder_core.normalize.converse import attachments as converse_attachments
+from slashid_ai_forwarder_core.normalize.converse.normalize import to_normalized_invocation
+from slashid_ai_forwarder_core.normalize.converse.schema import (
+    ConverseRequestBody,
+    ConverseResponse,
+)
 
 
-def _mil_record(**overrides: Any) -> dict[str, Any]:
-    """Minimal MIL record scaffold — mirrors _mil_record in shared/tests/test_events.py
-    but strips fields converse_attachments doesn't read (identity, model, tokens)."""
-    base: dict[str, Any] = {
-        "input": {"inputBodyJson": {}},
-        "output": {"outputBodyJson": {}},
-    }
-    base.update(overrides)
-    return base
-
-
-def _record_with_messages(messages: list[Any]) -> dict[str, Any]:
-    return _mil_record(
-        input={
-            "inputTokenCount": 10,
-            "inputBodyJson": {"messages": messages},
-        },
-        output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "end_turn"}},
-    )
-
-
-async def _extract(record: dict[str, Any], *, include_raw_content: bool = False):
-    return await extract_converse_attachments(
-        record,
+def _config(*, include_raw_content: bool = False, max_content_size: int = 100_000) -> BaseConfig:
+    return BaseConfig(
+        endpoint="http://test",
+        push_token="test",
         include_raw_content=include_raw_content,
-        max_content_size=100_000,
+        max_content_size=max_content_size,
     )
+
+
+_EMPTY_RESPONSE = ConverseResponse.model_validate(
+    {"output": {"message": {"role": "assistant", "content": []}}, "stopReason": "end_turn"}
+)
+
+
+async def _extract(
+    messages: list[dict[str, Any]] | None,
+    *,
+    include_raw_content: bool = False,
+    max_content_size: int = 100_000,
+) -> list[AIAccessedFile]:
+    """Validate a raw messages list into ConverseRequestBody, dispatch through
+    to_normalized_invocation, return the resulting accessed_files."""
+    body_dict: dict[str, Any] = {"messages": messages if messages is not None else []}
+    request = ConverseRequestBody.model_validate(body_dict)
+    normalized = await to_normalized_invocation(
+        request,
+        _EMPTY_RESPONSE,
+        config=_config(
+            include_raw_content=include_raw_content,
+            max_content_size=max_content_size,
+        ),
+    )
+    return normalized.accessed_files
 
 
 async def test_document_inline() -> None:
     content = b"hello world"
     b64 = base64.b64encode(content).decode()
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -55,7 +73,6 @@ async def test_document_inline() -> None:
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 1
     f = files[0]
     assert f.name == "notes.txt"
@@ -72,7 +89,7 @@ async def test_document_inline() -> None:
 async def test_document_raw_content_opt_in() -> None:
     content = b"secret data"
     b64 = base64.b64encode(content).decode()
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -80,9 +97,9 @@ async def test_document_raw_content_opt_in() -> None:
                     {"document": {"name": "secret.txt", "format": "txt", "source": {"bytes": b64}}}
                 ],
             }
-        ]
+        ],
+        include_raw_content=True,
     )
-    files = await _extract(record, include_raw_content=True)
     assert len(files) == 1
     assert files[0].redacted_content == "secret data"
 
@@ -90,10 +107,9 @@ async def test_document_raw_content_opt_in() -> None:
 async def test_image_inline() -> None:
     content = b"\x89PNG\r\n\x1a\n"  # PNG magic bytes
     b64 = base64.b64encode(content).decode()
-    record = _record_with_messages(
+    files = await _extract(
         [{"role": "user", "content": [{"image": {"format": "png", "source": {"bytes": b64}}}]}]
     )
-    files = await _extract(record)
     assert len(files) == 1
     f = files[0]
     assert f.name is None  # images have no name
@@ -107,14 +123,12 @@ async def test_image_inline() -> None:
 
 
 async def test_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    from slashid_bedrock_forwarder import converse_attachments as s3_mod
-
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # no AWS calls — leave source without _resolved_* keys
 
-    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+    monkeypatch.setattr(converse_attachments, "_resolve_s3_attachment", fake_resolve)
 
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -136,7 +150,6 @@ async def test_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> No
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 2
     doc, img = files
     # document: name from doc.name, media_type from format, no bytes
@@ -152,15 +165,14 @@ async def test_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> No
 
 async def test_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     """Bedrock Playground sends source.s3Uri instead of source.s3Location.uri."""
-    from slashid_bedrock_forwarder import converse_attachments as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 50000
         source["_resolved_content_type"] = "image/png"
 
-    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+    monkeypatch.setattr(converse_attachments, "_resolve_s3_attachment", fake_resolve)
 
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -175,7 +187,6 @@ async def test_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 1
     f = files[0]
     assert f.name == "s3://my-bucket/photo.png"
@@ -187,15 +198,14 @@ async def test_s3_content_type_used_as_media_type_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When Converse format is absent, ContentType from HeadObject is used as media_type."""
-    from slashid_bedrock_forwarder import converse_attachments as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 100
         source["_resolved_content_type"] = "image/webp"
 
-    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+    monkeypatch.setattr(converse_attachments, "_resolve_s3_attachment", fake_resolve)
 
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -210,7 +220,6 @@ async def test_s3_content_type_used_as_media_type_fallback(
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 1
     assert files[0].media_type == "image/webp"
 
@@ -243,8 +252,7 @@ async def test_mime_map(fmt: str, expected_mime: str) -> None:
     }
     if key == "document":
         block[key]["name"] = f"file.{fmt}"
-    record = _record_with_messages([{"role": "user", "content": [block]}])
-    files = await _extract(record)
+    files = await _extract([{"role": "user", "content": [block]}])
     assert len(files) == 1
     assert files[0].media_type == expected_mime
 
@@ -253,15 +261,14 @@ async def test_media_type_from_filename_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When format is absent and HeadObject returns no ContentType, guess from URI extension."""
-    from slashid_bedrock_forwarder import converse_attachments as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         source["_resolved_byte_length"] = 200
         # deliberately no _resolved_content_type
 
-    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+    monkeypatch.setattr(converse_attachments, "_resolve_s3_attachment", fake_resolve)
 
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -277,7 +284,6 @@ async def test_media_type_from_filename_fallback(
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 2
     img, doc = files
     assert img.media_type == "image/jpeg"  # guessed from .jpeg in URI
@@ -288,14 +294,13 @@ async def test_stub_has_media_type_from_filename(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """HEAD-failed stub still gets media_type from the filename."""
-    from slashid_bedrock_forwarder import converse_attachments as s3_mod
 
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # HEAD failed — no _resolved_* keys
 
-    monkeypatch.setattr(s3_mod, "_resolve_s3_attachment", fake_resolve)
+    monkeypatch.setattr(converse_attachments, "_resolve_s3_attachment", fake_resolve)
 
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -305,7 +310,6 @@ async def test_stub_has_media_type_from_filename(
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 1
     f = files[0]
     assert f.name == "s3://bucket/photo.png"
@@ -315,15 +319,8 @@ async def test_stub_has_media_type_from_filename(
 
 
 async def test_non_dict_input_body_returns_empty() -> None:
-    """Non-dict inputBodyJson (e.g. a list for non-Anthropic models) returns no files."""
-    record = _mil_record(
-        input={
-            "inputTokenCount": 10,
-            "inputBodyJson": [{"role": "user", "content": "text only"}],
-        },
-        output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "end_turn"}},
-    )
-    files = await _extract(record)
+    """No messages → no files (mirrors the earlier non-dict inputBodyJson test)."""
+    files = await _extract([])
     assert files == []
 
 
@@ -331,13 +328,12 @@ async def test_deduplicates_within_same_window() -> None:
     content = b"same file"
     b64 = base64.b64encode(content).decode()
     block = {"document": {"name": "dup.txt", "format": "txt", "source": {"bytes": b64}}}
-    record = _record_with_messages(
+    files = await _extract(
         [
             {"role": "user", "content": [block]},
             {"role": "user", "content": [block]},  # same file repeated in same window
         ]
     )
-    files = await _extract(record)
     assert len(files) == 1
 
 
@@ -347,7 +343,7 @@ async def test_only_from_last_user_turn() -> None:
     content_new = b"new file"
     b64_old = base64.b64encode(content_old).decode()
     b64_new = base64.b64encode(content_new).decode()
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -364,7 +360,6 @@ async def test_only_from_last_user_turn() -> None:
             },
         ]
     )
-    files = await _extract(record)
     names = [f.name for f in files]
     assert "new.txt" in names
     assert "old.txt" not in names
@@ -374,7 +369,7 @@ async def test_all_included_when_no_prior_assistant_turn() -> None:
     """With no assistant message yet (first turn), all user files are included."""
     content = b"first turn file"
     b64 = base64.b64encode(content).decode()
-    record = _record_with_messages(
+    files = await _extract(
         [
             {
                 "role": "user",
@@ -384,12 +379,10 @@ async def test_all_included_when_no_prior_assistant_turn() -> None:
             }
         ]
     )
-    files = await _extract(record)
     assert len(files) == 1
     assert files[0].name == "first.txt"
 
 
 async def test_none_when_no_attachments() -> None:
-    record = _record_with_messages([{"role": "user", "content": [{"text": "just a text message"}]}])
-    files = await _extract(record)
+    files = await _extract([{"role": "user", "content": [{"text": "just a text message"}]}])
     assert files == []
