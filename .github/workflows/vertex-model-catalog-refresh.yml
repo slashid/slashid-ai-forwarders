@@ -5,15 +5,11 @@ name: vertex-model-catalog-refresh
 # PR when the catalog moves. Manual trigger + weekly cron.
 #
 # Auth via Workload Identity Federation — requires the following
-# repo-level secrets to be configured:
+# repo-level secrets:
 #
 #   - VERTEX_MODEL_REFRESH_WIF_PROVIDER
 #   - VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT
 #   - VERTEX_MODEL_REFRESH_PROJECT_ID
-#
-# If those secrets are unset the job skips at the auth step — the
-# workflow can live in the repo without breaking every scheduled run
-# just because the WIF setup isn't there yet.
 
 on:
   workflow_dispatch:
@@ -34,35 +30,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Skip if WIF config missing
-        id: check
-        run: |
-          if [[ -z "${{ secrets.VERTEX_MODEL_REFRESH_WIF_PROVIDER }}" ]]; then
-            echo "WIF provider secret unset — skipping refresh." >&2
-            echo "skip=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >>"$GITHUB_OUTPUT"
-          fi
-
       - name: Authenticate to GCP
-        if: steps.check.outputs.skip != 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.VERTEX_MODEL_REFRESH_WIF_PROVIDER }}
           service_account: ${{ secrets.VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT }}
 
       - name: Install gcloud
-        if: steps.check.outputs.skip != 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Refresh catalog
-        if: steps.check.outputs.skip != 'true'
         run: |
           ./vertex/deploy/terraform/models/refresh.sh \
             --project "${{ secrets.VERTEX_MODEL_REFRESH_PROJECT_ID }}"
 
       - name: Open PR on drift
-        if: steps.check.outputs.skip != 'true'
         uses: peter-evans/create-pull-request@v7
         with:
           commit-message: "chore(vertex): refresh Model Garden catalog"
