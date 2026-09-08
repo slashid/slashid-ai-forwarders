@@ -1,8 +1,14 @@
 # BigQuery dataset + per-model tables + setPublisherModelConfig calls.
 #
 # ``setPublisherModelConfig`` has no native TF resource in provider v6
-# (checked 2026-09-08); we drive it via ``null_resource`` +
-# ``local-exec`` gcloud. Swap to native as soon as it ships.
+# (checked 2026-09-08) and gcloud lacks a stable subcommand for it too
+# — the REST API lives on ``v1beta1`` only. We drive it via
+# ``null_resource`` + ``local-exec`` curl against the REST endpoint.
+# Auth token comes from ``gcloud auth print-access-token`` (whichever
+# account is active); ADC alone doesn't help here because curl needs
+# an actual bearer token to send.
+#
+# Swap to a native TF resource as soon as the provider adds one.
 #
 # The per-table schema mirrors what Vertex request-response logging
 # actually writes — pinned here so BQ table creation happens before the
@@ -49,59 +55,67 @@ resource "google_bigquery_table" "per_model" {
 }
 
 # Enable request-response logging on each configured publisher model.
-# gcloud does the setPublisherModelConfig REST call — the native TF
-# resource doesn't exist as of provider v6.
+# ``publisherModels.setPublisherModelConfig`` (v1beta1) is the only
+# way to route request-response logs to a BQ destination today — no
+# native TF resource, no stable gcloud subcommand. curl carries the
+# call; the machine running ``terraform apply`` needs gcloud
+# authenticated to a principal with ``aiplatform.endpoints.setPublisherModelConfig``
+# on the project (``roles/aiplatform.admin`` includes it;
+# ``roles/owner`` does too).
 #
-# ``triggers`` re-runs the exec when the destination table or model list
-# changes. Propagation takes ~10 min for first-time enablement.
+# ``triggers`` re-runs the exec when the destination table or model
+# list changes. Propagation takes ~10 min for first-time enablement.
 #
-# Cleanup: dropping a model from ``observed_models`` destroys
-# the ``null_resource``, firing the ``when = destroy`` provisioner
-# below to set sampling_rate = 0 — Vertex stops writing to the (now
-# orphaned) BQ destination. The full config isn't unset (gcloud's
-# unset command varies across versions), but sampling_rate = 0 works
-# reliably against every version that supports the create-time flags.
-# Customers who want to fully clear the config can do so via the Vertex
-# console.
+# Cleanup: dropping a model from ``observed_models`` destroys the
+# ``null_resource``, firing the ``when = destroy`` provisioner below
+# to disable logging and zero the sampling rate. The full config
+# isn't unset — the API has no clear "clear" verb — but
+# ``enabled: false`` stops writes reliably.
 resource "null_resource" "publisher_model_logging" {
   for_each = local.observed_models
 
   # ``self`` inside a destroy-time provisioner only sees ``triggers`` —
   # copy every field the destroy command references so it works after
-  # the resource is scheduled for destruction.
+  # the resource is scheduled for destruction. Bumping ``config_schema``
+  # forces re-run when the API request shape changes across module
+  # versions (we've hit this once already going from gcloud → curl).
   triggers = {
     model         = each.value.full
     publisher     = each.value.publisher
     model_id      = each.value.model
     table         = google_bigquery_table.per_model[each.key].id
+    table_slug    = each.key
     dataset       = google_bigquery_dataset.reqresp_logs.dataset_id
     project       = var.project_id
     region        = var.region
     sampling_rate = "1.0"
+    config_schema = "curl-v1beta1"
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
-      gcloud ai model-garden models set-publisher-model-config \
-        --project="${var.project_id}" \
-        --region="${var.region}" \
-        --publisher="${each.value.publisher}" \
-        --model="${each.value.model}" \
-        --logging-config-bigquery-destination="bq://${var.project_id}.${var.bq_dataset_id}.slashid_vertex_reqresp_${each.key}" \
-        --logging-config-sampling-rate=1.0 \
-        --logging-config-enable-otel-logging
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      BODY='{"publisherModelConfig":{"loggingConfig":{"enabled":true,"samplingRate":1.0,"bigqueryDestination":{"outputUri":"bq://${var.project_id}.${var.bq_dataset_id}.slashid_vertex_reqresp_${each.key}"},"enableOtelLogging":true}}}'
+      curl -sS --fail-with-body -X POST \
+        -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+        -H "Content-Type: application/json" \
+        --data "$${BODY}" \
+        "https://${var.region}-aiplatform.googleapis.com/v1beta1/projects/${var.project_id}/locations/${var.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig"
     EOT
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      gcloud ai model-garden models set-publisher-model-config \
-        --project="${self.triggers.project}" \
-        --region="${self.triggers.region}" \
-        --publisher="${self.triggers.publisher}" \
-        --model="${self.triggers.model_id}" \
-        --logging-config-sampling-rate=0 || true
+    when        = destroy
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      curl -sS --fail-with-body -X POST \
+        -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+        -H "Content-Type: application/json" \
+        --data '{"publisherModelConfig":{"loggingConfig":{"enabled":false,"samplingRate":0}}}' \
+        "https://${self.triggers.region}-aiplatform.googleapis.com/v1beta1/projects/${self.triggers.project}/locations/${self.triggers.region}/publishers/${self.triggers.publisher}/models/${self.triggers.model_id}:setPublisherModelConfig" \
+      || true
     EOT
   }
 
