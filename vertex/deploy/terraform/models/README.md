@@ -1,18 +1,16 @@
-# SlashID Vertex forwarder — Model Garden discovery
+# SlashID Vertex forwarder — Model Garden catalog
 
-Sub-module that queries **Vertex Model Garden at plan time** and
-exposes the current publisher-model catalog as Terraform outputs.
+Zero-resource sub-module that exposes a maintained snapshot of the
+Vertex Model Garden publisher-model catalog. Callers splat filtered
+subsets into the parent module's `observed_models`.
 
 ```hcl
 module "slashid_models" {
-  source     = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
-  project_id = "customer-project-123456"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
 }
 
 module "slashid_vertex_forwarder" {
   source          = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
-  project_id      = "customer-project-123456"
-  region          = "us-central1"
   observed_models = module.slashid_models.all_gemini_models
   # ...
 }
@@ -22,31 +20,49 @@ module "slashid_vertex_forwarder" {
 
 | output | scope |
 | --- | --- |
-| `all_gemini_models` | Every `google/gemini-*` publisher model currently listed. |
-| `all_models` | Every publisher model currently listed (spans every publisher Google has onboarded — google, anthropic, meta, mistralai, ai21, …). Phase 3.1 forwards only Gemini `generateContent`, so enrolling non-Gemini publishers here provisions BigQuery + logging for models the forwarder cannot yet process. |
+| `all_gemini_models` | Every `google/gemini-*` entry from the snapshot. |
+| `all_models` | The full snapshot (spans every publisher onboarded — google, anthropic, meta, mistralai, ai21, …). Phase 3.1 forwards only Gemini `generateContent`; enrolling non-Gemini publishers today provisions BigQuery + logging for models the forwarder cannot yet process. |
 
-## Runtime dependency
+Additional publisher subsets (`all_anthropic_models`,
+`all_meta_models`, …) will land alongside the phase 3.3+ rawPredict
+support.
 
-The `data "external"` block calls out to `bash` + `gcloud` + `jq` at
-plan time. `gcloud` must be authenticated for `var.project_id`. All
-three are already required by the parent module (the parent module's
-`setPublisherModelConfig` provisioner uses `gcloud`), so this
-sub-module adds no new tooling requirement.
+## How the catalog stays fresh
 
-## Non-determinism — read before adopting
+`all_models.json` is committed to the repo — Terraform reads it at
+plan time via `jsondecode(file(...))`, no external calls or tooling
+dependency. Plans are deterministic; catalog updates land through
+normal PR review.
 
-Google adds and deprecates publisher models on its own cadence. Two
-`terraform plan` runs weeks apart will legitimately show diffs when
-Model Garden's catalog moves — a new Gemini variant appears, TF
-proposes enrolling it; a deprecated one disappears, TF proposes
-de-enrolling. **Review the `observed_models` diff on every apply.**
+The catalog itself is refreshed via `refresh.sh`:
 
-Cost implication: every enrolled model provisions a BigQuery table
-and turns on Vertex request-response logging. `all_gemini_models` is
-the recommended default. Splatting `all_models` provisions the
-broader Model Garden — which today includes rawPredict-only
-publishers the forwarder does not yet handle.
+```bash
+./refresh.sh --project <GCP_PROJECT>
+```
 
-If deterministic plans matter more than auto-refresh (e.g. CI-heavy
-teams), pass an explicit list to `observed_models` instead of using
-this sub-module.
+Requirements: bash, `gcloud` (authenticated for the project), `jq`.
+The script calls `gcloud ai model-garden models list`, canonicalizes
+into `publisher/model` form, dedupes and sorts, and rewrites
+`all_models.json` — but refuses to overwrite if gcloud returns an
+empty list (a defensive check against auth or subcommand failure
+silently zeroing the catalog).
+
+A scheduled GitHub Actions workflow runs `refresh.sh` weekly and
+opens a PR whenever the catalog moves (see
+`.github/workflows/vertex-model-catalog-refresh.yml`). Maintainers
+review the PR, verify the diff, and merge.
+
+## Adding new publisher subsets
+
+When phase 3.3+ adds rawPredict support for a new publisher,
+add a locals entry + output pair, matching the `gemini` pattern:
+
+```hcl
+# main.tf
+anthropic_models = [for m in local.all_models : m if startswith(m, "anthropic/")]
+
+# outputs.tf
+output "all_anthropic_models" {
+  value = local.anthropic_models
+}
+```

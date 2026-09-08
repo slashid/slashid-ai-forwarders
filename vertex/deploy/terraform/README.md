@@ -41,13 +41,13 @@ module "slashid_vertex_forwarder" {
 }
 ```
 
-Auto-discover every current Gemini model via the `models/` sub-module
-(queries Vertex Model Garden at plan time):
+Splat every current Gemini model via the `models/` sub-module (reads
+a maintained catalog snapshot — deterministic plans, no external
+tooling required):
 
 ```hcl
 module "slashid_models" {
-  source     = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
-  project_id = "customer-project-123456"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
 }
 
 module "slashid_vertex_forwarder" {
@@ -62,10 +62,8 @@ module "slashid_vertex_forwarder" {
 }
 ```
 
-See [`models/README.md`](models/README.md) for the sub-module's outputs
-(`all_gemini_models`, `all_models`), runtime dependency, and the
-non-determinism caveat — `observed_models` will show a diff whenever
-Google's Model Garden catalog moves.
+See [`models/README.md`](models/README.md) for the sub-module's
+outputs (`all_gemini_models`, `all_models`) and the refresh workflow.
 
 `slashid_push_token` is sensitive — declare it as a sensitive variable
 in your root module and source it from a secret manager (not `.tfvars`

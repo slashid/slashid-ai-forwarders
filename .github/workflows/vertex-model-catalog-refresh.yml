@@ -1,0 +1,78 @@
+name: vertex-model-catalog-refresh
+
+# Refreshes vertex/deploy/terraform/models/all_models.json by calling
+# gcloud ai model-garden models list against a Google project. Opens a
+# PR when the catalog moves. Manual trigger + weekly cron.
+#
+# Auth via Workload Identity Federation — requires the following
+# repo-level secrets to be configured:
+#
+#   - VERTEX_MODEL_REFRESH_WIF_PROVIDER
+#   - VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT
+#   - VERTEX_MODEL_REFRESH_PROJECT_ID
+#
+# If those secrets are unset the job skips at the auth step — the
+# workflow can live in the repo without breaking every scheduled run
+# just because the WIF setup isn't there yet.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 06:00 UTC — early enough that a resulting PR is
+    # visible for review the same day, late enough to catch overnight
+    # Google catalog rollouts.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if WIF config missing
+        id: check
+        run: |
+          if [[ -z "${{ secrets.VERTEX_MODEL_REFRESH_WIF_PROVIDER }}" ]]; then
+            echo "WIF provider secret unset — skipping refresh." >&2
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate to GCP
+        if: steps.check.outputs.skip != 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.VERTEX_MODEL_REFRESH_WIF_PROVIDER }}
+          service_account: ${{ secrets.VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT }}
+
+      - name: Install gcloud
+        if: steps.check.outputs.skip != 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Refresh catalog
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          ./vertex/deploy/terraform/models/refresh.sh \
+            --project "${{ secrets.VERTEX_MODEL_REFRESH_PROJECT_ID }}"
+
+      - name: Open PR on drift
+        if: steps.check.outputs.skip != 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(vertex): refresh Model Garden catalog"
+          branch: vertex-model-catalog-refresh
+          title: "chore(vertex): refresh Model Garden catalog"
+          body: |
+            Automated refresh of `vertex/deploy/terraform/models/all_models.json`
+            from Vertex Model Garden. Review the diff — new models mean new
+            per-model BigQuery tables + logging enrollment for any customer
+            splatting `all_gemini_models` / `all_models` into `observed_models`.
+          labels: |
+            automated
+            vertex
