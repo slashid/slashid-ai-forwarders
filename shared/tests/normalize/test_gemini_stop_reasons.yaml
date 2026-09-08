@@ -1,0 +1,59 @@
+id: stop_maps_to_end_turn
+raw: STOP
+expected: end_turn
+---
+id: max_tokens_maps_to_max_tokens
+raw: MAX_TOKENS
+expected: max_tokens
+---
+id: safety_folds_to_content_filtered
+raw: SAFETY
+expected: content_filtered
+---
+id: blocklist_folds_to_content_filtered
+raw: BLOCKLIST
+expected: content_filtered
+---
+id: prohibited_content_folds_to_content_filtered
+raw: PROHIBITED_CONTENT
+expected: content_filtered
+---
+id: spii_folds_to_content_filtered
+raw: SPII
+expected: content_filtered
+---
+id: image_safety_folds_to_content_filtered
+raw: IMAGE_SAFETY
+expected: content_filtered
+---
+id: recitation_falls_to_unknown
+raw: RECITATION
+expected: unknown
+---
+id: language_falls_to_unknown
+raw: LANGUAGE
+expected: unknown
+---
+id: other_falls_to_unknown
+raw: OTHER
+expected: unknown
+---
+id: unexpected_tool_call_falls_to_unknown
+raw: UNEXPECTED_TOOL_CALL
+expected: unknown
+---
+id: malformed_function_call_maps_to_malformed_tool_use
+raw: MALFORMED_FUNCTION_CALL
+expected: malformed_tool_use
+---
+id: unknown_value_falls_through
+raw: SOME_NEW_GEMINI_REASON
+expected: unknown
+---
+id: none_input_falls_through
+raw: null
+expected: unknown
+---
+id: empty_string_falls_through
+raw: ""
+expected: unknown

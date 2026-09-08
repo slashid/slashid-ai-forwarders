@@ -1,0 +1,289 @@
+id: text_only_round_trip
+req:
+  contents:
+    - role: user
+      parts: [{text: "Reply with only the word ACK-A"}]
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "ACK-A"}]
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "Reply with only the word ACK-A", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "ACK-A", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: system_instruction_prepended_as_index_0
+req:
+  systemInstruction:
+    parts: [{text: "You are terse. Reply with one integer, nothing else."}]
+  contents:
+    - role: user
+      parts: [{text: "what is 2+2?"}]
+    - role: model
+      parts: [{text: "4"}]
+    - role: user
+      parts: [{text: "what is 5+7?"}]
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "12"}]
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: system
+        content: [{kind: text, text: "You are terse. Reply with one integer, nothing else.", tool_is_error: false}]
+      - role: user
+        content: [{kind: text, text: "what is 2+2?", tool_is_error: false}]
+      - role: assistant
+        content: [{kind: text, text: "4", tool_is_error: false}]
+      - role: user
+        content: [{kind: text, text: "what is 5+7?", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "12", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: function_call_response_round_trip
+req:
+  contents:
+    - role: user
+      parts: [{text: "What is the weather in Paris?"}]
+    - role: model
+      parts:
+        - {functionCall: {name: get_weather, args: {city: Paris}}}
+    - role: user
+      parts:
+        - {functionResponse: {name: get_weather, response: {weather: "sunny, 22C"}}}
+  tools:
+    - functionDeclarations:
+        - name: get_weather
+          description: Get current weather in a city
+          parameters:
+            type: OBJECT
+            properties: {city: {type: STRING}}
+            required: [city]
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "The weather in Paris is sunny and 22 degrees Celsius."}]
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "What is the weather in Paris?", tool_is_error: false}]
+      - role: assistant
+        content:
+          - kind: tool_use
+            tool_use_id: gemini-11dace3b8c11589f
+            tool_name: get_weather
+            tool_input: {city: Paris}
+            tool_is_error: false
+            tool_executor: client
+      - role: user
+        content:
+          - kind: tool_result
+            tool_use_id: gemini-11dace3b8c11589f
+            tool_output: {weather: "sunny, 22C"}
+            tool_is_error: false
+            tool_executor: client
+    tools_declared:
+      - id: 6721ffe4c8b24359
+        name: get_weather
+        description: Get current weather in a city
+        input_schema: '{"properties":{"city":{"type":"STRING"}},"required":["city"],"type":"OBJECT"}'
+        tool_server_id: 867f60d1e44257a1
+    tool_servers:
+      - id: 867f60d1e44257a1
+        name: builtin
+        kind: runtime
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "The weather in Paris is sunny and 22 degrees Celsius.", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: response_function_call_synthesizes_id_from_output_turn_index
+req:
+  contents:
+    - role: user
+      parts: [{text: "What is the weather in Paris?"}]
+  tools:
+    - functionDeclarations:
+        - name: get_weather
+          description: null
+          parameters: null
+response:
+  candidates:
+    - content:
+        role: model
+        parts:
+          - {functionCall: {name: get_weather, args: {city: Paris}}}
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "What is the weather in Paris?", tool_is_error: false}]
+    tools_declared:
+      - id: 'be9c123a4648e847'
+        name: get_weather
+        tool_server_id: 867f60d1e44257a1
+    tool_servers:
+      - id: 867f60d1e44257a1
+        name: builtin
+        kind: runtime
+  output:
+    message:
+      role: assistant
+      content:
+        - kind: tool_use
+          tool_use_id: gemini-11dace3b8c11589f
+          tool_name: get_weather
+          tool_input: {city: Paris}
+          tool_is_error: false
+          tool_executor: client
+    stop_reason: end_turn
+---
+id: inline_data_populates_accessed_files
+req:
+  contents:
+    - role: user
+      parts:
+        - {text: "describe this image"}
+        # base64("hello world") = "aGVsbG8gd29ybGQ="
+        - {inlineData: {mimeType: "text/plain", data: "aGVsbG8gd29ybGQ="}}
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "The image says hello world."}]
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "describe this image", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "The image says hello world.", tool_is_error: false}]
+    stop_reason: end_turn
+  accessed_files:
+    - name: null
+      media_type: text/plain
+      byte_length: 11
+      content_hashes:
+        sha256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+        sha1: 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
+        md5: 5eb63bbbe01eeed093cb22bb8f5acdc3
+---
+id: file_data_stubs_without_hash
+req:
+  contents:
+    - role: user
+      parts:
+        - {text: "look at this PDF"}
+        - {fileData: {mimeType: "application/pdf", fileUri: "gs://my-bucket/notes.pdf"}}
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "OK"}]
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "look at this PDF", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "OK", tool_is_error: false}]
+    stop_reason: end_turn
+  accessed_files:
+    - name: "gs://my-bucket/notes.pdf"
+      media_type: application/pdf
+---
+id: safety_finish_maps_to_content_filtered
+req:
+  contents:
+    - role: user
+      parts: [{text: "prompt"}]
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "partial"}]
+      finishReason: SAFETY
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "prompt", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "partial", tool_is_error: false}]
+    stop_reason: content_filtered
+---
+id: no_candidates_yields_empty_output
+req:
+  contents:
+    - role: user
+      parts: [{text: "prompt"}]
+response:
+  candidates: []
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "prompt", tool_is_error: false}]
+  output:
+    stop_reason: unknown
+---
+id: server_side_executable_code_marks_server
+req:
+  contents:
+    - role: user
+      parts: [{text: "run 2+2"}]
+response:
+  candidates:
+    - content:
+        role: model
+        parts:
+          - {executableCode: {language: PYTHON, code: "print(2+2)"}}
+          - {codeExecutionResult: {outcome: OUTCOME_OK, output: "4\n"}}
+      finishReason: STOP
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "run 2+2", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content:
+        - kind: tool_use
+          tool_use_id: gemini-6fe9226ed2de2b4f
+          tool_name: code_execution
+          tool_input: {language: PYTHON, code: "print(2+2)"}
+          tool_is_error: false
+          tool_executor: server
+        - kind: tool_result
+          tool_output: {outcome: OUTCOME_OK, output: "4\n"}
+          tool_is_error: false
+          tool_executor: server
+    stop_reason: end_turn
