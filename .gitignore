@@ -26,3 +26,8 @@ dist/
 .env.*
 !.env.example
 fixtures/local/
+
+# GitHub Actions credentials — google-github-actions/auth writes these
+# into the runner workspace at auth time. Belt-and-braces to keep them
+# out of any commit even if a workflow forgets to pin ``add-paths``.
+gha-creds-*.json

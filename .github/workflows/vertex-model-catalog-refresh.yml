@@ -47,6 +47,10 @@ jobs:
       - name: Open PR on drift
         uses: peter-evans/create-pull-request@v7
         with:
+          # Pin the paths so untracked files in the workspace — including
+          # the short-lived ``gha-creds-*.json`` the auth action writes —
+          # never end up in the commit.
+          add-paths: vertex/deploy/terraform/all_models.json
           commit-message: "chore(vertex): refresh Model Garden catalog"
           branch: vertex-model-catalog-refresh
           title: "chore(vertex): refresh Model Garden catalog"

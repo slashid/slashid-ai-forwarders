@@ -39,9 +39,9 @@ gotchas to plan around. Extend as new ones are discovered.
   phase.
 - **Per-model logging enrollment.** `setPublisherModelConfig` is scoped
   to one publisher model at a time — no project-wide "log every Vertex
-  call" toggle. New models require adding to `logged_publisher_models`
-  in the Terraform module and re-applying. First-time enablement takes
-  ~10 minutes to propagate.
+  call" toggle. New models require adding to `observed_models` in the
+  Terraform module and re-applying. First-time enablement takes ~10
+  minutes to propagate.
 
 ## Development
 
