@@ -19,6 +19,30 @@ logging on each configured publisher model via `setPublisherModelConfig`.
   `fileData` attachments (stubs only in v1), per-invocation identity
   correlation (`identity_details` ships as `{"kind": "gcp"}`).
 
+## Known limitations
+
+Vertex + GCP constraints that shape the v1 architecture. Not bugs —
+gotchas to plan around. Extend as new ones are discovered.
+
+- **Polling delivery, not push.** Cloud Scheduler ticks every 60s (
+  configurable via `poll_cadence_seconds`); BigQuery has no native
+  row-level Pub/Sub. On low-usage projects most ticks fetch zero rows
+  and burn Cloud Function invocations for nothing. Considered
+  alternatives (Eventarc for BQ, BQ subscriptions) are wrong-direction
+  or job-level only; the design POC (2026-09-04) confirmed no
+  per-row push path exists.
+- **No per-invocation identity.** BigQuery request-response rows carry
+  no caller principal; Cloud Audit Logs carry the principal but not the
+  payload. A time-based join is fragile under concurrency, so v1 emits
+  `identity_details = {"kind": "gcp"}` with all fields empty. Downstream
+  cannot tell "who called Vertex". Correlation is deferred to a later
+  phase.
+- **Per-model logging enrollment.** `setPublisherModelConfig` is scoped
+  to one publisher model at a time — no project-wide "log every Vertex
+  call" toggle. New models require adding to `logged_publisher_models`
+  in the Terraform module and re-applying. First-time enablement takes
+  ~10 minutes to propagate.
+
 ## Development
 
 ```bash
