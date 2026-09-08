@@ -66,7 +66,7 @@ resource "null_resource" "download_release_zip" {
 }
 
 resource "google_storage_bucket_object" "source" {
-  name         = "slashid-vertex-forwarder-${var.release_version}.zip"
+  name         = local.release_zip_filename
   bucket       = google_storage_bucket.release.name
   source       = "${path.module}/.release.zip"
   content_type = "application/zip"

@@ -1,0 +1,127 @@
+name: Release Vertex
+
+on:
+  push:
+    tags: ["vertex-v*"]
+
+permissions:
+  contents: write
+
+env:
+  # Cloud Functions 2nd gen Python runtime target. Matches the runtime
+  # pinned in vertex/deploy/terraform/function.tf.
+  PYTHON_VERSION: "3.13"
+  # Cloud Functions 2nd gen runs on Linux x86_64 — same wheel-tag
+  # target as Lambda (see release-bedrock.yml). Pinning the platform
+  # here means ``uv pip install`` picks the right pydantic-core /
+  # httpx native binaries.
+  PLATFORM_TAG: "x86_64-manylinux2014"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Resolve and verify version
+        # The tag is the release trigger, but the version is the source
+        # of truth in vertex/pyproject.toml. Refuse to release on
+        # mismatch so a fat-fingered tag doesn't ship a wrong-numbered
+        # artifact.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#vertex-v}"
+          FILE_VERSION="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("vertex/pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME expects version $TAG_VERSION but vertex/pyproject.toml has $FILE_VERSION"
+            exit 1
+          fi
+          # Artifact filename matches bedrock's convention
+          # (``slashid-<vendor>-forwarder-v<X.Y.Z>.zip``). The TF module
+          # strips the ``vertex-`` prefix from ``release_version`` when
+          # building the download URL — keep both sides in sync.
+          {
+            echo "VERSION=$FILE_VERSION"
+            echo "ARTIFACT=slashid-vertex-forwarder-v${FILE_VERSION}.zip"
+          } >> "$GITHUB_ENV"
+
+      - name: Export runtime dependencies (skip workspace member)
+        # --no-emit-workspace strips the slashid-ai-forwarder-core dep
+        # from the requirements file; we install its sources by copying
+        # the tree into build/ directly (Cloud Functions has no
+        # visibility of workspace sources at deploy time).
+        run: |
+          uv export \
+            --package slashid-vertex-forwarder \
+            --no-dev \
+            --no-emit-workspace \
+            --no-hashes \
+            --format requirements-txt \
+            > build-requirements.txt
+          echo "=== build-requirements.txt ==="
+          cat build-requirements.txt
+
+      - name: Install dependencies into build dir (Cloud Functions-compatible wheels)
+        run: |
+          mkdir -p build
+          uv pip install \
+            --target build \
+            --python-version "${PYTHON_VERSION}" \
+            --python-platform "${PLATFORM_TAG}" \
+            --no-installer-metadata \
+            --requirement build-requirements.txt
+
+      - name: Bundle source trees
+        run: |
+          cp -r vertex/src/slashid_vertex_forwarder build/
+          cp -r shared/src/slashid_ai_forwarder_core build/
+
+      - name: Emit Cloud Function entrypoint shim
+        # Cloud Functions 2nd gen looks for the entry-point function in
+        # top-level ``main.py`` — but our source lives under a package
+        # (``slashid_vertex_forwarder.main``) with relative imports. A
+        # 2-line shim at the zip root re-exports the handler so
+        # functions-framework can find it without moving the source.
+        run: |
+          cat > build/main.py <<'EOF'
+          """Cloud Function 2nd gen entrypoint — re-exports the package handler."""
+
+          from slashid_vertex_forwarder.main import handler
+
+          __all__ = ["handler"]
+          EOF
+
+      - name: Strip noise from the package
+        run: |
+          # Keep .dist-info — pydantic uses importlib.metadata to check
+          # pydantic_core's version at import time.
+          find build -type d -name __pycache__ -prune -exec rm -rf {} +
+          find build -name "*.pyc" -delete
+
+      - name: Build the deployable zip
+        run: |
+          (cd build && zip -qr "../${ARTIFACT}" .)
+          ls -lah "${ARTIFACT}"
+
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          # Only the version suffix determines pre-release, not the
+          # vertex- prefix.
+          if [[ "${VERSION}" == *-* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ARTIFACT }}
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}

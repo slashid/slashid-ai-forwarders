@@ -45,8 +45,13 @@ locals {
   )
 
   # Source zip URL from GitHub Releases. TF's `data "http"` block reads
-  # this at plan time and streams it into the staging bucket.
-  release_zip_url = "https://github.com/${var.release_repo}/releases/download/${var.release_version}/slashid-vertex-forwarder-${var.release_version}.zip"
+  # this at plan time and streams it into the staging bucket. The
+  # release workflow ships the artifact under a ``v<X.Y.Z>.zip``
+  # filename (matching bedrock's naming), so we strip the ``vertex-``
+  # tag prefix here to build the URL.
+  release_version_short = trimprefix(var.release_version, "vertex-")
+  release_zip_filename  = "slashid-vertex-forwarder-${local.release_version_short}.zip"
+  release_zip_url       = "https://github.com/${var.release_repo}/releases/download/${var.release_version}/${local.release_zip_filename}"
 }
 
 # ---------------------------------------------------------------------------
