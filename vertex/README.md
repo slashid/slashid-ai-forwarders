@@ -13,11 +13,11 @@ logging on each configured publisher model via `setPublisherModelConfig`.
 
 ## Scope
 
-- **Supported**: Gemini `generateContent` (non-streaming).
-- **Deferred**: `streamGenerateContent`, `rawPredict` (Anthropic /
-  Llama / Mistral on Vertex), server-side tool grounding, GCS fetch for
-  `fileData` attachments (stubs only in v1), per-invocation identity
-  correlation (`identity_details` ships as `{"kind": "gcp"}`).
+- **Supported**: Gemini `generateContent` and `streamGenerateContent`.
+- **Deferred**: `rawPredict` (Anthropic / Llama / Mistral on Vertex),
+  server-side tool grounding, GCS fetch for `fileData` attachments
+  (stubs only in v1), per-invocation identity correlation
+  (`identity_details` ships as `{"kind": "gcp"}`).
 
 ## Known limitations
 
@@ -43,6 +43,15 @@ gotchas to plan around. Extend as new ones are discovered.
   call" toggle. New models require adding to `observed_models` in the
   Terraform module and re-applying. First-time enablement takes ~10
   minutes to propagate.
+- **Streaming `stop_reason` is heuristic.** Vertex's BQ log for
+  `streamGenerateContent` drops the merged entry's `finishReason`
+  (`null`), so a streaming event's `stop_reason` reflects a
+  best-effort recovery: `max_tokens` when
+  `generationConfig.maxOutputTokens` was set and the response used
+  every allowed token; `end_turn` otherwise. Rare misclassifications
+  are possible (a normal-completion response that happens to hit the
+  token cap exactly). Client-aborted streams don't log a BQ row at
+  all — the forwarder is honest about not observing them.
 
 ## Development
 
