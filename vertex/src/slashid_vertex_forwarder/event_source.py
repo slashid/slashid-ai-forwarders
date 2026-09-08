@@ -171,16 +171,19 @@ def _row_to_entry(row: Any, *, region: str) -> Entry | None:
     schema) and ``full_request`` / ``full_response`` as ``JSON`` columns
     that surface either as dicts or JSON-encoded strings depending on
     driver version; both shapes are accepted.
+
+    ``row`` is a ``google.cloud.bigquery.table.Row`` in production and a
+    plain dict in the fake-client tests — both expose ``.get(key)``.
     """
     import json
 
     from pydantic import ValidationError
 
-    request_id = row.get("request_id") if hasattr(row, "get") else row["request_id"]
-    logging_time = row.get("logging_time") if hasattr(row, "get") else row["logging_time"]
-    model = row.get("model") if hasattr(row, "get") else row["model"]
-    req_raw = row.get("full_request") if hasattr(row, "get") else row["full_request"]
-    resp_raw = row.get("full_response") if hasattr(row, "get") else row["full_response"]
+    request_id = row.get("request_id")
+    logging_time = row.get("logging_time")
+    model = row.get("model")
+    req_raw = row.get("full_request")
+    resp_raw = row.get("full_response")
 
     if request_id is None or logging_time is None or model is None:
         return None
