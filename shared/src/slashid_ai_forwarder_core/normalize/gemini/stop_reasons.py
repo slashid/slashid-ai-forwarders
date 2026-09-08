@@ -35,3 +35,38 @@ STOP_REASONS: dict[str, AIStopReason] = {
     "IMAGE_SAFETY": "content_filtered",
     "UNEXPECTED_TOOL_CALL": "unknown",
 }
+
+
+def resolve_finish_reason(
+    raw: str | None,
+    *,
+    candidates_token_count: int,
+    max_output_tokens: int | None,
+) -> AIStopReason:
+    """Resolve the wire ``stop_reason`` from a Gemini candidate's
+    ``finishReason`` field.
+
+    Non-streaming responses arrive with an explicit ``finishReason``
+    (``"STOP"``, ``"MAX_TOKENS"``, ``"SAFETY"``, ...) — map straight
+    through ``STOP_REASONS``.
+
+    Streamed responses that BQ merges into a single row lose the
+    terminal chunk's finishReason (``raw`` is ``None``) — Vertex's
+    server-side merge drops it during log-entry assembly. We recover
+    ``MAX_TOKENS`` when the customer explicitly capped generation and
+    the response used every allowed token; otherwise fall back to
+    ``STOP``.
+
+    A merged log entry exists only when the stream reached Vertex's
+    server-side completion (client aborts don't produce a BQ row at
+    all — empirical POC 2026-09-08), so ``STOP`` is a safe default.
+    """
+    if raw is None:
+        if (
+            max_output_tokens is not None
+            and candidates_token_count >= max_output_tokens
+        ):
+            raw = "MAX_TOKENS"
+        else:
+            raw = "STOP"
+    return STOP_REASONS.get(raw, "unknown")
