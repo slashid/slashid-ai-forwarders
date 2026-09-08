@@ -283,6 +283,7 @@ expected:
           tool_is_error: false
           tool_executor: server
         - kind: tool_result
+          tool_use_id: gemini-6fe9226ed2de2b4f
           tool_output: {outcome: OUTCOME_OK, output: "4\n"}
           tool_is_error: false
           tool_executor: server

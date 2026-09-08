@@ -233,6 +233,63 @@ async def test_parallel_same_name_calls_fifo_pair_correctly() -> None:
     assert call_paris_id != call_london_id
 
 
+async def test_code_execution_result_pairs_with_preceding_executable_code() -> None:
+    """Server-side ``codeExecutionResult`` shares tool_use_id with the
+    ``executableCode`` immediately preceding it in the same parts[].
+    Enables ``used_tools`` correlation for server-side tool blocks the
+    same way client-side functionCall/functionResponse pairs do."""
+    empty_req = GeminiRequestBody.model_validate({"contents": []})
+    resp = GeminiResponse.model_validate(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {"executableCode": {"language": "PYTHON", "code": "print(2+2)"}},
+                            {"codeExecutionResult": {"outcome": "OUTCOME_OK", "output": "4\n"}},
+                        ],
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+    )
+    norm = await to_normalized_invocation(empty_req, resp, config=_CONFIG)
+    assert norm.output.message is not None
+    exec_id = norm.output.message.content[0].tool_use_id
+    result_id = norm.output.message.content[1].tool_use_id
+    assert exec_id is not None
+    assert result_id == exec_id
+
+
+async def test_orphan_code_execution_result_synthesizes_fallback_id() -> None:
+    """A ``codeExecutionResult`` with no preceding ``executableCode`` in
+    the same parts[] gets a position-derived fallback id — non-crashing,
+    non-correlating. Matches orphan functionResponse behaviour."""
+    empty_req = GeminiRequestBody.model_validate({"contents": []})
+    resp = GeminiResponse.model_validate(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {"codeExecutionResult": {"outcome": "OUTCOME_OK", "output": "4\n"}},
+                        ],
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        }
+    )
+    norm = await to_normalized_invocation(empty_req, resp, config=_CONFIG)
+    assert norm.output.message is not None
+    sid = norm.output.message.content[0].tool_use_id
+    assert sid is not None
+    assert sid.startswith("gemini-")
+
+
 async def test_orphan_function_response_synthesizes_fallback_id() -> None:
     """A functionResponse with no matching prior functionCall gets a
     non-correlating synthetic id — doesn't crash, doesn't collide with

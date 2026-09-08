@@ -53,10 +53,10 @@ from .attachments import extract_attachments
 from .schema import (
     GeminiCandidate,
     GeminiCodeExecutionResultPart,
-    GeminiContent,
     GeminiExecutableCodePart,
     GeminiFunctionCallPart,
     GeminiFunctionResponsePart,
+    GeminiPart,
     GeminiRequestBody,
     GeminiResponse,
     GeminiTextPart,
@@ -111,12 +111,13 @@ def _to_input(request: GeminiRequestBody) -> NormalizedInvocationInput:
             )
         )
 
-    # tool_use_id correlation state.
-    # fn_calls_by_name[name] is a FIFO of synthetic ids for functionCall parts
-    # seen so far; fn_consumed[name] is the read index for pairing
-    # functionResponse parts as they arrive.
-    fn_calls_by_name: dict[str, list[str]] = {}
-    fn_consumed: dict[str, int] = {}
+    # tool_use_id correlation state — one FIFO of synthetic ids per tool
+    # name, populated by every ``tool_use``-shaped part (functionCall AND
+    # executableCode, keyed by the synthetic ``_CODE_EXECUTION_TOOL_NAME``).
+    # Result-shaped parts (functionResponse / codeExecutionResult) pop the
+    # queue to correlate. Same primitive for both — see ``_pair_result``.
+    calls_by_name: dict[str, list[str]] = {}
+    call_consumed: dict[str, int] = {}
 
     # Position offset for tool_use_id turn indexing — must account for the
     # prepended system message so the hash matches when a later request
@@ -126,11 +127,11 @@ def _to_input(request: GeminiRequestBody) -> NormalizedInvocationInput:
     for turn_idx, content in enumerate(request.contents):
         canonical_turn_idx = system_offset + turn_idx
         role: Literal["user", "assistant"] = "assistant" if content.role == "model" else "user"
-        blocks = _translate_input_parts(
-            content=content,
-            canonical_turn_idx=canonical_turn_idx,
-            fn_calls_by_name=fn_calls_by_name,
-            fn_consumed=fn_consumed,
+        blocks = _translate_parts(
+            content.parts,
+            turn_idx=canonical_turn_idx,
+            calls_by_name=calls_by_name,
+            call_consumed=call_consumed,
         )
         messages.append(NormalizedMessage(role=role, content=blocks))
 
@@ -142,27 +143,41 @@ def _to_input(request: GeminiRequestBody) -> NormalizedInvocationInput:
     )
 
 
-def _translate_input_parts(
+def _translate_parts(
+    parts: list[GeminiPart],
     *,
-    content: GeminiContent,
-    canonical_turn_idx: int,
-    fn_calls_by_name: dict[str, list[str]],
-    fn_consumed: dict[str, int],
+    turn_idx: int,
+    calls_by_name: dict[str, list[str]],
+    call_consumed: dict[str, int],
 ) -> list[NormalizedContent]:
+    """Walk a ``parts[]`` list into canonical NormalizedContent blocks.
+
+    Shared between request-side turn walks and response-side candidate
+    walks: the same match dispatch handles every variant. Both call
+    sites bring their own ``(calls_by_name, call_consumed)`` state —
+    the request walk shares state across turns (functionCall in a model
+    turn pairs with functionResponse in a later user turn), the
+    response walk uses a fresh pair scoped to the single candidate.
+
+    ``functionResponse`` appearing on the response side is unexpected
+    (Gemini emits them only user-side), but if the model produces one,
+    the queue-based pairing gracefully falls through to the orphan
+    fallback via ``_pair_result``.
+    """
     blocks: list[NormalizedContent] = []
-    for part_idx, part in enumerate(content.parts):
+    for part_idx, part in enumerate(parts):
         match part:
             case GeminiTextPart():
                 blocks.append(NormalizedContent(kind="text", text=part.text))
             case GeminiFunctionCallPart():
                 fc = part.functionCall
-                sid = _synthesize_tool_use_id(
+                sid = _synthesize_and_enqueue_call(
                     name=fc.name,
                     args=fc.args,
-                    turn_index=canonical_turn_idx,
-                    part_index=part_idx,
+                    canonical_turn_idx=turn_idx,
+                    part_idx=part_idx,
+                    calls_by_name=calls_by_name,
                 )
-                fn_calls_by_name.setdefault(fc.name, []).append(sid)
                 blocks.append(
                     NormalizedContent(
                         kind="tool_use",
@@ -174,12 +189,12 @@ def _translate_input_parts(
                 )
             case GeminiFunctionResponsePart():
                 fr = part.functionResponse
-                sid = _pair_function_response(
+                sid = _pair_result(
                     name=fr.name,
-                    canonical_turn_idx=canonical_turn_idx,
+                    canonical_turn_idx=turn_idx,
                     part_idx=part_idx,
-                    fn_calls_by_name=fn_calls_by_name,
-                    fn_consumed=fn_consumed,
+                    calls_by_name=calls_by_name,
+                    call_consumed=call_consumed,
                 )
                 blocks.append(
                     NormalizedContent(
@@ -193,11 +208,12 @@ def _translate_input_parts(
             case GeminiExecutableCodePart():
                 ec = part.executableCode
                 exec_args = {"language": ec.language, "code": ec.code}
-                sid = _synthesize_tool_use_id(
+                sid = _synthesize_and_enqueue_call(
                     name=_CODE_EXECUTION_TOOL_NAME,
                     args=exec_args,
-                    turn_index=canonical_turn_idx,
-                    part_index=part_idx,
+                    canonical_turn_idx=turn_idx,
+                    part_idx=part_idx,
+                    calls_by_name=calls_by_name,
                 )
                 blocks.append(
                     NormalizedContent(
@@ -210,13 +226,17 @@ def _translate_input_parts(
                 )
             case GeminiCodeExecutionResultPart():
                 cer = part.codeExecutionResult
-                # No id echo from Gemini — leave tool_use_id unset. The
-                # events.py used_tools extractor tolerates the missing
-                # correlation (matches Bedrock's server-side tool behaviour).
+                sid = _pair_result(
+                    name=_CODE_EXECUTION_TOOL_NAME,
+                    canonical_turn_idx=turn_idx,
+                    part_idx=part_idx,
+                    calls_by_name=calls_by_name,
+                    call_consumed=call_consumed,
+                )
                 blocks.append(
                     NormalizedContent(
                         kind="tool_result",
-                        tool_use_id=None,
+                        tool_use_id=sid,
                         tool_output={"outcome": cer.outcome, "output": cer.output},
                         tool_is_error=bool(cer.outcome) and cer.outcome != "OUTCOME_OK",
                         tool_executor="server",
@@ -249,63 +269,14 @@ def _to_output(
     if cand.content is None:
         return NormalizedInvocationOutput(stop_reason=stop_reason)
 
-    blocks: list[NormalizedContent] = []
-    for part_idx, part in enumerate(cand.content.parts):
-        match part:
-            case GeminiTextPart():
-                blocks.append(NormalizedContent(kind="text", text=part.text))
-            case GeminiFunctionCallPart():
-                fc = part.functionCall
-                sid = _synthesize_tool_use_id(
-                    name=fc.name,
-                    args=fc.args,
-                    turn_index=output_turn_index,
-                    part_index=part_idx,
-                )
-                blocks.append(
-                    NormalizedContent(
-                        kind="tool_use",
-                        tool_use_id=sid,
-                        tool_name=fc.name,
-                        tool_input=fc.args if fc.args is not None else {},
-                        tool_executor="client",
-                    )
-                )
-            case GeminiExecutableCodePart():
-                ec = part.executableCode
-                exec_args = {"language": ec.language, "code": ec.code}
-                sid = _synthesize_tool_use_id(
-                    name=_CODE_EXECUTION_TOOL_NAME,
-                    args=exec_args,
-                    turn_index=output_turn_index,
-                    part_index=part_idx,
-                )
-                blocks.append(
-                    NormalizedContent(
-                        kind="tool_use",
-                        tool_use_id=sid,
-                        tool_name=_CODE_EXECUTION_TOOL_NAME,
-                        tool_input=exec_args,
-                        tool_executor="server",
-                    )
-                )
-            # response-side has no functionResponse, no inlineData, no fileData.
-            # GeminiCodeExecutionResultPart theoretically could appear in a
-            # response containing both the code and its result; handle
-            # defensively.
-            case GeminiCodeExecutionResultPart():
-                cer = part.codeExecutionResult
-                blocks.append(
-                    NormalizedContent(
-                        kind="tool_result",
-                        tool_use_id=None,
-                        tool_output={"outcome": cer.outcome, "output": cer.output},
-                        tool_is_error=bool(cer.outcome) and cer.outcome != "OUTCOME_OK",
-                        tool_executor="server",
-                    )
-                )
-            # skip GeminiThoughtSignaturePart / GeminiUnknownPart
-
+    # Response walk uses a fresh queue — the only within-response pairing
+    # opportunity is executableCode → codeExecutionResult in one candidate.
+    blocks = _translate_parts(
+        cand.content.parts,
+        turn_idx=output_turn_index,
+        calls_by_name={},
+        call_consumed={},
+    )
     # Response-side content.role is always "model" — canonical is "assistant".
     return NormalizedInvocationOutput(
         message=NormalizedMessage(role="assistant", content=blocks),
@@ -329,28 +300,53 @@ def _iter_gemini_tool_specs(
             yield decl.name, decl.description, decl.parameters
 
 
-def _pair_function_response(
+def _synthesize_and_enqueue_call(
+    *,
+    name: str,
+    args: object,
+    canonical_turn_idx: int,
+    part_idx: int,
+    calls_by_name: dict[str, list[str]],
+) -> str:
+    """Synthesize a stable id for a call-shaped part and push it onto
+    the pairing queue for the tool name.
+
+    Used for both ``functionCall`` and ``executableCode`` — the pairing
+    primitive is uniform across client-side and server-side tool uses.
+    """
+    sid = _synthesize_tool_use_id(
+        name=name,
+        args=args,
+        turn_index=canonical_turn_idx,
+        part_index=part_idx,
+    )
+    calls_by_name.setdefault(name, []).append(sid)
+    return sid
+
+
+def _pair_result(
     *,
     name: str,
     canonical_turn_idx: int,
     part_idx: int,
-    fn_calls_by_name: dict[str, list[str]],
-    fn_consumed: dict[str, int],
+    calls_by_name: dict[str, list[str]],
+    call_consumed: dict[str, int],
 ) -> str:
-    """Correlate a ``functionResponse(name)`` to the next unconsumed
-    ``functionCall(name)`` id in FIFO order.
+    """Correlate a result-shaped part (``functionResponse`` /
+    ``codeExecutionResult``) to the next unconsumed call-shaped part
+    with the same ``name`` in FIFO order.
 
-    Handles the common well-formed case (one response per prior call, in
-    order). Orphan responses (no matching prior call, or already-consumed
-    queue) synthesize a fallback id from the response's own position —
+    Handles the common well-formed case (one result per prior call, in
+    order). Orphan results (no matching prior call, or already-consumed
+    queue) synthesize a fallback id from the result's own position —
     unique but non-correlating. The events.py ``used_tools`` extractor
-    treats the missing correlation as a dropped entry, which matches
+    treats the missing correlation as a dropped entry, matching
     Bedrock's behaviour for orphan tool_results.
     """
-    queue = fn_calls_by_name.get(name, [])
-    idx = fn_consumed.get(name, 0)
+    queue = calls_by_name.get(name, [])
+    idx = call_consumed.get(name, 0)
     if idx < len(queue):
-        fn_consumed[name] = idx + 1
+        call_consumed[name] = idx + 1
         return queue[idx]
     return _synthesize_tool_use_id(
         name=name,
