@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from slashid_ai_forwarder_core.events import GCPIdentityDetails
 from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
@@ -73,24 +74,44 @@ def test_envelope_identity_is_empty_gcp() -> None:
     assert wire == {"kind": "gcp"}
 
 
-def test_envelope_model_full_publisher_path() -> None:
-    env = vertex_envelope(_entry(model_path="publishers/google/models/gemini-2.5-pro"))
+# Representative model paths from every Vertex Model Garden publisher we
+# expect to encounter. Phase 3.1 only ships Gemini generateContent (the
+# ``google`` rows), but the parser is exercised across every publisher
+# now so the wire ``provider`` field stays honest when phase 3.3+ adds
+# rawPredict paths for anthropic / meta / mistralai / ai21.
+@pytest.mark.parametrize(
+    "model_path,expected_provider",
+    [
+        # Google — Gemini text, embeddings, image
+        ("publishers/google/models/gemini-2.5-flash", "google"),
+        ("publishers/google/models/gemini-2.5-pro", "google"),
+        ("publishers/google/models/gemini-2.0-flash-001", "google"),
+        ("publishers/google/models/text-embedding-005", "google"),
+        # Anthropic — Claude on Vertex uses @version suffix
+        ("publishers/anthropic/models/claude-3-5-sonnet-v2@20241022", "anthropic"),
+        ("publishers/anthropic/models/claude-3-5-haiku@20241022", "anthropic"),
+        ("publishers/anthropic/models/claude-opus-4@20250514", "anthropic"),
+        ("publishers/anthropic/models/claude-sonnet-4@20250514", "anthropic"),
+        # Meta — Llama on Vertex uses ``-maas`` (Model-as-a-Service) suffix
+        ("publishers/meta/models/llama-3.3-70b-instruct-maas", "meta"),
+        ("publishers/meta/models/llama-3.1-405b-instruct-maas", "meta"),
+        # Mistral
+        ("publishers/mistralai/models/mistral-large-2411", "mistralai"),
+        ("publishers/mistralai/models/mistral-nemo", "mistralai"),
+        ("publishers/mistralai/models/codestral-2501", "mistralai"),
+        # AI21
+        ("publishers/ai21/models/jamba-1.5-large", "ai21"),
+    ],
+)
+def test_envelope_provider_parsed_from_publisher_segment(
+    model_path: str, expected_provider: str
+) -> None:
+    env = vertex_envelope(_entry(model_path=model_path))
     assert env is not None
-    assert env.model.id == "publishers/google/models/gemini-2.5-pro"
-    assert env.model.raw_model_id == "publishers/google/models/gemini-2.5-pro"
-    assert env.model.provider == "google"
-
-
-def test_envelope_provider_parsed_from_non_google_publisher() -> None:
-    """Vertex Model Garden hosts anthropic/meta/mistralai via rawPredict —
-    the publisher segment of the model path is the source of truth. Phase
-    3.1 only surfaces google publishers, but the parse stays honest for
-    the multi-publisher path coming in phase 3.3+."""
-    env = vertex_envelope(
-        _entry(model_path="publishers/anthropic/models/claude-3-5-sonnet-v2@20241022")
-    )
-    assert env is not None
-    assert env.model.provider == "anthropic"
+    assert env.model.provider == expected_provider
+    # ID and raw_model_id always echo the full publisher path unchanged.
+    assert env.model.id == model_path
+    assert env.model.raw_model_id == model_path
 
 
 def test_envelope_provider_none_when_model_path_unfamiliar() -> None:
