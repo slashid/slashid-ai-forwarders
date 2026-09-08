@@ -273,3 +273,48 @@ def test_gemini_bad_role_rejects() -> None:
     """Content.role is Literal["user", "model"] — other values fail."""
     with pytest.raises(ValidationError):
         GeminiContent.model_validate({"role": "assistant", "parts": []})
+
+
+# --------------------------------------------------------------------------
+# generationConfig — used by the streaming stop_reason heuristic
+# --------------------------------------------------------------------------
+
+
+def test_gemini_generation_config_max_output_tokens_parses() -> None:
+    """maxOutputTokens surfaces as an int on the request body."""
+    req = GeminiRequestBody.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+            "generationConfig": {"maxOutputTokens": 42},
+        }
+    )
+    assert req.generationConfig is not None
+    assert req.generationConfig.maxOutputTokens == 42
+
+
+def test_gemini_generation_config_absent_defaults_to_none() -> None:
+    """Requests without generationConfig produce None on the field."""
+    req = GeminiRequestBody.model_validate(
+        {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+    )
+    assert req.generationConfig is None
+
+
+def test_gemini_generation_config_ignores_unknown_fields() -> None:
+    """generationConfig accepts and drops fields other than maxOutputTokens
+    (temperature, topP, thinkingConfig, safetySettings) — we don't need
+    them for the normalizer."""
+    req = GeminiRequestBody.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+            "generationConfig": {
+                "maxOutputTokens": 100,
+                "temperature": 0.7,
+                "topP": 0.95,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        }
+    )
+    assert req.generationConfig is not None
+    assert req.generationConfig.maxOutputTokens == 100
+    # Everything else silently dropped by _LenientModel — no field, no error.
