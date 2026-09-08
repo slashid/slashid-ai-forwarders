@@ -128,3 +128,68 @@ def test_finalize_include_raw_content_populates_redacted() -> None:
     n = _invocation_with_read("/tmp/x.txt", "secret content")
     finalize(n, config=_config(include_raw_content=True))
     assert n.accessed_files[0].redacted_content == "secret content"
+
+
+def test_finalize_dedupes_across_hash_algorithms() -> None:
+    """Two entries for the same file that share ``md5`` but differ in
+    the sha256/sha1 availability still dedupe — matches the scenario
+    where a GCS metadata source contributes an md5-only entry that a
+    sha256+md5 inline extractor would otherwise duplicate."""
+    import hashlib as _h
+
+    content = b"hello world"
+    n = NormalizedInvocation()
+    # Vendor extractor: all three hashes.
+    n.accessed_files.append(
+        AIAccessedFile(
+            name="report.pdf",
+            content_hashes={
+                "sha256": _h.sha256(content).hexdigest(),
+                "sha1": _h.sha1(content).hexdigest(),
+                "md5": _h.md5(content).hexdigest(),
+            },
+            byte_length=len(content),
+        )
+    )
+    # Same file surfaced later with only md5 — collides via shared md5.
+    n.accessed_files.append(
+        AIAccessedFile(
+            name="report.pdf",
+            content_hashes={"md5": _h.md5(content).hexdigest()},
+        )
+    )
+    finalize(n, config=_config())
+    assert len(n.accessed_files) == 1
+    # First-seen wins — the fully-hashed vendor entry is kept.
+    assert n.accessed_files[0].content_hashes is not None
+    assert set(n.accessed_files[0].content_hashes) == {"sha256", "sha1", "md5"}
+
+
+def test_finalize_does_not_collide_different_files_with_different_algs() -> None:
+    """Two different files, one sha256-only and one md5-only, must NOT
+    collide — the (name, alg, value) triples don't intersect."""
+    n = NormalizedInvocation()
+    n.accessed_files.append(
+        AIAccessedFile(name="a.txt", content_hashes={"sha256": "aaa"}),
+    )
+    n.accessed_files.append(
+        AIAccessedFile(name="b.txt", content_hashes={"md5": "bbb"}),
+    )
+    finalize(n, config=_config())
+    assert len(n.accessed_files) == 2
+
+
+def test_finalize_stubs_dedupe_by_name_but_not_against_hashed() -> None:
+    """Stub entries (no content_hashes) collide with other same-name
+    stubs, but stay distinct from a hashed entry with the same name —
+    the hashed entry contributes real (name, alg, value) triples while
+    the stub carries only the (name, None, None) sentinel."""
+    n = NormalizedInvocation()
+    n.accessed_files.append(AIAccessedFile(name="gs://bucket/x", content_hashes=None))
+    n.accessed_files.append(AIAccessedFile(name="gs://bucket/x", content_hashes=None))
+    n.accessed_files.append(
+        AIAccessedFile(name="gs://bucket/x", content_hashes={"sha256": "abc"})
+    )
+    finalize(n, config=_config())
+    # 3 → 2: stubs collapse, hashed entry stays.
+    assert len(n.accessed_files) == 2
