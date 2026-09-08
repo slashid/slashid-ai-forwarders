@@ -88,9 +88,16 @@ compatible either way.
 
 - Terraform >= 1.5
 - `google` provider >= 6.0
-- `gcloud` CLI available on the machine running `terraform apply` (the
-  `setPublisherModelConfig` step drives gcloud via `local-exec`; native
-  TF resource lands when the provider adds it).
+- `gcloud` CLI + `curl` on the machine running `terraform apply` — the
+  `setPublisherModelConfig` step calls the Vertex `v1beta1` REST
+  endpoint via `curl`, using `gcloud auth print-access-token` for the
+  bearer token. No native TF resource / stable gcloud subcommand
+  exists for this API yet; the module will swap over as soon as one
+  ships.
+- The `gcloud` principal must hold `aiplatform.endpoints.setPublisherModelConfig`
+  on the project. Predefined roles that include it: `roles/aiplatform.admin`
+  and `roles/owner`. `roles/aiplatform.user` and `roles/aiplatform.viewer`
+  do **not**.
 - APIs enabled by the module: aiplatform, bigquery, cloudbuild,
   cloudfunctions, cloudscheduler, eventarc, firestore, logging, pubsub,
   run, secretmanager, storage.
