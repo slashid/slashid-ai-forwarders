@@ -70,6 +70,7 @@ All env vars use the `SLASHID_` prefix:
 | `SLASHID_GCP_PROJECT_ID` | yes | — |
 | `SLASHID_GCP_REGION` | yes | — |
 | `SLASHID_BQ_DATASET` | no | `slashid_vertex_reqresp_logs` |
+| `SLASHID_FIRESTORE_DATABASE` | no | `slashid-vertex` |
 | `SLASHID_FIRESTORE_CHECKPOINT_COLLECTION` | no | `slashid_vertex` |
 | `SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT` | no | `checkpoint` |
 | `SLASHID_MAX_ROWS_PER_TICK` | no | `1000` |

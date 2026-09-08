@@ -39,3 +39,25 @@ jobs:
       - name: pytest
         working-directory: ${{ matrix.subproject }}
         run: uv run pytest
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+
+      - name: Terraform fmt (recursive)
+        run: terraform fmt -check -recursive
+        working-directory: vertex/deploy/terraform
+
+      - name: Terraform init (no backend)
+        run: terraform init -backend=false
+        working-directory: vertex/deploy/terraform
+
+      - name: Terraform validate
+        run: terraform validate
+        working-directory: vertex/deploy/terraform

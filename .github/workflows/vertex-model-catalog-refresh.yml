@@ -1,0 +1,62 @@
+name: vertex-model-catalog-refresh
+
+# Refreshes vertex/deploy/terraform/all_models.json by calling
+# gcloud ai model-garden models list against a Google project. Opens a
+# PR when the catalog moves. Manual trigger + weekly cron.
+#
+# Auth via Workload Identity Federation — requires the following
+# repo-level secrets:
+#
+#   - VERTEX_MODEL_REFRESH_WIF_PROVIDER
+#   - VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT
+#   - VERTEX_MODEL_REFRESH_PROJECT_ID
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 06:00 UTC — early enough that a resulting PR is
+    # visible for review the same day, late enough to catch overnight
+    # Google catalog rollouts.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.VERTEX_MODEL_REFRESH_WIF_PROVIDER }}
+          service_account: ${{ secrets.VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT }}
+
+      - name: Install gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Refresh catalog
+        run: |
+          ./vertex/deploy/terraform/refresh_models.sh \
+            --project "${{ secrets.VERTEX_MODEL_REFRESH_PROJECT_ID }}"
+
+      - name: Open PR on drift
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(vertex): refresh Model Garden catalog"
+          branch: vertex-model-catalog-refresh
+          title: "chore(vertex): refresh Model Garden catalog"
+          body: |
+            Automated refresh of `vertex/deploy/terraform/all_models.json`
+            from Vertex Model Garden. Review the diff — new Gemini
+            entries expand the default `observed_models` for any
+            customer relying on the module's auto-Gemini behaviour
+            (each new model provisions its own BigQuery table + logging
+            enrollment).
+          labels: |
+            automated
+            vertex
