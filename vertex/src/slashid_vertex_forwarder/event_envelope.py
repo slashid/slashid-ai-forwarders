@@ -71,10 +71,25 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
         identity_details=GCPIdentityDetails(),
         model=AIModel(
             id=entry.model_path,
-            provider="google",
+            provider=_publisher_from_model_path(entry.model_path),
             raw_model_id=entry.model_path,
         ),
         tokens=tokens,
         parsed_as=PARSED_AS,
         stop_reason=stop_reason,
     )
+
+
+def _publisher_from_model_path(model_path: str) -> str | None:
+    """Extract the publisher segment from a Vertex model path.
+
+    Vertex model paths follow ``publishers/<publisher>/models/<model>``.
+    Phase 3.1 only exercises ``publishers/google/…`` (generateContent),
+    but Model Garden hosts anthropic, meta, mistralai, and others via
+    rawPredict — landing in phase 3.3+. Parse now so the provider field
+    stays honest when those normalizers come online.
+    """
+    parts = model_path.split("/")
+    if len(parts) >= 2 and parts[0] == "publishers":
+        return parts[1] or None
+    return None

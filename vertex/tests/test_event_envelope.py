@@ -81,6 +81,27 @@ def test_envelope_model_full_publisher_path() -> None:
     assert env.model.provider == "google"
 
 
+def test_envelope_provider_parsed_from_non_google_publisher() -> None:
+    """Vertex Model Garden hosts anthropic/meta/mistralai via rawPredict —
+    the publisher segment of the model path is the source of truth. Phase
+    3.1 only surfaces google publishers, but the parse stays honest for
+    the multi-publisher path coming in phase 3.3+."""
+    env = vertex_envelope(
+        _entry(model_path="publishers/anthropic/models/claude-3-5-sonnet-v2@20241022")
+    )
+    assert env is not None
+    assert env.model.provider == "anthropic"
+
+
+def test_envelope_provider_none_when_model_path_unfamiliar() -> None:
+    """Malformed / unexpected model_path shapes don't crash — provider
+    falls to None and the wire event still ships with the raw id."""
+    env = vertex_envelope(_entry(model_path="not-a-publisher-path"))
+    assert env is not None
+    assert env.model.provider is None
+    assert env.model.id == "not-a-publisher-path"
+
+
 def test_envelope_tokens_from_usage_metadata() -> None:
     env = vertex_envelope(_entry())
     assert env is not None
