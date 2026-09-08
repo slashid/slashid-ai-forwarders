@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
 
 
@@ -142,19 +144,45 @@ def test_fetch_accepts_string_json_columns() -> None:
     assert len(entries) == 1
 
 
-def test_fetch_drops_row_with_invalid_payload() -> None:
+def test_fetch_drops_row_with_invalid_payload(caplog: pytest.LogCaptureFixture) -> None:
     row = _row(request_payload={"contents": "not-a-list-broken"})
     src, _ = _source(rows=[row])
-    entries = src.fetch(Checkpoint(None, None))
+    with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
+        entries = src.fetch(Checkpoint(None, None))
     assert entries == []
+    assert any(
+        "schema-invalid payload" in r.getMessage()
+        and "request_id=3292372995731278848" in r.getMessage()
+        for r in caplog.records
+    )
 
 
-def test_fetch_drops_row_with_missing_fields() -> None:
+def test_fetch_drops_row_with_missing_fields(caplog: pytest.LogCaptureFixture) -> None:
     row = _row()
     del row["request_id"]  # simulate a schema mismatch
     src, _ = _source(rows=[row])
-    entries = src.fetch(Checkpoint(None, None))
+    with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
+        entries = src.fetch(Checkpoint(None, None))
     assert entries == []
+    assert any(
+        "missing required fields" in r.getMessage() and "request_id" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_fetch_drops_row_with_non_dict_payload(caplog: pytest.LogCaptureFixture) -> None:
+    """Non-JSON strings still parse via json.loads but might come out as
+    lists/numbers/strings — the shape check downstream drops them and
+    logs the observed payload types."""
+    row = _row(request_payload="42")  # json.loads → int
+    src, _ = _source(rows=[row])
+    with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
+        entries = src.fetch(Checkpoint(None, None))
+    assert entries == []
+    assert any(
+        "non-dict payload" in r.getMessage() and "full_request=int" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_fetch_multiple_rows_preserve_order() -> None:

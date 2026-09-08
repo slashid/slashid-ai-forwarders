@@ -18,6 +18,7 @@ server dedupes on ``request_id``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -26,6 +27,8 @@ from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -186,17 +189,42 @@ def _row_to_entry(row: Any, *, region: str) -> Entry | None:
     resp_raw = row.get("full_response")
 
     if request_id is None or logging_time is None or model is None:
+        missing = [
+            name
+            for name, value in (
+                ("request_id", request_id),
+                ("logging_time", logging_time),
+                ("model", model),
+            )
+            if value is None
+        ]
+        log.warning(
+            "dropping BQ row with missing required fields: %s (request_id=%r)",
+            ",".join(missing),
+            request_id,
+        )
         return None
 
     req_dict = json.loads(req_raw) if isinstance(req_raw, str) else req_raw
     resp_dict = json.loads(resp_raw) if isinstance(resp_raw, str) else resp_raw
     if not isinstance(req_dict, dict) or not isinstance(resp_dict, dict):
+        log.warning(
+            "dropping BQ row with non-dict payload: request_id=%s full_request=%s full_response=%s",
+            request_id,
+            type(req_dict).__name__,
+            type(resp_dict).__name__,
+        )
         return None
 
     try:
         request_body = GeminiRequestBody.model_validate(req_dict)
         response_body = GeminiResponse.model_validate(resp_dict)
-    except ValidationError:
+    except ValidationError as e:
+        log.warning(
+            "dropping BQ row with schema-invalid payload: request_id=%s error=%s",
+            request_id,
+            e,
+        )
         return None
 
     return Entry(
