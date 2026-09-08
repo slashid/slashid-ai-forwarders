@@ -17,15 +17,17 @@ Cloud Function:
 
 ## Usage
 
+Explicit model list:
+
 ```hcl
 module "slashid_vertex_forwarder" {
   source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
 
-  project_id              = "customer-project-123456"
-  region                  = "us-central1"
-  logged_publisher_models = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"]
-  slashid_endpoint        = "https://api.slashid.com"
-  slashid_push_token      = var.slashid_push_token  # sensitive
+  project_id         = "customer-project-123456"
+  region             = "us-central1"
+  observed_models    = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"]
+  slashid_endpoint   = "https://api.slashid.com"
+  slashid_push_token = var.slashid_push_token # sensitive
 
   release_version = "vertex-v0.1.0"
 
@@ -38,6 +40,32 @@ module "slashid_vertex_forwarder" {
   create_firestore_database = true
 }
 ```
+
+Auto-discover every current Gemini model via the `models/` sub-module
+(queries Vertex Model Garden at plan time):
+
+```hcl
+module "slashid_models" {
+  source     = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
+  project_id = "customer-project-123456"
+}
+
+module "slashid_vertex_forwarder" {
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
+
+  project_id         = "customer-project-123456"
+  region             = "us-central1"
+  observed_models    = module.slashid_models.all_gemini_models
+  slashid_endpoint   = "https://api.slashid.com"
+  slashid_push_token = var.slashid_push_token
+  release_version    = "vertex-v0.1.0"
+}
+```
+
+See [`models/README.md`](models/README.md) for the sub-module's outputs
+(`all_gemini_models`, `all_models`), runtime dependency, and the
+non-determinism caveat — `observed_models` will show a diff whenever
+Google's Model Garden catalog moves.
 
 `slashid_push_token` is sensitive — declare it as a sensitive variable
 in your root module and source it from a secret manager (not `.tfvars`

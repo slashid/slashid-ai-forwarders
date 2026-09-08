@@ -19,7 +19,7 @@ resource "google_bigquery_dataset" "reqresp_logs" {
 }
 
 resource "google_bigquery_table" "per_model" {
-  for_each   = local.logged_models
+  for_each   = local.observed_models
   dataset_id = google_bigquery_dataset.reqresp_logs.dataset_id
   table_id   = "slashid_vertex_reqresp_${each.key}"
 
@@ -55,7 +55,7 @@ resource "google_bigquery_table" "per_model" {
 # ``triggers`` re-runs the exec when the destination table or model list
 # changes. Propagation takes ~10 min for first-time enablement.
 #
-# Cleanup: dropping a model from ``logged_publisher_models`` destroys
+# Cleanup: dropping a model from ``observed_models`` destroys
 # the ``null_resource``, firing the ``when = destroy`` provisioner
 # below to set sampling_rate = 0 — Vertex stops writing to the (now
 # orphaned) BQ destination. The full config isn't unset (gcloud's
@@ -64,7 +64,7 @@ resource "google_bigquery_table" "per_model" {
 # Customers who want to fully clear the config can do so via the Vertex
 # console.
 resource "null_resource" "publisher_model_logging" {
-  for_each = local.logged_models
+  for_each = local.observed_models
 
   # ``self`` inside a destroy-time provisioner only sees ``triggers`` —
   # copy every field the destroy command references so it works after

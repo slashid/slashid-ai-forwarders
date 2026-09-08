@@ -10,25 +10,41 @@ variable "region" {
   type        = string
 }
 
-variable "logged_publisher_models" {
+variable "observed_models" {
   description = <<-EOT
-    List of Vertex publisher models to enable request-response logging on,
-    in "publisher/model" form (e.g. "google/gemini-2.5-flash",
-    "google/gemini-2.5-pro"). One BigQuery table per model is provisioned;
-    the module calls setPublisherModelConfig on each model to route its
-    request-response logs into that table.
+    Vertex publisher models whose invocations the forwarder should
+    observe and push to SlashID. Entries take the form "publisher/model"
+    (e.g. "google/gemini-2.5-flash", "google/gemini-2.5-pro").
+
+    Under the hood the module enables Vertex request-response logging
+    (setPublisherModelConfig) on each model and routes the logs into a
+    per-model BigQuery table the polling function reads from. The
+    "observed" framing keeps the caller decoupled from that plumbing —
+    a future push-based delivery could swap in without renaming.
+
+    For a curated list of current Gemini models, use the ``models/``
+    sub-module:
+
+        module "slashid_models" {
+          source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
+        }
+
+        module "slashid_vertex_forwarder" {
+          ...
+          observed_models = module.slashid_models.all_gemini_models
+        }
 
     Note: setPublisherModelConfig propagation takes ~10 min after apply
-    for a first-time enablement — the first BQ row may take that long to
-    appear.
+    for a first-time enablement — the first BQ row may take that long
+    to appear.
   EOT
   type        = list(string)
 
   validation {
     condition = alltrue([
-      for m in var.logged_publisher_models : length(split("/", m)) == 2
+      for m in var.observed_models : length(split("/", m)) == 2
     ])
-    error_message = "Each entry in logged_publisher_models must be in \"publisher/model\" form (e.g. \"google/gemini-2.5-flash\")."
+    error_message = "Each entry in observed_models must be in \"publisher/model\" form (e.g. \"google/gemini-2.5-flash\")."
   }
 }
 

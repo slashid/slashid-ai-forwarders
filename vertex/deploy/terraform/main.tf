@@ -15,8 +15,8 @@ locals {
   # Split "publisher/model" entries into their two segments up-front —
   # both the BQ table naming and the setPublisherModelConfig REST call
   # need the pair. Table slug replaces the separators BQ rejects.
-  logged_models = {
-    for m in var.logged_publisher_models :
+  observed_models = {
+    for m in var.observed_models :
     replace(replace(m, "/", "_"), ".", "_") => {
       publisher = split("/", m)[0]
       model     = split("/", m)[1]
