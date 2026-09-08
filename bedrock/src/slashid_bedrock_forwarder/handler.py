@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     build_event_from_normalized,
+    redact_for_logging,
 )
 from slashid_ai_forwarder_core.normalize.finalize import finalize
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
@@ -106,21 +107,10 @@ def _records_from_payload(payload: CWLogsPayload) -> list[dict[str, Any]]:
     return records
 
 
-_REDACTED_FIELDS = {"redacted_text", "redacted_content"}
-
-
 def _log_event(event: AIInvocationObservedV1) -> None:
-    """Log the event as JSON, stripping redacted_text / redacted_content."""
-    raw = event.model_dump(mode="json", exclude_none=True)
-
-    def _strip(obj: Any) -> Any:
-        if isinstance(obj, dict):
-            return {k: _strip(v) for k, v in obj.items() if k not in _REDACTED_FIELDS}
-        if isinstance(obj, list):
-            return [_strip(i) for i in obj]
-        return obj
-
-    log.info("event: %s", json.dumps(_strip(raw), separators=(",", ":")))
+    """Log the event as JSON, redacted for ops-side consumption."""
+    redacted = redact_for_logging(event.model_dump(mode="json", exclude_none=True))
+    log.info("event: %s", json.dumps(redacted, separators=(",", ":")))
 
 
 async def _run(records: list[dict[str, Any]], config: Config) -> dict[str, int]:

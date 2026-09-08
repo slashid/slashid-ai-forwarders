@@ -27,6 +27,7 @@ from slashid_ai_forwarder_core.events import (
     _strip_empty_top,
     build_event_from_normalized,
     parse_tool_name,
+    redact_for_logging,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
     anthropic_dict_to_normalized,
@@ -1077,3 +1078,65 @@ async def test_build_event_truncates_redacted_text() -> None:
     assert event.input.redacted_text is not None
     assert len(event.input.redacted_text) <= 20
     assert "…" in event.input.redacted_text
+
+
+def test_redact_for_logging_strips_input_and_output_redacted_text() -> None:
+    payload = {
+        "request_id": "r",
+        "input": {
+            "content_hashes": {"sha256": "abc"},
+            "byte_length": 10,
+            "redacted_text": "SECRET PROMPT",
+        },
+        "output": {
+            "content_hashes": {"sha256": "def"},
+            "redacted_text": "SECRET RESPONSE",
+        },
+    }
+    redacted = redact_for_logging(payload)
+    assert "redacted_text" not in redacted["input"]
+    assert "redacted_text" not in redacted["output"]
+    # Non-sensitive siblings survive.
+    assert redacted["input"]["content_hashes"] == {"sha256": "abc"}
+    assert redacted["input"]["byte_length"] == 10
+
+
+def test_redact_for_logging_strips_accessed_files_redacted_content() -> None:
+    payload = {
+        "accessed_files": [
+            {
+                "name": "notes.txt",
+                "content_hashes": {"sha256": "abc"},
+                "byte_length": 11,
+                "redacted_content": "hello world",
+            },
+            {"name": "doc.pdf", "content_hashes": {"sha256": "def"}},
+        ]
+    }
+    redacted = redact_for_logging(payload)
+    assert "redacted_content" not in redacted["accessed_files"][0]
+    assert redacted["accessed_files"][0]["name"] == "notes.txt"
+    assert redacted["accessed_files"][0]["content_hashes"] == {"sha256": "abc"}
+    # Files without redacted_content pass through unchanged.
+    assert redacted["accessed_files"][1] == {"name": "doc.pdf", "content_hashes": {"sha256": "def"}}
+
+
+def test_redact_for_logging_leaves_input_untouched() -> None:
+    """Returns a copy — the original payload isn't mutated. Callers can
+    keep the wire-shape dict around for other purposes."""
+    payload = {"input": {"redacted_text": "SECRET"}}
+    redact_for_logging(payload)
+    assert payload["input"]["redacted_text"] == "SECRET"
+
+
+def test_redact_for_logging_walks_nested_lists() -> None:
+    """redacted_content sitting deep inside a nested list-of-dicts still
+    gets stripped — the recursive walk descends into lists."""
+    payload = {
+        "used_tools": [
+            {"tool_id": "1", "extra": [{"redacted_content": "nested"}]},
+        ],
+    }
+    redacted = redact_for_logging(payload)
+    assert redacted["used_tools"][0]["extra"][0] == {}
+    assert redacted["used_tools"][0]["tool_id"] == "1"
