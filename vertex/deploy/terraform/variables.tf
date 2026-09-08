@@ -22,28 +22,25 @@ variable "observed_models" {
     "observed" framing keeps the caller decoupled from that plumbing —
     a future push-based delivery could swap in without renaming.
 
-    For a curated list of current Gemini models, use the ``models/``
-    sub-module:
-
-        module "slashid_models" {
-          source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
-        }
-
-        module "slashid_vertex_forwarder" {
-          ...
-          observed_models = module.slashid_models.all_gemini_models
-        }
+    When omitted (or null), defaults to every ``google/gemini-*`` entry
+    in the module's shipped catalog (``all_models.json``, refreshed
+    via ``refresh_models.sh``). Set explicitly to narrow the scope
+    (e.g. only production models) or to include a non-Gemini publisher
+    once phase 3.3+ ships rawPredict support.
 
     Note: setPublisherModelConfig propagation takes ~10 min after apply
     for a first-time enablement — the first BQ row may take that long
     to appear.
   EOT
   type        = list(string)
+  default     = null
 
   validation {
-    condition = alltrue([
-      for m in var.observed_models : length(split("/", m)) == 2
-    ])
+    condition = (
+      var.observed_models == null || alltrue([
+        for m in coalesce(var.observed_models, []) : length(split("/", m)) == 2
+      ])
+    )
     error_message = "Each entry in observed_models must be in \"publisher/model\" form (e.g. \"google/gemini-2.5-flash\")."
   }
 }

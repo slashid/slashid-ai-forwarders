@@ -17,7 +17,8 @@ Cloud Function:
 
 ## Usage
 
-Explicit model list:
+Minimum — enrolls every currently-catalogued `google/gemini-*` model
+by default:
 
 ```hcl
 module "slashid_vertex_forwarder" {
@@ -25,49 +26,42 @@ module "slashid_vertex_forwarder" {
 
   project_id         = "customer-project-123456"
   region             = "us-central1"
-  observed_models    = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"]
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-
-  release_version = "vertex-v0.1.0"
-
-  # Optional — flip to true to forward prompt/response bodies alongside
-  # the hash / mime / byte_length metadata.
-  include_raw_content = false
-
-  # Optional — reuse an existing Firestore Native database in this
-  # project instead of creating a new one.
-  create_firestore_database = true
-}
-```
-
-Splat every current Gemini model via the `models/` sub-module (reads
-a maintained catalog snapshot — deterministic plans, no external
-tooling required):
-
-```hcl
-module "slashid_models" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform/models?ref=vertex-v0.1.0"
-}
-
-module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
-
-  project_id         = "customer-project-123456"
-  region             = "us-central1"
-  observed_models    = module.slashid_models.all_gemini_models
-  slashid_endpoint   = "https://api.slashid.com"
-  slashid_push_token = var.slashid_push_token
   release_version    = "vertex-v0.1.0"
 }
 ```
 
-See [`models/README.md`](models/README.md) for the sub-module's
-outputs (`all_gemini_models`, `all_models`) and the refresh workflow.
+Explicit list — narrower scope, or including a non-Gemini publisher
+(phase 3.3+ once rawPredict lands):
 
-`slashid_push_token` is sensitive — declare it as a sensitive variable
-in your root module and source it from a secret manager (not `.tfvars`
-committed to VCS).
+```hcl
+module "slashid_vertex_forwarder" {
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
+
+  project_id      = "customer-project-123456"
+  region          = "us-central1"
+  observed_models = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"]
+  # ...
+}
+```
+
+`slashid_push_token` is sensitive — declare it as a sensitive
+variable in your root module and source it from a secret manager
+(not `.tfvars` committed to VCS).
+
+## Model catalog
+
+`all_models.json` is a maintained snapshot of Vertex Model Garden's
+publisher catalog. Terraform reads it at plan time — no `gcloud`
+call, deterministic plans. When `observed_models` is omitted the
+module auto-derives the enrolment list by filtering
+`startswith("google/gemini-")`.
+
+Refresh the catalog via `./refresh_models.sh --project <GCP_PROJECT>`
+(needs bash, gcloud, jq). A scheduled workflow at
+`.github/workflows/vertex-model-catalog-refresh.yml` runs this
+weekly and opens a PR when the catalog moves.
 
 ## First deployment
 

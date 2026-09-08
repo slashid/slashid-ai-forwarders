@@ -10,8 +10,8 @@
 # Requirements: bash, gcloud (authenticated), jq.
 #
 # Usage:
-#   ./refresh.sh --project <GCP_PROJECT>
-#   GCP_PROJECT=<GCP_PROJECT> ./refresh.sh
+#   ./refresh_models.sh --project <GCP_PROJECT>
+#   GCP_PROJECT=<GCP_PROJECT> ./refresh_models.sh
 #
 # On success: rewrites ``all_models.json`` alongside this script.
 # On empty result (auth failure, deprecated command): exits non-zero

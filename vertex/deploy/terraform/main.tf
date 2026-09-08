@@ -12,11 +12,24 @@ provider "google" {
 }
 
 locals {
+  # Maintained Model Garden catalog — refreshed via ``refresh_models.sh``.
+  # ``all_models`` is every publisher/model entry we know about;
+  # ``gemini_models`` is filtered to ``google/gemini-*`` (the subset
+  # phase 3.1 can actually forward).
+  all_models    = jsondecode(file("${path.module}/all_models.json"))
+  gemini_models = [for m in local.all_models : m if startswith(m, "google/gemini-")]
+
+  # Effective ``observed_models``: caller override wins; otherwise
+  # default to every currently-catalogued Gemini model. Callers who
+  # want a broader scope can pass ``jsondecode(file("all_models.json"))``
+  # explicitly, or their own curated list.
+  effective_observed_models = coalesce(var.observed_models, local.gemini_models)
+
   # Split "publisher/model" entries into their two segments up-front —
   # both the BQ table naming and the setPublisherModelConfig REST call
   # need the pair. Table slug replaces the separators BQ rejects.
   observed_models = {
-    for m in var.observed_models :
+    for m in local.effective_observed_models :
     replace(replace(m, "/", "_"), ".", "_") => {
       publisher = split("/", m)[0]
       model     = split("/", m)[1]

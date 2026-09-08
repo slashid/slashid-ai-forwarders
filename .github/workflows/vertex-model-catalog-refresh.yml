@@ -1,6 +1,6 @@
 name: vertex-model-catalog-refresh
 
-# Refreshes vertex/deploy/terraform/models/all_models.json by calling
+# Refreshes vertex/deploy/terraform/all_models.json by calling
 # gcloud ai model-garden models list against a Google project. Opens a
 # PR when the catalog moves. Manual trigger + weekly cron.
 #
@@ -41,7 +41,7 @@ jobs:
 
       - name: Refresh catalog
         run: |
-          ./vertex/deploy/terraform/models/refresh.sh \
+          ./vertex/deploy/terraform/refresh_models.sh \
             --project "${{ secrets.VERTEX_MODEL_REFRESH_PROJECT_ID }}"
 
       - name: Open PR on drift
@@ -51,10 +51,12 @@ jobs:
           branch: vertex-model-catalog-refresh
           title: "chore(vertex): refresh Model Garden catalog"
           body: |
-            Automated refresh of `vertex/deploy/terraform/models/all_models.json`
-            from Vertex Model Garden. Review the diff — new models mean new
-            per-model BigQuery tables + logging enrollment for any customer
-            splatting `all_gemini_models` / `all_models` into `observed_models`.
+            Automated refresh of `vertex/deploy/terraform/all_models.json`
+            from Vertex Model Garden. Review the diff — new Gemini
+            entries expand the default `observed_models` for any
+            customer relying on the module's auto-Gemini behaviour
+            (each new model provisions its own BigQuery table + logging
+            enrollment).
           labels: |
             automated
             vertex
