@@ -44,14 +44,34 @@ locals {
     "slashid-vertex-release-${var.project_id}"
   )
 
-  # Source zip URL from GitHub Releases. TF's `data "http"` block reads
-  # this at plan time and streams it into the staging bucket. The
-  # release workflow ships the artifact under a ``v<X.Y.Z>.zip``
-  # filename (matching bedrock's naming), so we strip the ``vertex-``
-  # tag prefix here to build the URL.
+  # Release artefact naming. Matches bedrock's convention
+  # ``slashid-<vendor>-forwarder-v<X.Y.Z>.zip``, which drops the
+  # tag prefix — hence the ``trimprefix`` step.
   release_version_short = trimprefix(var.release_version, "vertex-")
   release_zip_filename  = "slashid-vertex-forwarder-${local.release_version_short}.zip"
-  release_zip_url       = "https://github.com/${var.release_repo}/releases/download/${var.release_version}/${local.release_zip_filename}"
+
+  # ``https://github.com/{owner}/{repo}/releases/download/{tag}/{name}``
+  # is a rewrite that caches 404s aggressively when a release is
+  # deleted-and-recreated under the same tag+filename. The API URL
+  # ``https://api.github.com/repos/{owner}/{repo}/releases/assets/{id}``
+  # is a direct pointer that stays stable — but the asset id changes
+  # on every re-upload, so we look it up dynamically from the
+  # release-by-tag endpoint below.
+  release_asset_url = try(
+    [
+      for asset in jsondecode(data.http.release_info.response_body).assets :
+      asset.url if asset.name == local.release_zip_filename
+    ][0],
+    null,
+  )
+}
+
+data "http" "release_info" {
+  url = "https://api.github.com/repos/${var.release_repo}/releases/tags/${var.release_version}"
+
+  request_headers = {
+    Accept = "application/vnd.github+json"
+  }
 }
 
 # ---------------------------------------------------------------------------
