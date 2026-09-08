@@ -50,6 +50,30 @@ module "slashid_vertex_forwarder" {
 variable in your root module and source it from a secret manager
 (not `.tfvars` committed to VCS).
 
+## `fileData` bucket grants
+
+Gemini `fileData` (`gs://bucket/object`) attachments need the
+forwarder SA to hold `roles/storage.objectViewer` on the referenced
+buckets. Configure via `filedata_buckets`:
+
+```hcl
+# Named list — grants per-bucket. Preferred when sources are known.
+filedata_buckets = ["customer-uploads", "vertex-context"]
+
+# Wildcard — grants project-wide (covers every bucket in project_id).
+# Use when fileData sources aren't fixed to a known set.
+filedata_buckets = ["*"]
+
+# Default: empty — no grants. fileData attachments still parse but
+# emit stubs (URI + media_type only, no md5, no byte_length).
+filedata_buckets = []
+```
+
+Unlisted or unreadable buckets emit stub `AIAccessedFile` entries
+instead of failing the tick. Cross-project buckets need customer-
+managed IAM (this module only grants against `project_id`); the
+forwarder stubs them if inaccessible.
+
 ## Model catalog
 
 `all_models.json` is a maintained snapshot of Vertex Model Garden's
