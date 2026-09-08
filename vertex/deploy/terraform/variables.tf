@@ -113,6 +113,12 @@ variable "bq_dataset_id" {
   default     = "slashid_vertex_reqresp_logs"
 }
 
+variable "firestore_database" {
+  description = "Named Firestore database (multi-database GA). Kept isolated from the project's (default) database so the forwarder does not interfere with other customer workloads."
+  type        = string
+  default     = "slashid-vertex"
+}
+
 variable "firestore_checkpoint_collection" {
   description = "Firestore collection for the polling checkpoint document."
   type        = string

@@ -7,6 +7,17 @@
 # concurrency is pinned to 1 so checkpoint reads/writes never race.
 
 # --- Release-artifact staging ----------------------------------------------
+#
+# One bucket per project, one object per release_version — object name
+# is templated by the tag (see ``google_storage_bucket_object.source``
+# below) so multiple releases coexist for quick rollback. Old objects
+# auto-expire after 90 days.
+#
+# We do NOT enable bucket versioning: each release has a distinct
+# object name so there's no "same-object noncurrent-version" chain to
+# prune. Rolling back is ``terraform apply -var release_version=<prior>``
+# — TF re-downloads and re-uploads the prior zip under its distinct
+# name.
 
 resource "google_storage_bucket" "release" {
   name                        = local.release_bucket
@@ -19,14 +30,10 @@ resource "google_storage_bucket" "release" {
       type = "Delete"
     }
     condition {
-      # Keep only the most recent 5 release zips; the module always
-      # references the current tag and older ones just accumulate cost.
-      num_newer_versions = 5
+      # 90 days covers the typical rollback horizon (last quarter's
+      # release) without accumulating years of dead objects.
+      age = 90
     }
-  }
-
-  versioning {
-    enabled = true
   }
 
   depends_on = [google_project_service.required]
@@ -124,6 +131,7 @@ resource "google_cloudfunctions2_function" "forwarder" {
       SLASHID_GCP_PROJECT_ID                  = var.project_id
       SLASHID_GCP_REGION                      = var.region
       SLASHID_BQ_DATASET                      = var.bq_dataset_id
+      SLASHID_FIRESTORE_DATABASE              = var.firestore_database
       SLASHID_FIRESTORE_CHECKPOINT_COLLECTION = var.firestore_checkpoint_collection
       SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT   = var.firestore_checkpoint_document
       SLASHID_INCLUDE_RAW_CONTENT             = tostring(var.include_raw_content)

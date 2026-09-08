@@ -46,7 +46,10 @@ def _checkpoint_store(config: Config) -> FirestoreCheckpointStore:
     from google.cloud import firestore
 
     return FirestoreCheckpointStore(
-        client=firestore.Client(project=config.gcp_project_id),
+        client=firestore.Client(
+            project=config.gcp_project_id,
+            database=config.firestore_database,
+        ),
         collection=config.firestore_checkpoint_collection,
         document=config.firestore_checkpoint_document,
     )

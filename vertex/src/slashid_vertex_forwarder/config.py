@@ -23,6 +23,9 @@ class Config(BaseConfig):
     # BigQuery dataset that holds one table per logged publisher model
     # (see Terraform module — ``slashid_vertex_reqresp_<model_slug>``).
     bq_dataset: str = Field(default="slashid_vertex_reqresp_logs", min_length=1)
+    # Named Firestore database — multi-database Firestore is GA, so we
+    # isolate the forwarder from the project's ``(default)`` database.
+    firestore_database: str = Field(default="slashid-vertex", min_length=1)
     # Firestore collection/document path used as the polling checkpoint.
     # Value defaults match the Terraform module's provisioned names.
     firestore_checkpoint_collection: str = Field(default="slashid_vertex", min_length=1)

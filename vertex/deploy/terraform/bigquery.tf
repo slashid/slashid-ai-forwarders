@@ -54,11 +54,25 @@ resource "google_bigquery_table" "per_model" {
 #
 # ``triggers`` re-runs the exec when the destination table or model list
 # changes. Propagation takes ~10 min for first-time enablement.
+#
+# Cleanup: dropping a model from ``logged_publisher_models`` destroys
+# the ``null_resource``, firing the ``when = destroy`` provisioner
+# below to set sampling_rate = 0 — Vertex stops writing to the (now
+# orphaned) BQ destination. The full config isn't unset (gcloud's
+# unset command varies across versions), but sampling_rate = 0 works
+# reliably against every version that supports the create-time flags.
+# Customers who want to fully clear the config can do so via the Vertex
+# console.
 resource "null_resource" "publisher_model_logging" {
   for_each = local.logged_models
 
+  # ``self`` inside a destroy-time provisioner only sees ``triggers`` —
+  # copy every field the destroy command references so it works after
+  # the resource is scheduled for destruction.
   triggers = {
     model         = each.value.full
+    publisher     = each.value.publisher
+    model_id      = each.value.model
     table         = google_bigquery_table.per_model[each.key].id
     dataset       = google_bigquery_dataset.reqresp_logs.dataset_id
     project       = var.project_id
@@ -76,6 +90,18 @@ resource "null_resource" "publisher_model_logging" {
         --logging-config-bigquery-destination="bq://${var.project_id}.${var.bq_dataset_id}.slashid_vertex_reqresp_${each.key}" \
         --logging-config-sampling-rate=1.0 \
         --logging-config-enable-otel-logging
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      gcloud ai model-garden models set-publisher-model-config \
+        --project="${self.triggers.project}" \
+        --region="${self.triggers.region}" \
+        --publisher="${self.triggers.publisher}" \
+        --model="${self.triggers.model_id}" \
+        --logging-config-sampling-rate=0 || true
     EOT
   }
 
