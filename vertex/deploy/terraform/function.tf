@@ -42,26 +42,26 @@ resource "google_storage_bucket" "release" {
 # Fetch the release zip from GitHub Releases at plan time. If the URL
 # 404s (release not yet published), plan fails — that's the intended
 # behaviour, prevents deploying a phantom version.
-data "http" "release_zip" {
-  url = local.release_zip_url
-
-  request_headers = {
-    Accept = "application/octet-stream"
-  }
-}
-
-# The http provider hands us the response body as a string; we need it
-# on disk so google_storage_bucket_object can upload it. `local_file`
-# isn't ideal for binary payloads, so use a null_resource + local-exec
-# curl to write the zip alongside the module.
+# Download the release zip via curl and stage it under the module.
+#
+# ``local-exec`` provisioners can't discover filesystem state, and the
+# ``.release.zip`` we write lives under ``.terraform/modules/`` which
+# gets wiped whenever a customer runs ``rm -rf .terraform`` or
+# ``terraform init -upgrade`` to refresh a re-tagged module version.
+# TF's own state would still mark the null_resource as created and skip
+# the provisioner — leaving the file missing.
+#
+# Trigger on wall-clock time so the curl re-fires on every apply.
+# ~20MB from GitHub Releases is cheap. ``google_storage_bucket_object``
+# below detects content-level changes via ``source_md5hash``, so
+# identical bytes don't get re-uploaded.
 resource "null_resource" "download_release_zip" {
   triggers = {
-    release_version = var.release_version
-    release_repo    = var.release_repo
+    always_run = timestamp()
   }
 
   provisioner "local-exec" {
-    command = "curl -sL -o ${path.module}/.release.zip '${local.release_zip_url}'"
+    command = "curl -sfL -o ${path.module}/.release.zip '${local.release_zip_url}'"
   }
 }
 
@@ -84,9 +84,10 @@ resource "google_pubsub_topic" "trigger" {
 
 resource "google_cloud_scheduler_job" "poll" {
   name        = var.scheduler_name
-  schedule    = "every ${var.poll_cadence_seconds} seconds"
+  schedule    = var.poll_schedule
+  time_zone   = "UTC"
   region      = var.region
-  description = "Fires the SlashID Vertex forwarder every ${var.poll_cadence_seconds} seconds."
+  description = "Fires the SlashID Vertex forwarder on ``${var.poll_schedule}`` (UTC)."
 
   pubsub_target {
     topic_name = google_pubsub_topic.trigger.id
