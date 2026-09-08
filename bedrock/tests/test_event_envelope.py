@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from slashid_ai_forwarder_core.config_base import BaseConfig
-from slashid_ai_forwarder_core.events import build_event_from_normalized
+from slashid_ai_forwarder_core.events import AWSIdentityDetails, build_event_from_normalized
 from slashid_ai_forwarder_core.normalize.converse.normalize import (
     converse_dict_to_normalized,
 )
@@ -77,6 +77,7 @@ def test_bedrock_envelope_omits_access_key_when_missing() -> None:
     record = _mil_record(identity={"arn": "arn:aws:iam::123:user/bob"})
     env = bedrock_envelope(record)
     assert env is not None
+    assert isinstance(env.identity_details, AWSIdentityDetails)
     assert env.identity_details.principal_arn == "arn:aws:iam::123:user/bob"
     assert env.identity_details.access_key_id is None
 
@@ -93,6 +94,7 @@ def test_bedrock_envelope_prefers_resolved_arn_over_arn() -> None:
     )
     env = bedrock_envelope(record)
     assert env is not None
+    assert isinstance(env.identity_details, AWSIdentityDetails)
     assert env.identity_details.principal_arn == "arn:aws:iam::123:user/real-user"
 
 

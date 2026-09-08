@@ -23,6 +23,7 @@ from slashid_ai_forwarder_core.events import (
     AIModel,
     AWSIdentityDetails,
     EventEnvelope,
+    GCPIdentityDetails,
     _strip_empty_top,
     build_event_from_normalized,
     parse_tool_name,
@@ -130,6 +131,7 @@ async def test_build_event_minimal() -> None:
     )
     assert isinstance(event, AIInvocationObservedV1)
     assert event.request_id == "req-1"
+    assert isinstance(event.identity_details, AWSIdentityDetails)
     assert event.identity_details.principal_arn == "arn:aws:iam::123456789012:user/alice"
     assert event.identity_details.access_key_id == "AKIAEXAMPLE"
     assert event.model.id == "us.anthropic.claude-sonnet-4-6"
@@ -851,11 +853,9 @@ def test_aws_identity_details_round_trip() -> None:
 
 def test_ai_invocation_observed_v1_identity_details_discriminator() -> None:
     """AIInvocationObservedV1.identity_details is a discriminated (single-variant
-    for now) union — validating a dict without `kind` fails, ensuring downstream
-    replay/fixture tooling stays honest about the tag.
-
-    Vertex's future GCPIdentityDetails joins the union in Phase 3.1; this test
-    locks in that the discriminator is already wired here."""
+    (AWSIdentityDetails | GCPIdentityDetails) union — validating a dict
+    without `kind` fails, ensuring downstream replay/fixture tooling
+    stays honest about the tag."""
     from pydantic import ValidationError
 
     # Constructed via the pydantic model — kind defaults from AWSIdentityDetails.
@@ -910,6 +910,52 @@ def test_event_envelope_identity_details_discriminator() -> None:
     }
     with pytest.raises(ValidationError):
         EventEnvelope.model_validate(raw_no_kind)
+
+
+def test_gcp_identity_details_defaults_to_kind_gcp() -> None:
+    """Empty GCPIdentityDetails() serializes to {"kind": "gcp"} — matches
+    the Vertex v1 wire shape when identity correlation is deferred."""
+    identity = GCPIdentityDetails()
+    assert identity.kind == "gcp"
+    assert identity.model_dump(mode="json", exclude_none=True) == {"kind": "gcp"}
+
+
+def test_identity_details_union_dispatches_on_kind() -> None:
+    """model_validate on AIInvocationObservedV1 dispatches identity_details
+    via the "kind" discriminator — GCPIdentityDetails path validates
+    without an AWS principal_arn, AWSIdentityDetails path requires one."""
+    raw_gcp = {
+        "request_id": "r",
+        "timestamp": "t",
+        "identity_details": {"kind": "gcp"},
+        "model": {"id": "m"},
+        "parsed_as": "vertex-gemini-generate",
+    }
+    event = AIInvocationObservedV1.model_validate(raw_gcp)
+    assert isinstance(event.identity_details, GCPIdentityDetails)
+    assert event.identity_details.principal_email is None
+
+    # AWS side still requires principal_arn — union stays strict per-variant.
+    from pydantic import ValidationError
+
+    raw_aws_missing_arn = {**raw_gcp, "identity_details": {"kind": "aws"}}
+    with pytest.raises(ValidationError):
+        AIInvocationObservedV1.model_validate(raw_aws_missing_arn)
+
+
+def test_gcp_identity_details_wire_form_round_trips_on_envelope() -> None:
+    """EventEnvelope accepts GCPIdentityDetails on the same union — Vertex's
+    vertex_envelope constructor will populate it this way."""
+    env = EventEnvelope(
+        request_id="r",
+        timestamp="t",
+        identity_details=GCPIdentityDetails(),
+        model=AIModel(id="publishers/google/models/gemini-2.5-flash"),
+        parsed_as="vertex-gemini-generate",
+    )
+    assert env.identity_details.kind == "gcp"
+    wire = env.model_dump(mode="json", exclude_none=True)
+    assert wire["identity_details"] == {"kind": "gcp"}
 
 
 async def test_content_fields_default_to_hash_only() -> None:
