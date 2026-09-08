@@ -29,6 +29,23 @@ resource "google_bigquery_table" "per_model" {
   dataset_id = google_bigquery_dataset.reqresp_logs.dataset_id
   table_id   = "slashid_vertex_reqresp_${each.key}"
 
+  # HOUR-on-logging_time matches Vertex's own default when the API
+  # auto-creates a destination table — pinning here keeps every
+  # per-model table partitioning-compatible, which is a hard
+  # requirement for the wildcard-table read in ``BqEventSource``.
+  # Also lets BQ prune the polling query to the recent partitions.
+  #
+  # 24h partition TTL: the forwarder consumes each row exactly once
+  # (checkpoint advances past it) and doesn't need long-term
+  # storage. 24h leaves a reprocess window if the forwarder needs
+  # to be rewound (checkpoint reset) after an outage; older data is
+  # effectively dead weight + storage cost.
+  time_partitioning {
+    type          = "HOUR"
+    field         = "logging_time"
+    expiration_ms = 86400000
+  }
+
   # Schema mirrors Vertex request-response logging output. Only the
   # columns BqEventSource projects (``request_id``, ``logging_time``,
   # ``model``, ``full_request``, ``full_response``) are strictly needed
