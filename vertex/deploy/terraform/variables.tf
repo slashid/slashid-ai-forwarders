@@ -70,10 +70,17 @@ variable "max_content_size" {
   default     = 100000
 }
 
-variable "poll_cadence_seconds" {
-  description = "How often the Cloud Scheduler fires the polling function. 60s balances freshness against BQ query cost."
-  type        = number
-  default     = 60
+variable "poll_schedule" {
+  description = <<-EOT
+    Unix-cron schedule for the Cloud Scheduler polling tick. Cloud
+    Scheduler doesn't support sub-minute granularity — ``* * * * *``
+    (every minute) is the tightest cadence. Other common values:
+    ``*/5 * * * *`` (every 5 minutes), ``*/15 * * * *`` (every 15),
+    ``0 * * * *`` (top of every hour). Fixed to UTC — cross-region
+    schedule drift is worse than a UTC diff.
+  EOT
+  type        = string
+  default     = "* * * * *"
 }
 
 variable "max_rows_per_tick" {

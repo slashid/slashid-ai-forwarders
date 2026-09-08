@@ -24,13 +24,14 @@ logging on each configured publisher model via `setPublisherModelConfig`.
 Vertex + GCP constraints that shape the v1 architecture. Not bugs —
 gotchas to plan around. Extend as new ones are discovered.
 
-- **Polling delivery, not push.** Cloud Scheduler ticks every 60s (
-  configurable via `poll_cadence_seconds`); BigQuery has no native
-  row-level Pub/Sub. On low-usage projects most ticks fetch zero rows
-  and burn Cloud Function invocations for nothing. Considered
-  alternatives (Eventarc for BQ, BQ subscriptions) are wrong-direction
-  or job-level only; the design POC (2026-09-04) confirmed no
-  per-row push path exists.
+- **Polling delivery, not push.** Cloud Scheduler ticks every minute
+  by default (configurable via `poll_schedule`, a unix-cron string);
+  BigQuery has no native row-level Pub/Sub, and Cloud Scheduler
+  doesn't support sub-minute granularity. On low-usage projects most
+  ticks fetch zero rows and burn Cloud Function invocations for
+  nothing. Considered alternatives (Eventarc for BQ, BQ subscriptions)
+  are wrong-direction or job-level only; the design POC (2026-09-04)
+  confirmed no per-row push path exists.
 - **No per-invocation identity.** BigQuery request-response rows carry
   no caller principal; Cloud Audit Logs carry the principal but not the
   payload. A time-based join is fragile under concurrency, so v1 emits
