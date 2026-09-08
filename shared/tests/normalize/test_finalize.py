@@ -179,6 +179,26 @@ def test_finalize_does_not_collide_different_files_with_different_algs() -> None
     assert len(n.accessed_files) == 2
 
 
+def test_finalize_hash_knowledge_propagates_through_skipped_entries() -> None:
+    """A middle entry that collides on md5 but ALSO carries a sha256
+    leaves that sha256 in the seen-set, so a later sha256-only entry
+    for the same bytes still collapses.
+
+    Sequence:
+      A: {md5: X}       — kept, seen = {md5:X}
+      B: {md5: X, sha256: Y} — collides via md5, skipped, but its
+                              sha256:Y is added to seen anyway.
+      C: {sha256: Y}    — would leak through with only A's triples in
+                          seen; collapses now that B's sha256 bridged.
+    """
+    n = NormalizedInvocation()
+    n.accessed_files.append(AIAccessedFile(name="doc", content_hashes={"md5": "X"}))
+    n.accessed_files.append(AIAccessedFile(name="doc", content_hashes={"md5": "X", "sha256": "Y"}))
+    n.accessed_files.append(AIAccessedFile(name="doc", content_hashes={"sha256": "Y"}))
+    finalize(n, config=_config())
+    assert len(n.accessed_files) == 1
+
+
 def test_finalize_stubs_dedupe_by_name_but_not_against_hashed() -> None:
     """Stub entries (no content_hashes) collide with other same-name
     stubs, but stay distinct from a hashed entry with the same name —
@@ -187,9 +207,7 @@ def test_finalize_stubs_dedupe_by_name_but_not_against_hashed() -> None:
     n = NormalizedInvocation()
     n.accessed_files.append(AIAccessedFile(name="gs://bucket/x", content_hashes=None))
     n.accessed_files.append(AIAccessedFile(name="gs://bucket/x", content_hashes=None))
-    n.accessed_files.append(
-        AIAccessedFile(name="gs://bucket/x", content_hashes={"sha256": "abc"})
-    )
+    n.accessed_files.append(AIAccessedFile(name="gs://bucket/x", content_hashes={"sha256": "abc"}))
     finalize(n, config=_config())
     # 3 → 2: stubs collapse, hashed entry stays.
     assert len(n.accessed_files) == 2

@@ -62,13 +62,20 @@ def _dedupe_by_name_hash(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
     ``(name, alg, value)`` triple — an md5-only entry from one
     extractor matches a sha256+md5 entry from another via the shared
     md5 hash.
+
+    ``seen`` accumulates triples from EVERY entry, even the ones we
+    skip — a skipped middle entry that carries both md5 (matching a
+    prior md5-only) and sha256 leaves its sha256 in ``seen`` so a
+    later sha256-only entry for the same bytes also collapses. Without
+    this propagation the md5→sha256 bridge would fall out and the
+    later entry would leak through as a duplicate.
     """
     seen: set[tuple[str | None, str | None, str | None]] = set()
     out: list[AIAccessedFile] = []
     for f in files:
         triples = _hash_triples(f)
-        if triples & seen:
-            continue
+        collides = bool(triples & seen)
         seen |= triples
-        out.append(f)
+        if not collides:
+            out.append(f)
     return out
