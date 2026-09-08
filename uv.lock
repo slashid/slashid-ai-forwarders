@@ -1641,7 +1641,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-vertex-forwarder"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "vertex" }
 dependencies = [
     { name = "functions-framework" },
@@ -1649,7 +1649,7 @@ dependencies = [
     { name = "google-cloud-firestore" },
     { name = "google-cloud-secret-manager" },
     { name = "httpx" },
-    { name = "slashid-ai-forwarder-core" },
+    { name = "slashid-ai-forwarder-core", extra = ["gcs"] },
 ]
 
 [package.metadata]
@@ -1659,7 +1659,7 @@ requires-dist = [
     { name = "google-cloud-firestore", specifier = ">=2.16" },
     { name = "google-cloud-secret-manager", specifier = ">=2.20" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "slashid-ai-forwarder-core", editable = "shared" },
+    { name = "slashid-ai-forwarder-core", extras = ["gcs"], editable = "shared" },
 ]
 
 [[package]]
