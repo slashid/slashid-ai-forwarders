@@ -26,7 +26,7 @@ from slashid_ai_forwarder_core.events import (
     GCPIdentityDetails,
 )
 from slashid_ai_forwarder_core.normalize.gemini.stop_reasons import (
-    STOP_REASONS,
+    resolve_finish_reason,
 )
 
 from .event_source import Entry
@@ -58,12 +58,31 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
     )
 
     # candidates[0].finishReason drives the wire stop_reason. Empty
-    # candidates list is a valid SAFETY-block shape; fall through to
-    # "unknown" in that case.
+    # candidates list is a valid SAFETY-block shape — leave
+    # stop_reason=None so the wire event's stop_reason stays absent
+    # (serialized as "unknown" downstream). Do NOT feed raw=None into
+    # ``resolve_finish_reason`` in that case; the streaming heuristic
+    # would rewrite the SAFETY-block into a spurious end_turn.
+    #
+    # For non-empty candidates: ``resolve_finish_reason`` handles both
+    # explicit finishReason values (STOP/MAX_TOKENS/SAFETY/...) AND
+    # the null case that streaming BQ log entries produce (Vertex
+    # drops the terminal chunk's finishReason during server-side
+    # merge). ``max_output_tokens`` from the request's
+    # generationConfig lets it recover MAX_TOKENS when the customer
+    # capped generation.
     stop_reason = None
     if entry.response_body.candidates:
-        raw = entry.response_body.candidates[0].finishReason
-        stop_reason = STOP_REASONS.get(raw or "", "unknown")
+        max_output_tokens = (
+            entry.request_body.generationConfig.maxOutputTokens
+            if entry.request_body.generationConfig
+            else None
+        )
+        stop_reason = resolve_finish_reason(
+            entry.response_body.candidates[0].finishReason,
+            candidates_token_count=usage.candidatesTokenCount,
+            max_output_tokens=max_output_tokens,
+        )
 
     return EventEnvelope(
         request_id=entry.request_id,
