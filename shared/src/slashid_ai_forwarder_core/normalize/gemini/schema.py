@@ -204,17 +204,34 @@ class GeminiTool(_LenientModel):
 # --------------------------------------------------------------------------
 
 
+class GeminiGenerationConfig(_LenientModel):
+    """``GenerateContentRequest.generationConfig`` — only the fields
+    the normalizer actually reads.
+
+    ``maxOutputTokens`` is used by ``resolve_finish_reason`` to
+    recover the ``MAX_TOKENS`` signal on streamed responses (which
+    arrive at BQ with ``finishReason: null`` after Vertex's
+    server-side merge). Every other generationConfig field
+    (temperature, topP, thinkingConfig, safetySettings, ...) stays
+    dropped via ``_LenientModel``'s ``extra="ignore"``.
+    """
+
+    maxOutputTokens: int | None = None
+
+
 class GeminiRequestBody(_LenientModel):
     """``GenerateContentRequest`` — content-relevant fields only.
 
-    ``model``, ``generationConfig``, ``safetySettings``, ``toolConfig``
-    all drop via ``_LenientModel`` — they're inference settings, not
-    content.
+    ``model``, ``safetySettings``, ``toolConfig`` all drop via
+    ``_LenientModel``. ``generationConfig`` is materialized narrowly
+    (only ``maxOutputTokens``) so the normalizer can key the
+    streaming-stop-reason heuristic off it.
     """
 
     contents: list[GeminiContent] = Field(default_factory=list)
     systemInstruction: GeminiSystemInstruction | None = None
     tools: list[GeminiTool] = Field(default_factory=list)
+    generationConfig: GeminiGenerationConfig | None = None
 
 
 # --------------------------------------------------------------------------

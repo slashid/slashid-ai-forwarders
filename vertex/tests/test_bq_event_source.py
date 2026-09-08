@@ -202,3 +202,36 @@ def test_entry_checkpoint_property_reflects_row() -> None:
     cp = entry.checkpoint
     assert cp.last_request_id == "42"
     assert cp.last_logging_time == datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
+
+
+def test_fetch_accepts_stream_generate_content_row() -> None:
+    """BqEventSource treats StreamGenerateContent rows identically to
+    GenerateContent — same code path, no api_method filtering. The
+    row's ``api_method`` column is informational only (not selected
+    by ``_build_query``, not consumed by ``_row_to_entry``). Merged
+    ``full_response`` has ``finishReason=null``; that's normalized
+    downstream by ``resolve_finish_reason``, not here."""
+    stream_req = {
+        "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+        "generationConfig": {"maxOutputTokens": 50},
+    }
+    stream_resp = {
+        "candidates": [
+            {
+                "content": {"role": "model", "parts": [{"text": "The"}]},
+                "finishReason": None,
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 3,
+            "candidatesTokenCount": 50,
+            "totalTokenCount": 53,
+        },
+    }
+    src, _ = _source(rows=[_row(request_payload=stream_req, response_payload=stream_resp)])
+    entries = src.fetch(Checkpoint(None, None))
+    assert len(entries) == 1
+    e = entries[0]
+    assert e.request_body.generationConfig is not None
+    assert e.request_body.generationConfig.maxOutputTokens == 50
+    assert e.response_body.candidates[0].finishReason is None
