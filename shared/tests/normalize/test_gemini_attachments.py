@@ -219,6 +219,7 @@ async def test_file_data_media_type_falls_back_to_head_content_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When fileData.mimeType is absent, HEAD.contentType wins over filename guess."""
+
     async def _fake_resolve(source: dict, **_kw) -> None:  # type: ignore[type-arg]
         source["_resolved_byte_length"] = 100
         source["_resolved_md5_hex"] = "deadbeef"
@@ -244,6 +245,7 @@ async def test_file_data_head_failure_emits_stub(
 ) -> None:
     """When resolver leaves source untouched (HEAD 404/403) → stub matches Phase 3.1
     shape: URI as name, media_type from part or extension guess, everything else None."""
+
     async def _fake_resolve(source: dict, **_kw) -> None:  # type: ignore[type-arg]
         return  # simulate HEAD failure
 
@@ -253,9 +255,7 @@ async def test_file_data_head_failure_emits_stub(
         [
             {
                 "role": "user",
-                "parts": [
-                    {"fileData": {"mimeType": "application/pdf", "fileUri": "gs://x/y.pdf"}}
-                ],
+                "parts": [{"fileData": {"mimeType": "application/pdf", "fileUri": "gs://x/y.pdf"}}],
             }
         ]
     )
@@ -308,6 +308,7 @@ async def test_file_data_oversized_range_get_no_hash_only_snippet(
 ) -> None:
     """Opt-in + oversized: no hash (bytes incomplete), redacted_content shows
     head+tail elided by ``truncate_middle``. byte_length comes from HEAD."""
+
     async def _fake_resolve(source: dict, **_kw) -> None:  # type: ignore[type-arg]
         source["_resolved_byte_length"] = 10_000_000
         source["_resolved_md5_hex"] = "deadbeef"

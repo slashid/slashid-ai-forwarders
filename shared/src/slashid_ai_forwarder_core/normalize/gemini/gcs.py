@@ -81,9 +81,9 @@ async def _resolve_gcs_attachment(
       ``_resolved_byte_length``  — object size from download_metadata
       ``_resolved_md5_hex``      — md5Hash converted from base64 to hex
       ``_resolved_content_type`` — contentType from download_metadata
-      ``_resolved_bytes``        — full body when include_raw_content=True and size ≤ max_content_size
-      ``_resolved_head_bytes``   — first chunk when file exceeds max_content_size (opt-in only)
-      ``_resolved_tail_bytes``   — last chunk when file exceeds max_content_size (opt-in only)
+      ``_resolved_bytes``        — full body when opt-in and size ≤ cap
+      ``_resolved_head_bytes``   — first chunk when file exceeds cap (opt-in only)
+      ``_resolved_tail_bytes``   — last chunk when file exceeds cap (opt-in only)
 
     Nothing is stashed when the source has no ``gs://`` URI or when
     ``download_metadata`` fails — the caller falls through to a stub
@@ -141,12 +141,16 @@ async def _resolve_gcs_attachment(
         chunk = max_content_size // 2 + SNAP_TOLERANCE
         try:
             head_bytes = await client.download(
-                bucket, key, headers={"Range": f"bytes=0-{chunk - 1}"},
+                bucket,
+                key,
+                headers={"Range": f"bytes=0-{chunk - 1}"},
             )
             source["_resolved_head_bytes"] = head_bytes
             tail_start = max(size - chunk, 0)
             tail_bytes = await client.download(
-                bucket, key, headers={"Range": f"bytes={tail_start}-{size - 1}"},
+                bucket,
+                key,
+                headers={"Range": f"bytes={tail_start}-{size - 1}"},
             )
             source["_resolved_tail_bytes"] = tail_bytes
         except Exception:

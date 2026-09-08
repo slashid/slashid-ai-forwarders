@@ -24,6 +24,7 @@ def _reset_client() -> None:
 def _b64_md5(raw: bytes) -> str:
     """Encode an md5 digest the way GCS does — base64 (not hex)."""
     import hashlib
+
     return base64.b64encode(hashlib.md5(raw).digest()).decode()
 
 
@@ -93,11 +94,14 @@ async def test_resolve_gcs_attachment_metadata_only(monkeypatch: pytest.MonkeyPa
 
     source: dict[str, Any] = {"fileUri": "gs://bucket/hello.txt"}
     await gcs._resolve_gcs_attachment(
-        source, max_content_size=10 * 1024 * 1024, include_raw_content=False,
+        source,
+        max_content_size=10 * 1024 * 1024,
+        include_raw_content=False,
     )
     assert source["_resolved_byte_length"] == len(raw)
     # md5 stashed in hex (converted from GCS's base64 encoding).
     import hashlib
+
     assert source["_resolved_md5_hex"] == hashlib.md5(raw).hexdigest()
     assert source["_resolved_content_type"] == "text/plain"
     assert "_resolved_bytes" not in source
@@ -113,7 +117,9 @@ async def test_resolve_gcs_attachment_head_fails_no_keys_set(
 
     source: dict[str, Any] = {"fileUri": "gs://bucket/missing.pdf"}
     await gcs._resolve_gcs_attachment(
-        source, max_content_size=10 * 1024 * 1024, include_raw_content=False,
+        source,
+        max_content_size=10 * 1024 * 1024,
+        include_raw_content=False,
     )
     assert "_resolved_byte_length" not in source
     assert "_resolved_md5_hex" not in source
@@ -138,7 +144,9 @@ async def test_resolve_gcs_attachment_within_threshold_fetches_bytes(
 
     source: dict[str, Any] = {"fileUri": "gs://bucket/file.txt"}
     await gcs._resolve_gcs_attachment(
-        source, max_content_size=10 * 1024 * 1024, include_raw_content=True,
+        source,
+        max_content_size=10 * 1024 * 1024,
+        include_raw_content=True,
     )
     assert source["_resolved_byte_length"] == len(raw)
     assert source["_resolved_bytes"] == raw
@@ -164,7 +172,9 @@ async def test_resolve_gcs_attachment_above_threshold_range_gets(
 
     source: dict[str, Any] = {"fileUri": "gs://bucket/large.pdf"}
     await gcs._resolve_gcs_attachment(
-        source, max_content_size=20, include_raw_content=True,
+        source,
+        max_content_size=20,
+        include_raw_content=True,
     )
     assert source["_resolved_byte_length"] == 200
     assert source["_resolved_content_type"] == "application/pdf"
@@ -198,7 +208,9 @@ async def test_resolve_gcs_attachment_include_raw_disabled_no_get(
 
     source: dict[str, Any] = {"fileUri": "gs://bucket/x"}
     await gcs._resolve_gcs_attachment(
-        source, max_content_size=10 * 1024 * 1024, include_raw_content=False,
+        source,
+        max_content_size=10 * 1024 * 1024,
+        include_raw_content=False,
     )
     client.download.assert_not_called()
 
@@ -219,7 +231,9 @@ async def test_resolve_gcs_attachment_empty_file_no_get(
 
     source: dict[str, Any] = {"fileUri": "gs://bucket/empty"}
     await gcs._resolve_gcs_attachment(
-        source, max_content_size=10 * 1024 * 1024, include_raw_content=True,
+        source,
+        max_content_size=10 * 1024 * 1024,
+        include_raw_content=True,
     )
     assert source["_resolved_byte_length"] == 0
     assert source["_resolved_bytes"] == b""
@@ -241,6 +255,7 @@ def test_parse_gs_uri_rejects(bad: str) -> None:
 def test_md5_b64_to_hex_round_trip() -> None:
     """The public helper must survive an md5 digest that GCS returns as base64."""
     import hashlib
+
     raw = b"canonical dedup key"
     expected = hashlib.md5(raw).hexdigest()
     got = gcs._md5_b64_to_hex(base64.b64encode(hashlib.md5(raw).digest()).decode())

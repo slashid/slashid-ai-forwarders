@@ -158,9 +158,7 @@ def _from_file_data(
     uri = file_data.fileUri
     resolved_len = src_dict.get("_resolved_byte_length")
     media_type = (
-        file_data.mimeType
-        or src_dict.get("_resolved_content_type")
-        or _mime_from_name(uri)
+        file_data.mimeType or src_dict.get("_resolved_content_type") or _mime_from_name(uri)
     )
 
     if resolved_len is None:
@@ -188,7 +186,9 @@ def _from_file_data(
             "md5": hashlib.md5(raw_bytes).hexdigest(),
         }
         if config.include_raw_content:
-            redacted = truncate_middle(bytes(raw_bytes).decode(errors="replace"), config.max_content_size)
+            redacted = truncate_middle(
+                bytes(raw_bytes).decode(errors="replace"), config.max_content_size
+            )
     elif isinstance(head_bytes, (bytes, bytearray)) and isinstance(tail_bytes, (bytes, bytearray)):
         # Partial fetch (oversized): no hash — bytes incomplete.
         content_hashes = None
