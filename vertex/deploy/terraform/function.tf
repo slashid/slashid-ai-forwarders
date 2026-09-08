@@ -52,16 +52,21 @@ resource "google_storage_bucket" "release" {
 # the provisioner — leaving the file missing.
 #
 # Trigger on wall-clock time so the curl re-fires on every apply.
-# ~20MB from GitHub Releases is cheap. ``google_storage_bucket_object``
-# below detects content-level changes via ``source_md5hash``, so
-# identical bytes don't get re-uploaded.
+# ~20MB is cheap. ``google_storage_bucket_object`` below detects
+# content-level changes via ``source_md5hash``, so identical bytes
+# don't get re-uploaded.
+#
+# URL comes from ``local.release_asset_url`` — the GitHub API asset
+# endpoint, NOT the ``releases/download/…`` rewrite (that rewrite
+# caches 404s aggressively when a release is deleted-and-recreated
+# under the same tag+filename, which our workflow does).
 resource "null_resource" "download_release_zip" {
   triggers = {
     always_run = timestamp()
   }
 
   provisioner "local-exec" {
-    command = "curl -sfL -o ${path.module}/.release.zip '${local.release_zip_url}'"
+    command = "curl -sfL -H 'Accept: application/octet-stream' -o ${path.module}/.release.zip '${local.release_asset_url}'"
   }
 }
 
