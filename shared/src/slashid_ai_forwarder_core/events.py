@@ -301,6 +301,41 @@ class EventEnvelope(_WireModel):
 # --- record parsing ---------------------------------------------------------
 
 
+# Fields that carry customer prompt/response bodies when
+# ``SLASHID_INCLUDE_RAW_CONTENT`` is set. Wire delivery to the SlashID
+# sink is fine — that's the customer's own destination — but ops-side
+# CloudWatch / Cloud Function logs shouldn't leak them.
+_LOG_REDACTED_FIELDS: frozenset[str] = frozenset({"redacted_text", "redacted_content"})
+
+
+def redact_for_logging(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``payload`` with sensitive fields recursively
+    stripped, suitable for ops-side logging (CloudWatch, Cloud Function
+    stdout, structured log aggregators).
+
+    Removes ``redacted_text`` on ``AIInvocationContent`` and
+    ``redacted_content`` on ``AIAccessedFile`` at any depth. The hash /
+    mime / byte_length siblings stay in place so the log line still
+    lets ops correlate an event without exposing the underlying bytes.
+
+    Handlers call this before ``json.dumps``:
+
+        log.info("event: %s", json.dumps(
+            redact_for_logging(event.model_dump(mode="json", exclude_none=True)),
+            separators=(",", ":"),
+        ))
+    """
+    return _strip_sensitive(payload)
+
+
+def _strip_sensitive(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _strip_sensitive(v) for k, v in obj.items() if k not in _LOG_REDACTED_FIELDS}
+    if isinstance(obj, list):
+        return [_strip_sensitive(i) for i in obj]
+    return obj
+
+
 def _strip_empty_top(d: dict[str, Any]) -> dict[str, Any]:
     """Drop keys whose value is an empty container.
 
