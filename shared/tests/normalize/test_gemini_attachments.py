@@ -12,6 +12,7 @@ import hashlib
 
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import AIAccessedFile
+from slashid_ai_forwarder_core.normalize.finalize import finalize
 from slashid_ai_forwarder_core.normalize.gemini.normalize import to_normalized_invocation
 from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
@@ -38,15 +39,12 @@ async def _extract(
     include_raw_content: bool = False,
     max_content_size: int = 100_000,
 ) -> list[AIAccessedFile]:
+    """Run the full pipeline (extract → finalize) so tests observe the
+    canonical, deduped accessed_files list — matches real handler use."""
     request = GeminiRequestBody.model_validate({"contents": contents})
-    normalized = await to_normalized_invocation(
-        request,
-        _EMPTY_RESPONSE,
-        config=_config(
-            include_raw_content=include_raw_content,
-            max_content_size=max_content_size,
-        ),
-    )
+    cfg = _config(include_raw_content=include_raw_content, max_content_size=max_content_size)
+    normalized = await to_normalized_invocation(request, _EMPTY_RESPONSE, config=cfg)
+    finalize(normalized, config=cfg)
     return normalized.accessed_files
 
 

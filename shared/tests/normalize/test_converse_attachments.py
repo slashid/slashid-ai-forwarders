@@ -23,6 +23,7 @@ from slashid_ai_forwarder_core.normalize.converse.schema import (
     ConverseRequestBody,
     ConverseResponse,
 )
+from slashid_ai_forwarder_core.normalize.finalize import finalize
 
 
 def _config(*, include_raw_content: bool = False, max_content_size: int = 100_000) -> BaseConfig:
@@ -46,17 +47,13 @@ async def _extract(
     max_content_size: int = 100_000,
 ) -> list[AIAccessedFile]:
     """Validate a raw messages list into ConverseRequestBody, dispatch through
-    to_normalized_invocation, return the resulting accessed_files."""
+    to_normalized_invocation + finalize (mirrors the real handler pipeline
+    so tests observe the canonical, deduped accessed_files list)."""
     body_dict: dict[str, Any] = {"messages": messages if messages is not None else []}
     request = ConverseRequestBody.model_validate(body_dict)
-    normalized = await to_normalized_invocation(
-        request,
-        _EMPTY_RESPONSE,
-        config=_config(
-            include_raw_content=include_raw_content,
-            max_content_size=max_content_size,
-        ),
-    )
+    cfg = _config(include_raw_content=include_raw_content, max_content_size=max_content_size)
+    normalized = await to_normalized_invocation(request, _EMPTY_RESPONSE, config=cfg)
+    finalize(normalized, config=cfg)
     return normalized.accessed_files
 
 
