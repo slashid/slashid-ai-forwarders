@@ -67,6 +67,10 @@ async def extract_attachments(
     S3-sourced attachments are resolved concurrently up-front (bounded by
     ``MAX_PARALLEL_FETCHES``). Inline base64 attachments are decoded
     synchronously as the second pass walks messages.
+
+    Duplicates in the fresh-turn window (same file referenced twice) are
+    NOT deduped here — the shared ``finalize`` pass canonicalizes
+    ``normalized.accessed_files`` after every vendor extractor runs.
     """
     fresh_messages = after_last_assistant(request.messages)
     if not fresh_messages:
@@ -155,7 +159,6 @@ def _build_files_from_block_dicts(
     max_content_size: int,
 ) -> list[AIAccessedFile]:
     files: list[AIAccessedFile] = []
-    seen: set[tuple[str | None, str | None]] = set()
 
     def _add(
         name: str | None,
@@ -175,10 +178,6 @@ def _build_files_from_block_dicts(
             }
         else:
             content_hashes = None
-        key = (name, content_hashes["sha256"] if content_hashes else None)
-        if key in seen:
-            return
-        seen.add(key)
         redacted: str | None = None
         if include_raw_content:
             if raw_bytes is not None:

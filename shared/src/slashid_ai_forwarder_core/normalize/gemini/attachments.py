@@ -47,22 +47,23 @@ async def extract_attachments(
     message contribute — earlier attachments were reported on prior
     events. Uses ``after_last_assistant(..., role_value="model")`` per
     Gemini's role naming.
+
+    Duplicates in the fresh-turn window (same file referenced twice)
+    are NOT deduped here — the shared ``finalize`` pass canonicalizes
+    ``normalized.accessed_files`` after every vendor extractor runs.
     """
     fresh_messages = after_last_assistant(request.contents, role_value="model")
     if not fresh_messages:
         return []
 
     files: list[AIAccessedFile] = []
-    seen: set[tuple[str | None, str | None]] = set()
     for msg in fresh_messages:
         for part in msg.parts:
             match part:
                 case GeminiInlineDataPart():
-                    entry = _from_inline_data(part.inlineData, config)
-                    _dedupe_append(files, seen, entry)
+                    files.append(_from_inline_data(part.inlineData, config))
                 case GeminiFileDataPart():
-                    entry = _from_file_data(part.fileData)
-                    _dedupe_append(files, seen, entry)
+                    files.append(_from_file_data(part.fileData))
                 # Other part types: not attachments.
     return files
 
@@ -104,19 +105,6 @@ def _from_file_data(file_data: GeminiFileData) -> AIAccessedFile:
         byte_length=None,
         redacted_content=None,
     )
-
-
-def _dedupe_append(
-    files: list[AIAccessedFile],
-    seen: set[tuple[str | None, str | None]],
-    entry: AIAccessedFile,
-) -> None:
-    """Dedup key = (name, sha256). Matches Converse behaviour."""
-    key = (entry.name, entry.content_hashes["sha256"] if entry.content_hashes else None)
-    if key in seen:
-        return
-    seen.add(key)
-    files.append(entry)
 
 
 def _mime_from_name(name: str | None) -> str | None:
