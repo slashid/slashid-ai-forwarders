@@ -10,6 +10,13 @@ name: vertex-model-catalog-refresh
 #   - VERTEX_MODEL_REFRESH_WIF_PROVIDER
 #   - VERTEX_MODEL_REFRESH_SERVICE_ACCOUNT
 #   - VERTEX_MODEL_REFRESH_PROJECT_ID
+#
+# PR creation uses a separate fine-grained PAT because the slashid org
+# policy locks GITHUB_TOKEN out of ``pull-requests: write``. The token
+# needs ``Contents: Read/Write`` + ``Pull requests: Read/Write`` scoped
+# to this repo only:
+#
+#   - VERTEX_MODEL_REFRESH_PR_TOKEN
 
 on:
   workflow_dispatch:
@@ -47,6 +54,14 @@ jobs:
       - name: Open PR on drift
         uses: peter-evans/create-pull-request@v7
         with:
+          # PAT — GITHUB_TOKEN cannot open PRs under the slashid org
+          # policy. Fine-grained token, scoped to this repo only, with
+          # Contents + Pull requests read/write.
+          token: ${{ secrets.VERTEX_MODEL_REFRESH_PR_TOKEN }}
+          # Pin the paths so untracked files in the workspace — including
+          # the short-lived ``gha-creds-*.json`` the auth action writes —
+          # never end up in the commit.
+          add-paths: vertex/deploy/terraform/all_models.json
           commit-message: "chore(vertex): refresh Model Garden catalog"
           branch: vertex-model-catalog-refresh
           title: "chore(vertex): refresh Model Garden catalog"
