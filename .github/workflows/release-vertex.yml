@@ -7,16 +7,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # Cloud Functions 2nd gen Python runtime target. Matches the runtime
-  # pinned in vertex/deploy/terraform/function.tf.
-  PYTHON_VERSION: "3.13"
-  # Cloud Functions 2nd gen runs on Linux x86_64 — same wheel-tag
-  # target as Lambda (see release-bedrock.yml). Pinning the platform
-  # here means ``uv pip install`` picks the right pydantic-core /
-  # httpx native binaries.
-  PLATFORM_TAG: "x86_64-manylinux2014"
-
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -49,36 +39,46 @@ jobs:
             echo "ARTIFACT=slashid-vertex-forwarder-v${FILE_VERSION}.zip"
           } >> "$GITHUB_ENV"
 
-      - name: Export runtime dependencies (skip workspace member)
-        # --no-emit-workspace strips the slashid-ai-forwarder-core dep
-        # from the requirements file; we install its sources by copying
-        # the tree into build/ directly (Cloud Functions has no
-        # visibility of workspace sources at deploy time).
+      - name: Stage source trees + entrypoint shim
+        # Cloud Functions 2nd gen has its own Python build layer — it
+        # detects ``requirements.txt`` at the zip root and pip-installs
+        # into the layer for us. Different from Lambda's "bundle
+        # pre-installed deps into the zip" pattern (release-bedrock.yml)
+        # — attempting that on CF ends up with double-installed packages
+        # where the layer's older ``typing_extensions`` shadows the
+        # newer one pydantic_core needs, and startup dies on
+        # ``ImportError: cannot import name 'Sentinel'``.
+        #
+        # So: only ship source + requirements.txt + main.py, let the
+        # CF build layer own the pip install.
+        run: |
+          mkdir -p build
+          cp -r vertex/src/slashid_vertex_forwarder build/
+          cp -r shared/src/slashid_ai_forwarder_core build/
+
+      - name: Emit requirements.txt for the Cloud Functions build layer
+        # --no-emit-workspace strips ``slashid-ai-forwarder-core`` from
+        # requirements — we ship its source tree above instead. The
+        # CF build layer runs ``pip install -r requirements.txt`` on
+        # top of its baseline packages, so this file is what pins the
+        # exact versions our source expects (typing_extensions
+        # included).
+        #
+        # --quiet + 2>/dev/null suppress uv's "Resolved N packages"
+        # progress message which otherwise gets prepended to
+        # requirements.txt and breaks pip parsing at Cloud Build time
+        # (``Invalid requirement: 'Resolved 85 packages in 1ms'``).
         run: |
           uv export \
             --package slashid-vertex-forwarder \
             --no-dev \
             --no-emit-workspace \
             --no-hashes \
+            --quiet \
             --format requirements-txt \
-            > build-requirements.txt
-          echo "=== build-requirements.txt ==="
-          cat build-requirements.txt
-
-      - name: Install dependencies into build dir (Cloud Functions-compatible wheels)
-        run: |
-          mkdir -p build
-          uv pip install \
-            --target build \
-            --python-version "${PYTHON_VERSION}" \
-            --python-platform "${PLATFORM_TAG}" \
-            --no-installer-metadata \
-            --requirement build-requirements.txt
-
-      - name: Bundle source trees
-        run: |
-          cp -r vertex/src/slashid_vertex_forwarder build/
-          cp -r shared/src/slashid_ai_forwarder_core build/
+            > build/requirements.txt 2>/dev/null
+          echo "=== build/requirements.txt (head) ==="
+          head -20 build/requirements.txt
 
       - name: Emit Cloud Function entrypoint shim
         # Cloud Functions 2nd gen looks for the entry-point function in
@@ -97,8 +97,6 @@ jobs:
 
       - name: Strip noise from the package
         run: |
-          # Keep .dist-info — pydantic uses importlib.metadata to check
-          # pydantic_core's version at import time.
           find build -type d -name __pycache__ -prune -exec rm -rf {} +
           find build -name "*.pyc" -delete
 

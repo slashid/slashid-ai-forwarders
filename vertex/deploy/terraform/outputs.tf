@@ -1,6 +1,6 @@
 output "function_uri" {
-  description = "Cloud Function 2nd gen HTTPS URL (unused for the Pub/Sub-triggered function; useful for manual invocation during smoke)."
-  value       = google_cloudfunctions2_function.forwarder.service_config[0].uri
+  description = "Cloud Function 2nd gen HTTPS URL (unused for the Pub/Sub-triggered function; useful for manual invocation during smoke). ``null`` right after ``terraform import`` — provider populates ``service_config`` on the next refresh/apply."
+  value       = try(google_cloudfunctions2_function.forwarder.service_config[0].uri, null)
 }
 
 output "service_account_email" {

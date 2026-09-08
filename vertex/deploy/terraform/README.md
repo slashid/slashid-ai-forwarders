@@ -98,6 +98,11 @@ compatible either way.
   on the project. Predefined roles that include it: `roles/aiplatform.admin`
   and `roles/owner`. `roles/aiplatform.user` and `roles/aiplatform.viewer`
   do **not**.
+- `gh` CLI authenticated for `slashid/slashid-ai-forwarders` on the
+  machine running `terraform apply` — the release-zip download step
+  uses `gh release download` (the repo is private today; a bare
+  `curl` against the releases URL is anonymous and 404s). Verify
+  with `gh auth status`.
 - APIs enabled by the module: aiplatform, bigquery, cloudbuild,
   cloudfunctions, cloudscheduler, eventarc, firestore, logging, pubsub,
   run, secretmanager, storage.

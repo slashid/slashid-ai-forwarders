@@ -42,31 +42,44 @@ resource "google_storage_bucket" "release" {
 # Fetch the release zip from GitHub Releases at plan time. If the URL
 # 404s (release not yet published), plan fails — that's the intended
 # behaviour, prevents deploying a phantom version.
-# Download the release zip via curl and stage it under the module.
+# Download the release zip via ``gh release download`` and stage it
+# under the module.
 #
-# ``local-exec`` provisioners can't discover filesystem state, and the
-# ``.release.zip`` we write lives under ``.terraform/modules/`` which
-# gets wiped whenever a customer runs ``rm -rf .terraform`` or
+# Why gh instead of curl / data.http:
+#   - The repo is private, so every fetch needs GitHub auth. ``gh``
+#     already carries the caller's auth (``gh auth login`` or
+#     ``GH_TOKEN``), so we don't have to plumb a token variable
+#     through the module.
+#   - The plain ``https://github.com/.../releases/download/{tag}/{name}``
+#     URL 404-caches aggressively when a release is deleted-and-
+#     recreated under the same tag+filename (our workflow does that
+#     on every re-tag). ``gh release download`` resolves the current
+#     asset ID via the API and downloads that direct pointer instead,
+#     sidestepping the cached rewrite.
+#
+# ``local-exec`` provisioners can't discover filesystem state, and
+# the ``.release.zip`` we write lives under ``.terraform/modules/``
+# which gets wiped whenever a customer runs ``rm -rf .terraform`` or
 # ``terraform init -upgrade`` to refresh a re-tagged module version.
-# TF's own state would still mark the null_resource as created and skip
-# the provisioner — leaving the file missing.
-#
-# Trigger on wall-clock time so the curl re-fires on every apply.
-# ~20MB is cheap. ``google_storage_bucket_object`` below detects
-# content-level changes via ``source_md5hash``, so identical bytes
-# don't get re-uploaded.
-#
-# URL comes from ``local.release_asset_url`` — the GitHub API asset
-# endpoint, NOT the ``releases/download/…`` rewrite (that rewrite
-# caches 404s aggressively when a release is deleted-and-recreated
-# under the same tag+filename, which our workflow does).
+# TF's own state would still mark the null_resource as created and
+# skip the provisioner — so trigger on wall-clock time to re-fire on
+# every apply. ~20MB from GH Releases is cheap.
+# ``google_storage_bucket_object`` below detects content-level
+# changes via ``source_md5hash``, so identical bytes don't get
+# re-uploaded.
 resource "null_resource" "download_release_zip" {
   triggers = {
     always_run = timestamp()
   }
 
   provisioner "local-exec" {
-    command = "curl -sfL -H 'Accept: application/octet-stream' -o ${path.module}/.release.zip '${local.release_asset_url}'"
+    command = <<-EOT
+      gh release download "${var.release_version}" \
+        --repo "${var.release_repo}" \
+        --pattern "${local.release_zip_filename}" \
+        --output "${path.module}/.release.zip" \
+        --clobber
+    EOT
   }
 }
 
