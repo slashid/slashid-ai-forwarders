@@ -288,3 +288,107 @@ expected:
           tool_is_error: false
           tool_executor: server
     stop_reason: end_turn
+---
+id: streaming_null_finish_no_cap_defaults_end_turn
+req:
+  contents:
+    - role: user
+      parts: [{text: "Reply with just: ACK"}]
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "ACK"}]
+      finishReason: null
+  usageMetadata:
+    promptTokenCount: 5
+    candidatesTokenCount: 2
+    totalTokenCount: 7
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "Reply with just: ACK", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "ACK", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: streaming_null_finish_at_cap_recovers_max_tokens
+req:
+  contents:
+    - role: user
+      parts: [{text: "Long essay please"}]
+  generationConfig:
+    maxOutputTokens: 100
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "The"}]
+      finishReason: null
+  usageMetadata:
+    promptTokenCount: 5
+    candidatesTokenCount: 100
+    totalTokenCount: 105
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "Long essay please", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "The", tool_is_error: false}]
+    stop_reason: max_tokens
+---
+id: streaming_null_finish_under_cap_defaults_end_turn
+req:
+  contents:
+    - role: user
+      parts: [{text: "Short answer"}]
+  generationConfig:
+    maxOutputTokens: 1000
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "OK"}]
+      finishReason: null
+  usageMetadata:
+    promptTokenCount: 3
+    candidatesTokenCount: 1
+    totalTokenCount: 4
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "Short answer", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "OK", tool_is_error: false}]
+    stop_reason: end_turn
+---
+id: streaming_explicit_safety_finish_passes_through
+req:
+  contents:
+    - role: user
+      parts: [{text: "prompt that triggered safety"}]
+response:
+  candidates:
+    - content:
+        role: model
+        parts: [{text: "partial content"}]
+      finishReason: SAFETY
+expected:
+  input:
+    messages:
+      - role: user
+        content: [{kind: text, text: "prompt that triggered safety", tool_is_error: false}]
+  output:
+    message:
+      role: assistant
+      content: [{kind: text, text: "partial content", tool_is_error: false}]
+    stop_reason: content_filtered

@@ -61,7 +61,7 @@ from .schema import (
     GeminiResponse,
     GeminiTextPart,
 )
-from .stop_reasons import STOP_REASONS
+from .stop_reasons import resolve_finish_reason
 
 _CODE_EXECUTION_TOOL_NAME = "code_execution"
 
@@ -80,7 +80,14 @@ async def to_normalized_invocation(
     are stubbed until a later phase adds GCS fetch.
     """
     input_side = _to_input(request)
-    output_side = _to_output(response, output_turn_index=len(input_side.messages))
+    max_output_tokens = (
+        request.generationConfig.maxOutputTokens if request.generationConfig else None
+    )
+    output_side = _to_output(
+        response,
+        output_turn_index=len(input_side.messages),
+        max_output_tokens=max_output_tokens,
+    )
     accessed_files = await extract_attachments(request, config=config)
     return NormalizedInvocation(
         input=input_side,
@@ -252,6 +259,7 @@ def _to_output(
     response: GeminiResponse,
     *,
     output_turn_index: int,
+    max_output_tokens: int | None = None,
 ) -> NormalizedInvocationOutput:
     """Walk response.candidates[0] → NormalizedInvocationOutput.
 
@@ -259,12 +267,22 @@ def _to_output(
     would occupy if appended). Used for the ``functionCall`` id synthesis
     so a follow-up request replaying the same functionCall part gets an
     identical id.
+
+    ``max_output_tokens`` (optional) — the request's
+    ``generationConfig.maxOutputTokens`` cap when set. Feeds
+    ``resolve_finish_reason``'s heuristic that recovers ``MAX_TOKENS``
+    on merged streaming responses (where Vertex drops the terminal
+    chunk's finishReason).
     """
     if not response.candidates:
         return NormalizedInvocationOutput()
 
     cand: GeminiCandidate = response.candidates[0]
-    stop_reason = STOP_REASONS.get(cand.finishReason or "", "unknown")
+    stop_reason = resolve_finish_reason(
+        cand.finishReason,
+        candidates_token_count=response.usageMetadata.candidatesTokenCount,
+        max_output_tokens=max_output_tokens,
+    )
 
     if cand.content is None:
         return NormalizedInvocationOutput(stop_reason=stop_reason)
