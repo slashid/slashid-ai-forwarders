@@ -70,6 +70,29 @@ variable "max_content_size" {
   default     = 100000
 }
 
+variable "filedata_buckets" {
+  description = <<-EOT
+    GCS bucket names the Vertex forwarder needs read access to, for
+    resolving Gemini ``fileData`` (``gs://bucket/object``) attachments.
+    Grants ``roles/storage.objectViewer`` to the forwarder SA on each
+    named bucket.
+
+    Special value ``["*"]`` grants project-wide read access instead
+    (covers every bucket in ``project_id``). Use for projects where
+    fileData sources aren't fixed to a known set.
+
+    Default ``[]`` — no grants. fileData attachments still parse but
+    emit stubs (no md5, no byte_length, no bytes fetched).
+
+    Cross-project buckets aren't supported by this variable: TF grants
+    only work against buckets in ``project_id``. Reference external
+    buckets by setting up IAM manually on the customer side; the
+    forwarder emits stubs for those regardless.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "poll_schedule" {
   description = <<-EOT
     Unix-cron schedule for the Cloud Scheduler polling tick. Cloud
