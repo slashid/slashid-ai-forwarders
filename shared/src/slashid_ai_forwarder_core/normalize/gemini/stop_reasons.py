@@ -62,10 +62,7 @@ def resolve_finish_reason(
     all — empirical POC 2026-09-08), so ``STOP`` is a safe default.
     """
     if raw is None:
-        if (
-            max_output_tokens is not None
-            and candidates_token_count >= max_output_tokens
-        ):
+        if max_output_tokens is not None and candidates_token_count >= max_output_tokens:
             raw = "MAX_TOKENS"
         else:
             raw = "STOP"
