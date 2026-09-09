@@ -23,6 +23,7 @@ def _entry(
     region: str = "us-central1",
     request_body: GeminiRequestBody | None = None,
     response_body: GeminiResponse | None = None,
+    api_method: str = "GenerateContent",
 ) -> Entry:
     return Entry(
         request_id=request_id,
@@ -50,6 +51,7 @@ def _entry(
                 },
             }
         ),
+        api_method=api_method,
     )
 
 

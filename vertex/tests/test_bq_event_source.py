@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -62,6 +63,8 @@ def _row(
     request_id: int = 3292372995731278848,
     logging_time: datetime | None = None,
     model: str = "publishers/google/models/gemini-2.5-flash",
+    api_method: str = "GenerateContent",
+    metadata: dict[str, Any] | str | None = None,
     request_payload: dict[str, Any] | str | None = None,
     response_payload: dict[str, Any] | str | None = None,
 ) -> dict[str, Any]:
@@ -69,8 +72,37 @@ def _row(
         "request_id": request_id,
         "logging_time": logging_time or datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC),
         "model": model,
+        "api_method": api_method,
+        "metadata": metadata,
         "full_request": request_payload or _POC_REQ,
         "full_response": response_payload or _POC_RESP,
+    }
+
+
+def _minimal_row(
+    *,
+    request_id: int = 1,
+    logging_time: datetime | None = None,
+    model: str = "publishers/google/models/gemini-2.5-flash",
+    api_method: str = "GenerateContent",
+    metadata: dict[str, Any] | None = None,
+    full_request: dict[str, Any] | None = None,
+    full_response: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Row-shaped dict for _row_to_entry — permissive, fills in required fields."""
+    return {
+        "request_id": request_id,
+        "logging_time": logging_time or datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+        "model": model,
+        "api_method": api_method,
+        "metadata": json.dumps(metadata) if metadata is not None else None,
+        "full_request": full_request or {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
+        "full_response": full_response or {
+            "candidates": [
+                {"content": {"role": "model", "parts": [{"text": "ok"}]}, "finishReason": "STOP"}
+            ],
+            "usageMetadata": {},
+        },
     }
 
 
@@ -121,7 +153,9 @@ def test_fetch_with_checkpoint_binds_where_params() -> None:
     src, client = _source(rows=[])
     src.fetch(Checkpoint(datetime(2026, 9, 5, tzinfo=UTC), "prev-id"))
     q = client.calls[0].query
-    assert "WHERE logging_time > @last_time" in q
+    # Checkpoint clause is now paren-wrapped so it can AND with the
+    # optional audit-buffer cutoff.
+    assert "WHERE (logging_time > @last_time" in q
     param_names = {p.name for p in client.calls[0].parameters}
     assert param_names == {"limit", "last_time", "last_req"}
 
@@ -207,10 +241,11 @@ def test_entry_checkpoint_property_reflects_row() -> None:
 def test_fetch_accepts_stream_generate_content_row() -> None:
     """BqEventSource treats StreamGenerateContent rows identically to
     GenerateContent — same code path, no api_method filtering. The
-    row's ``api_method`` column is informational only (not selected
-    by ``_build_query``, not consumed by ``_row_to_entry``). Merged
-    ``full_response`` has ``finishReason=null``; that's normalized
-    downstream by ``resolve_finish_reason``, not here."""
+    row's ``api_method`` column is projected onto ``Entry.api_method``
+    (used later by the identity-correlation join) but doesn't affect
+    the fetch/normalize pipeline. Merged ``full_response`` has
+    ``finishReason=null``; that's normalized downstream by
+    ``resolve_finish_reason``, not here."""
     stream_req = {
         "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
         "generationConfig": {"maxOutputTokens": 50},
@@ -235,3 +270,104 @@ def test_fetch_accepts_stream_generate_content_row() -> None:
     assert e.request_body.generationConfig is not None
     assert e.request_body.generationConfig.maxOutputTokens == 50
     assert e.response_body.candidates[0].finishReason is None
+
+
+def test_row_to_entry_extracts_api_method() -> None:
+    """The api_method column projects to Entry.api_method."""
+    from slashid_vertex_forwarder.event_source import _row_to_entry
+
+    row = _minimal_row(
+        api_method="StreamGenerateContent",
+        # request/response payloads not relevant for this projection
+    )
+    entry = _row_to_entry(row, region="us-central1")
+    assert entry is not None
+    assert entry.api_method == "StreamGenerateContent"
+
+
+def test_row_to_entry_extracts_request_latency_ms() -> None:
+    """metadata.request_latency (float milliseconds) projects to
+    Entry.request_latency_ms."""
+    from slashid_vertex_forwarder.event_source import _row_to_entry
+
+    row = _minimal_row(metadata={"request_latency": 1234.567})
+    entry = _row_to_entry(row, region="us-central1")
+    assert entry is not None
+    assert entry.request_latency_ms == 1234.567
+
+
+def test_row_to_entry_missing_request_latency_returns_none() -> None:
+    """When metadata is absent or missing request_latency, latency_ms is None."""
+    from slashid_vertex_forwarder.event_source import _row_to_entry
+
+    row = _minimal_row(metadata=None)
+    entry = _row_to_entry(row, region="us-central1")
+    assert entry is not None
+    assert entry.request_latency_ms is None
+
+    row2 = _minimal_row(metadata={"other_field": 42})
+    entry2 = _row_to_entry(row2, region="us-central1")
+    assert entry2 is not None
+    assert entry2.request_latency_ms is None
+
+
+def test_entry_identity_details_defaults_to_empty() -> None:
+    """Entry constructs with an empty GCPIdentityDetails; join stamps
+    a populated one later."""
+    from slashid_ai_forwarder_core.events import GCPIdentityDetails
+
+    from slashid_vertex_forwarder.event_source import _row_to_entry
+
+    row = _minimal_row()
+    entry = _row_to_entry(row, region="us-central1")
+    assert entry is not None
+    assert isinstance(entry.identity_details, GCPIdentityDetails)
+    assert entry.identity_details.credential_chain is None
+
+
+def test_entry_identity_details_is_mutable() -> None:
+    """Entry can be updated post-construction so the join can stamp identity."""
+    from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+
+    from slashid_vertex_forwarder.event_source import _row_to_entry
+
+    row = _minimal_row()
+    entry = _row_to_entry(row, region="us-central1")
+    assert entry is not None
+    entry.identity_details = GCPIdentityDetails(
+        credential_chain=[GCPCredential(principal_email="alice@example.com")]
+    )
+    assert entry.identity_details.credential_chain is not None
+    assert entry.identity_details.credential_chain[0].principal_email == "alice@example.com"
+
+
+def test_build_query_applies_buffer_cutoff() -> None:
+    """When buffer_seconds > 0, the query includes a WHERE logging_time <= @cutoff clause."""
+    source = BqEventSource(
+        client=MagicMock(),
+        project_id="p",
+        dataset_id="d",
+        region="us-central1",
+        max_rows_per_tick=100,
+        audit_buffer_seconds=30,
+    )
+    now = datetime(2026, 9, 9, 12, 0, 30, tzinfo=UTC)
+    query, params = source._build_query(Checkpoint(None, None), now=now)
+    assert "logging_time <= @cutoff" in query
+    cutoff_param = next(p for p in params if p.name == "cutoff")
+    assert cutoff_param.value == now - timedelta(seconds=30)
+
+
+def test_build_query_projects_api_method_and_metadata() -> None:
+    """SELECT list includes the new columns."""
+    source = BqEventSource(
+        client=MagicMock(),
+        project_id="p",
+        dataset_id="d",
+        region="us-central1",
+        max_rows_per_tick=100,
+        audit_buffer_seconds=0,
+    )
+    query, _ = source._build_query(Checkpoint(None, None))
+    assert "api_method" in query
+    assert "metadata" in query

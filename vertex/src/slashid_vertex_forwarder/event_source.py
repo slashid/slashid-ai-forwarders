@@ -19,10 +19,11 @@ server dedupes on ``request_id``.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from slashid_ai_forwarder_core.events import GCPIdentityDetails
 from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
@@ -44,7 +45,7 @@ class Checkpoint:
     last_request_id: str | None
 
 
-@dataclass(frozen=True)
+@dataclass
 class Entry:
     """One row from a BQ request-response logging table.
 
@@ -53,6 +54,18 @@ class Entry:
     canonical inputs. ``model_path`` is the full publisher model path
     (``publishers/google/models/gemini-2.5-flash``) — used as-is for
     ``AIModel.id``.
+
+    ``api_method`` is Vertex's ``GenerateContent`` / ``StreamGenerateContent``
+    label (from the BQ table's ``api_method`` column). Used to disambiguate
+    streaming vs non-streaming in the audit-log join.
+
+    ``request_latency_ms`` is Vertex's per-call latency in milliseconds
+    (from the ``metadata.request_latency`` BQ field). Feeds the
+    identity-correlation join's audit-timestamp prediction.
+
+    ``identity_details`` is stamped by the source's audit-log join
+    after construction — defaults to an empty ``GCPIdentityDetails()``.
+    Entry is intentionally not frozen so the join can attach identity.
     """
 
     request_id: str
@@ -61,6 +74,11 @@ class Entry:
     region: str
     request_body: GeminiRequestBody
     response_body: GeminiResponse
+    api_method: str  # REQUIRED — Vertex BQ populates it on every row;
+    # empty string would match every audit entry's method_name suffix
+    # (``.endswith(".")`` heuristic) so we don't let it default.
+    request_latency_ms: float | None = None
+    identity_details: GCPIdentityDetails = field(default_factory=GCPIdentityDetails)
 
     @property
     def checkpoint(self) -> Checkpoint:
@@ -104,12 +122,14 @@ class BqEventSource:
         dataset_id: str,
         region: str,
         max_rows_per_tick: int,
+        audit_buffer_seconds: int = 0,
     ) -> None:
         self._client = client
         self._project_id = project_id
         self._dataset_id = dataset_id
         self._region = region
         self._max_rows_per_tick = max_rows_per_tick
+        self._audit_buffer_seconds = audit_buffer_seconds
 
     def fetch(self, checkpoint: Checkpoint) -> list[Entry]:
         query, params = self._build_query(checkpoint)
@@ -127,13 +147,21 @@ class BqEventSource:
     def _build_query(
         self,
         checkpoint: Checkpoint,
+        *,
+        now: datetime | None = None,
     ) -> tuple[str, list[Any]]:
         """Return the parameterised SQL + query-parameters for one tick.
 
         Reads every ``slashid_vertex_reqresp_*`` table in the dataset via
-        a wildcard table reference. Filter on ``logging_time`` +
-        ``request_id`` ordering to progress past the checkpoint on every
-        tick.
+        a wildcard table reference. Filters:
+          - ``logging_time`` + ``request_id`` ordering to progress past
+            the checkpoint.
+          - ``logging_time <= @cutoff`` (when ``audit_buffer_seconds > 0``)
+            so payload rows only surface once Cloud Audit Logs have had
+            time to land for the identity-correlation join.
+
+        ``now`` is injected for deterministic tests; production callers
+        pass ``None`` and get ``datetime.now(UTC)``.
         """
         from google.cloud import bigquery
 
@@ -143,11 +171,11 @@ class BqEventSource:
         params: list[Any] = [
             bigquery.ScalarQueryParameter("limit", "INT64", self._max_rows_per_tick),
         ]
-        where = ""
+        where_clauses: list[str] = []
         if checkpoint.last_logging_time is not None and checkpoint.last_request_id is not None:
-            where = (
-                "WHERE logging_time > @last_time "
-                "OR (logging_time = @last_time AND CAST(request_id AS STRING) > @last_req)"
+            where_clauses.append(
+                "(logging_time > @last_time "
+                "OR (logging_time = @last_time AND CAST(request_id AS STRING) > @last_req))"
             )
             params.extend(
                 [
@@ -157,8 +185,14 @@ class BqEventSource:
                     bigquery.ScalarQueryParameter("last_req", "STRING", checkpoint.last_request_id),
                 ]
             )
+        if self._audit_buffer_seconds > 0:
+            cutoff = (now or datetime.now(UTC)) - timedelta(seconds=self._audit_buffer_seconds)
+            where_clauses.append("logging_time <= @cutoff")
+            params.append(bigquery.ScalarQueryParameter("cutoff", "TIMESTAMP", cutoff))
+        where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         query = (
-            "SELECT request_id, logging_time, model, full_request, full_response "
+            "SELECT request_id, logging_time, model, api_method, metadata, "
+            "full_request, full_response "
             f"FROM {table_glob} "
             f"{where} "
             "ORDER BY logging_time ASC, CAST(request_id AS STRING) ASC "
@@ -227,6 +261,9 @@ def _row_to_entry(row: Any, *, region: str) -> Entry | None:
         )
         return None
 
+    api_method = str(row.get("api_method") or "")
+    request_latency_ms = _parse_latency_ms(row.get("metadata"))
+
     return Entry(
         request_id=str(request_id),
         logging_time=logging_time,
@@ -234,4 +271,35 @@ def _row_to_entry(row: Any, *, region: str) -> Entry | None:
         region=region,
         request_body=request_body,
         response_body=response_body,
+        api_method=api_method,
+        request_latency_ms=request_latency_ms,
     )
+
+
+def _parse_latency_ms(metadata: Any) -> float | None:
+    """Parse ``metadata.request_latency`` from the BQ ``metadata`` column.
+
+    Column is JSON-typed; drivers may hand it back as a dict or as a
+    JSON-encoded string. Value is a bare float in milliseconds (verified
+    empirically in the identity-correlation phase's benchmark).
+    Returns None on any parse failure — join still works with a wider
+    effective window in that case.
+    """
+    import json
+
+    if metadata is None:
+        return None
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get("request_latency")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None

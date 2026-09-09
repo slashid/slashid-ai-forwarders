@@ -56,6 +56,7 @@ def _entry(*, request_id: str = "42") -> Entry:
                 },
             }
         ),
+        api_method="GenerateContent",
     )
 
 
