@@ -2,11 +2,16 @@
 
 The vendor-specific half of the event build. Everything that reads
 directly from a MIL record's shape lives here: identity extraction,
-timestamp normalization, stop-reason coercion, top-level token
-counts, and the model-catalog lookup. Produces a vendor-neutral
-``EventEnvelope`` (or ``None`` on drop) which the shared pure
+timestamp normalization, top-level token counts, and the
+model-catalog lookup. Produces a vendor-neutral ``EventEnvelope``
+(or ``None`` on drop) which the shared pure
 ``build_event_from_normalized`` turns into an
 ``AIInvocationObservedV1``.
+
+``stop_reason`` is not the envelope's concern — the shared builder
+reads it off ``NormalizedInvocation.output.stop_reason``, which
+every vendor normalizer (``converse``, ``anthropic``,
+``anthropic-stream``) sets via ``STOP_REASONS.get(...)``.
 
 Pure logic, no I/O — model-catalog lookup is imported lazily to
 avoid a top-level dependency on the catalog module.
@@ -20,28 +25,8 @@ from typing import Any
 from slashid_ai_forwarder_core.events import (
     AIInvocationTokens,
     AIModel,
-    AIStopReason,
     AWSIdentityDetails,
     EventEnvelope,
-)
-
-# Bedrock / Anthropic stop reasons map 1:1 onto the AIStopReason enum once we
-# fall back to "unknown" for anything not in the union.
-_STOP_REASON_VALUES: frozenset[str] = frozenset(
-    [
-        "end_turn",
-        "max_tokens",
-        "stop_sequence",
-        "tool_use",
-        "pause_turn",
-        "refusal",
-        "guardrail_intervened",
-        "content_filtered",
-        "malformed_model_output",
-        "malformed_tool_use",
-        "model_context_window_exceeded",
-        "unknown",
-    ]
 )
 
 
@@ -71,21 +56,6 @@ def _identity_details(record: dict[str, Any]) -> AWSIdentityDetails | None:
         return None
     access_key = ident.get("accessKeyId") or None
     return AWSIdentityDetails(principal_arn=principal, access_key_id=access_key)
-
-
-def _stop_reason(record: dict[str, Any]) -> AIStopReason | None:
-    obody = (record.get("output") or {}).get("outputBodyJson")
-    # Non-Anthropic streams reach us as raw lists (see mil_normalize.py — we
-    # only normalize shapes we own). Skip cleanly instead of crashing on .get().
-    if not isinstance(obody, dict):
-        return None
-    raw = obody.get("stopReason")
-    if not isinstance(raw, str) or not raw:
-        return None
-    if raw in _STOP_REASON_VALUES:
-        # ty/pydantic narrows the union for us once `raw` is in the known set.
-        return raw  # type: ignore[return-value]
-    return "unknown"
 
 
 def bedrock_envelope(
@@ -156,5 +126,4 @@ def bedrock_envelope(
         # mil_normalize.normalize_record). Defensive fallback to "unknown"
         # for code paths that skip normalization (none in production today).
         parsed_as=record.get("_parsed_as", "unknown"),
-        stop_reason=_stop_reason(record),
     )
