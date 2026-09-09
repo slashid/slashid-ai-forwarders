@@ -483,7 +483,8 @@ def test_consensus_disagrees_returns_none() -> None:
 
 
 def test_credential_chain_length_1_from_direct_user() -> None:
-    """Direct user call: chain=[effective], oauth on [0]."""
+    """Direct user call: chain=[effective], oauth lands on the single entry
+    (which is both root and effective)."""
     from slashid_vertex_forwarder.event_source import _credential_chain
 
     a = _mk_audit(timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC))
@@ -495,24 +496,29 @@ def test_credential_chain_length_1_from_direct_user() -> None:
 
 
 def test_credential_chain_length_2_from_impersonation_1_hop() -> None:
-    """alice -> sa: delegation hop at [0], effective at [1]. oauth on [0]."""
+    """alice -> sa: delegation hop at [0] (root), effective at [1].
+    oauth_client_id describes the token that authenticated THIS request
+    — that's the effective credential's OAuth flow, on chain[-1]. The
+    root's OAuth flow is not preserved in the audit log across
+    impersonation hops."""
     from slashid_vertex_forwarder.event_source import _credential_chain
 
     a = _mk_audit(
         timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
         principal_email="sa@proj.iam.gserviceaccount.com",
         principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
-        oauth_client_id=None,  # SA tokens aren't OAuth
+        oauth_client_id="111078056401171974812",  # the SA's numeric OAuth client id
         delegation=[{"subject": "user:alice@example.com", "email": "alice@example.com"}],
     )
     chain = _credential_chain(a)
     assert len(chain) == 2
     assert chain[0].principal_email == "alice@example.com"
     assert chain[0].principal_subject == "user:alice@example.com"
-    assert chain[0].oauth_client_id is None  # oauth was None on the entry
+    assert chain[0].oauth_client_id is None  # root's oauth flow not preserved
     assert chain[1].principal_email == "sa@proj.iam.gserviceaccount.com"
     assert chain[1].principal_subject is not None
     assert chain[1].principal_subject.startswith("serviceAccount:")
+    assert chain[1].oauth_client_id == "111078056401171974812"  # effective's token id
 
 
 def test_credential_chain_length_3_from_2_hop_impersonation() -> None:
@@ -538,16 +544,36 @@ def test_credential_chain_length_3_from_2_hop_impersonation() -> None:
     assert chain[2].principal_email == "sa2@proj.iam.gserviceaccount.com"
 
 
-def test_credential_chain_attaches_oauth_only_to_root() -> None:
-    """Direct human call: oauth lands on chain[0] (which equals chain[-1])."""
+def test_credential_chain_attaches_oauth_only_to_effective() -> None:
+    """``authenticationInfo.oauthInfo`` describes the token that made the
+    request — that's the EFFECTIVE credential. For direct calls where
+    root == effective, chain[0] == chain[-1] carries oauth. For
+    impersonation chains, oauth lands on chain[-1] only; chain[0]
+    stays oauth-less because the audit log doesn't preserve the root's
+    OAuth flow across impersonation hops."""
     from slashid_vertex_forwarder.event_source import _credential_chain
 
-    a = _mk_audit(
+    # Direct call: chain[-1] == chain[0] carries oauth.
+    a_direct = _mk_audit(
         timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
         oauth_client_id="oauth-abc",
     )
-    chain = _credential_chain(a)
-    assert chain[0].oauth_client_id == "oauth-abc"
+    chain_direct = _credential_chain(a_direct)
+    assert len(chain_direct) == 1
+    assert chain_direct[-1].oauth_client_id == "oauth-abc"
+
+    # Impersonation: chain[-1] carries oauth; chain[0] does not.
+    a_impersonated = _mk_audit(
+        timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+        principal_email="sa@proj.iam.gserviceaccount.com",
+        principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
+        oauth_client_id="sa-numeric-id",
+        delegation=[{"subject": "user:alice@example.com", "email": "alice@example.com"}],
+    )
+    chain_imp = _credential_chain(a_impersonated)
+    assert len(chain_imp) == 2
+    assert chain_imp[0].oauth_client_id is None
+    assert chain_imp[-1].oauth_client_id == "sa-numeric-id"
 
 
 def test_resolve_identity_no_candidates_returns_empty() -> None:
@@ -700,6 +726,43 @@ def test_resolve_identity_length_mismatch_normalizes_to_root_effective() -> None
     assert len(result.credential_chain) == 2
     assert result.credential_chain[0].principal_email == "alice@example.com"
     assert result.credential_chain[1].principal_email == "sa@proj.iam.gserviceaccount.com"
+
+
+def test_resolve_identity_length_mismatch_strips_oauth_from_root() -> None:
+    """When length mismatch collapses a length-1 chain into a length-2
+    normalized pair, ``oauth_client_id`` on the original single credential
+    must not leak into the root slot of the normalized chain — it
+    semantically belongs to the effective credential (chain[-1]) only.
+    """
+    from slashid_vertex_forwarder.event_source import _predict_audit_ts, _resolve_identity
+
+    entry = _mk_entry()
+    predicted = _predict_audit_ts(entry)
+    # A: direct call (length 1), oauth on the single credential.
+    a1 = _mk_audit(
+        timestamp=predicted,
+        principal_email="alice@example.com",
+        principal_subject="user:alice@example.com",
+        oauth_client_id="alice-oauth",
+    )
+    # B: alice -> sa (length 2). Effective SA has its own oauth.
+    a2 = _mk_audit(
+        timestamp=predicted + timedelta(milliseconds=20),
+        principal_email="alice@example.com",  # same effective principal for consensus
+        principal_subject="user:alice@example.com",
+        oauth_client_id="alice-oauth",
+        delegation=[{"subject": "user:alice@example.com", "email": "alice@example.com"}],
+    )
+    result = _resolve_identity(entry, [a1, a2])
+    assert result.credential_chain is not None
+    assert len(result.credential_chain) == 2
+    # Root slot [0]: normalized from a1 dropped its oauth (per the
+    # "drop oauth from root on normalization" rule); a2 chain[0] didn't
+    # have oauth to begin with. Consensus: None.
+    assert result.credential_chain[0].oauth_client_id is None
+    # Effective slot [-1]: both entries have "alice-oauth" on their
+    # effective credential.
+    assert result.credential_chain[-1].oauth_client_id == "alice-oauth"
 
 
 def test_resolve_identity_length_mismatch_different_effective_returns_none() -> None:
