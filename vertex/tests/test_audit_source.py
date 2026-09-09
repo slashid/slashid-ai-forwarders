@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 
 from slashid_vertex_forwarder.audit_source import (
     AuditEntry,
-    DelegationHop,
     query_audit_entries,
 )
 
@@ -20,7 +19,9 @@ from slashid_vertex_forwarder.audit_source import (
 def _audit_log_entry(
     *,
     timestamp: datetime,
-    resource_name: str = "projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash",
+    resource_name: str = (
+        "projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash"
+    ),
     method_name: str = "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
     principal_email: str | None = "alice@example.com",
     principal_subject: str | None = "user:alice@example.com",
@@ -61,12 +62,14 @@ def test_audit_entry_from_direct_user_call() -> None:
 
 
 def test_audit_entry_from_service_account_call_no_oauth() -> None:
-    a = AuditEntry.from_log_entry(_audit_log_entry(
-        timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
-        principal_email="sa@proj.iam.gserviceaccount.com",
-        principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
-        oauth_client_id=None,
-    ))
+    a = AuditEntry.from_log_entry(
+        _audit_log_entry(
+            timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+            principal_email="sa@proj.iam.gserviceaccount.com",
+            principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
+            oauth_client_id=None,
+        )
+    )
     assert a.effective_oauth_client_id is None
 
 
@@ -77,13 +80,15 @@ def test_audit_entry_from_impersonation_1_hop() -> None:
             "firstPartyPrincipal": {"principalEmail": "alice@example.com"},
         }
     ]
-    a = AuditEntry.from_log_entry(_audit_log_entry(
-        timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
-        principal_email="sa@proj.iam.gserviceaccount.com",
-        principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
-        oauth_client_id=None,
-        delegation=delegation,
-    ))
+    a = AuditEntry.from_log_entry(
+        _audit_log_entry(
+            timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+            principal_email="sa@proj.iam.gserviceaccount.com",
+            principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
+            oauth_client_id=None,
+            delegation=delegation,
+        )
+    )
     assert len(a.delegation_chain) == 1
     assert a.delegation_chain[0].principal_subject == "user:alice@example.com"
     assert a.delegation_chain[0].first_party_email == "alice@example.com"
@@ -101,13 +106,15 @@ def test_audit_entry_from_impersonation_2_hops() -> None:
             "firstPartyPrincipal": {"principalEmail": "sa1@proj.iam.gserviceaccount.com"},
         },
     ]
-    a = AuditEntry.from_log_entry(_audit_log_entry(
-        timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
-        principal_email="sa2@proj.iam.gserviceaccount.com",
-        principal_subject="serviceAccount:sa2@proj.iam.gserviceaccount.com",
-        oauth_client_id=None,
-        delegation=delegation,
-    ))
+    a = AuditEntry.from_log_entry(
+        _audit_log_entry(
+            timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+            principal_email="sa2@proj.iam.gserviceaccount.com",
+            principal_subject="serviceAccount:sa2@proj.iam.gserviceaccount.com",
+            oauth_client_id=None,
+            delegation=delegation,
+        )
+    )
     assert len(a.delegation_chain) == 2
     assert a.delegation_chain[0].first_party_email == "alice@example.com"
     assert a.delegation_chain[1].first_party_email == "sa1@proj.iam.gserviceaccount.com"

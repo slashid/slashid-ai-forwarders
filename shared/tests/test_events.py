@@ -1220,12 +1220,14 @@ async def test_gcp_identity_details_discriminated_union_still_works() -> None:
         GCPIdentityDetails,
     )
 
-    ev = AIInvocationObservedV1.model_validate({
-        "request_id": "r1",
-        "timestamp": "2026-09-09T12:00:00Z",
-        "identity_details": {"kind": "gcp"},
-        "model": {"id": "publishers/google/models/gemini-2.5-flash"},
-        "parsed_as": "vertex-gemini-generate",
-    })
+    ev = AIInvocationObservedV1.model_validate(
+        {
+            "request_id": "r1",
+            "timestamp": "2026-09-09T12:00:00Z",
+            "identity_details": {"kind": "gcp"},
+            "model": {"id": "publishers/google/models/gemini-2.5-flash"},
+            "parsed_as": "vertex-gemini-generate",
+        }
+    )
     assert isinstance(ev.identity_details, GCPIdentityDetails)
     assert ev.identity_details.credential_chain is None

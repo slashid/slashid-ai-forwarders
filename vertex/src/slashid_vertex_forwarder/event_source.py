@@ -78,9 +78,7 @@ def _credential_chain(a: AuditEntry) -> list[GCPCredential]:
         )
     )
     if a.effective_oauth_client_id is not None:
-        chain[0] = chain[0].model_copy(
-            update={"oauth_client_id": a.effective_oauth_client_id}
-        )
+        chain[0] = chain[0].model_copy(update={"oauth_client_id": a.effective_oauth_client_id})
     return chain
 
 
@@ -120,9 +118,7 @@ def _consensus_chain(
     return result
 
 
-def _resolve_identity(
-    row: Entry, audit_entries: list[AuditEntry]
-) -> GCPIdentityDetails:
+def _resolve_identity(row: Entry, audit_entries: list[AuditEntry]) -> GCPIdentityDetails:
     """``audit_entries`` MUST be sorted ascending by timestamp — the
     caller queries the log API with ``order_by="timestamp asc"``. We
     bisect the sorted list to slice the time window in O(log N)."""
@@ -133,9 +129,9 @@ def _resolve_identity(
     method_suffix = row.api_method
     resource_suffix = f"/locations/{row.region}/{row.model_path}"
     candidates = [
-        a for a in audit_entries[i:j]
-        if a.method_name.endswith("." + method_suffix)
-        and a.resource_name.endswith(resource_suffix)
+        a
+        for a in audit_entries[i:j]
+        if a.method_name.endswith("." + method_suffix) and a.resource_name.endswith(resource_suffix)
     ]
     return GCPIdentityDetails(credential_chain=_consensus_chain(candidates))
 

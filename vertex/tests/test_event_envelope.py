@@ -173,6 +173,7 @@ def test_envelope_reads_pre_attached_identity_details() -> None:
         GeminiRequestBody,
         GeminiResponse,
     )
+
     from slashid_vertex_forwarder.event_envelope import vertex_envelope
     from slashid_vertex_forwarder.event_source import Entry
 
@@ -204,6 +205,7 @@ def test_envelope_empty_identity_still_serializes_to_kind_gcp() -> None:
         GeminiRequestBody,
         GeminiResponse,
     )
+
     from slashid_vertex_forwarder.event_envelope import vertex_envelope
     from slashid_vertex_forwarder.event_source import Entry
 

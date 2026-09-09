@@ -100,7 +100,7 @@ def query_audit_entries(
     *,
     client: Any,  # google.cloud.logging.Client
     project_id: str,
-    region: str,  # noqa: ARG001 -- reserved for future per-region filters
+    region: str,
     ts_range: tuple[datetime, datetime],
 ) -> list[AuditEntry]:
     """Fetch Vertex Gemini audit entries in the given time range.

@@ -106,7 +106,8 @@ def _minimal_row(
         "api_method": api_method,
         "metadata": json.dumps(metadata) if metadata is not None else None,
         "full_request": full_request or {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]},
-        "full_response": full_response or {
+        "full_response": full_response
+        or {
             "candidates": [
                 {"content": {"role": "model", "parts": [{"text": "ok"}]}, "finishReason": "STOP"}
             ],
@@ -422,8 +423,10 @@ def _mk_audit(
     principal_email: str | None = "alice@example.com",
     principal_subject: str | None = "user:alice@example.com",
     oauth_client_id: str | None = "32555940559.apps.googleusercontent.com",
-    delegation: list = (),  # type: ignore[type-arg]
+    delegation: list[dict[str, str]] | None = None,
 ):
+    if delegation is None:
+        delegation = []
     from slashid_vertex_forwarder.audit_source import AuditEntry, DelegationHop
 
     return AuditEntry(
@@ -508,6 +511,7 @@ def test_credential_chain_length_2_from_impersonation_1_hop() -> None:
     assert chain[0].principal_subject == "user:alice@example.com"
     assert chain[0].oauth_client_id is None  # oauth was None on the entry
     assert chain[1].principal_email == "sa@proj.iam.gserviceaccount.com"
+    assert chain[1].principal_subject is not None
     assert chain[1].principal_subject.startswith("serviceAccount:")
 
 
@@ -768,9 +772,7 @@ def test_fetch_stamps_identity_details_on_entries(monkeypatch) -> None:
         timestamp=predicted_row_time + timedelta(milliseconds=50),
     )
 
-    monkeypatch.setattr(
-        BqEventSource, "_query_audit", lambda self, ts_range: [matching_audit]
-    )
+    monkeypatch.setattr(BqEventSource, "_query_audit", lambda self, ts_range: [matching_audit])
 
     source = BqEventSource(
         client=bq_client,
@@ -790,7 +792,7 @@ def test_fetch_stamps_identity_details_on_entries(monkeypatch) -> None:
 def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> None:
     """The audit query's ts_range is [min_predicted - _WINDOW, max_predicted
     + _WINDOW] — computed per row."""
-    from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint, _WINDOW
+    from slashid_vertex_forwarder.event_source import _WINDOW, BqEventSource, Checkpoint
 
     bq_client = MagicMock()
     row1 = _minimal_row(
@@ -867,8 +869,6 @@ def test_resolve_identity_audit_entries_out_of_order_still_works() -> None:
     # Out-of-window early and late
     outside_early = _mk_audit(timestamp=predicted - timedelta(seconds=5))
     outside_late = _mk_audit(timestamp=predicted + timedelta(seconds=5))
-    audit_entries = sorted(
-        [a1, a2, outside_early, outside_late], key=lambda x: x.timestamp
-    )
+    audit_entries = sorted([a1, a2, outside_early, outside_late], key=lambda x: x.timestamp)
     result = _resolve_identity(entry, audit_entries)
     assert result.credential_chain is not None
