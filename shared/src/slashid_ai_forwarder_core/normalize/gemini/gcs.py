@@ -37,13 +37,6 @@ from ...content_utils import SNAP_TOLERANCE
 log = logging.getLogger(__name__)
 
 
-# Cap concurrent GCS calls within one Cloud Function invocation.
-# Matches ``converse/s3.py::MAX_PARALLEL_FETCHES``. The two paths run
-# against different object stores with different cost curves but keeping
-# the same limit avoids surprising the operator.
-MAX_PARALLEL_FETCHES = 8
-
-
 @cache
 def _get_client() -> Storage:
     return Storage()

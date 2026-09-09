@@ -9,12 +9,13 @@ last ``role="model"`` message) for ``GeminiInlineDataPart`` and
   ``sha256``/``sha1``/``md5`` hashes, ``byte_length``, and (opt-in)
   ``redacted_content``.
 - ``fileData``: ``gs://`` URI → HEAD + optional GET via
-  ``gcs._resolve_gcs_attachment`` (bounded by ``MAX_PARALLEL_FETCHES``).
-  Default path: ``md5`` (from GCS metadata) + ``byte_length`` +
-  ``media_type``. Opt-in via ``include_raw_content=True``: full body
-  fetched → all three hashes computed locally, ``redacted_content``
-  populated. Oversized fetch: head+tail Range GETs, no hash (partial
-  fetch), only elided ``redacted_content``.
+  ``gcs._resolve_gcs_attachment`` (bounded by the shared
+  ``get_fetch_semaphore``). Default path: ``md5`` (from GCS metadata)
+  + ``byte_length`` + ``media_type``. Opt-in via
+  ``include_raw_content=True``: full body fetched → all three hashes
+  computed locally, ``redacted_content`` populated. Oversized fetch:
+  head+tail Range GETs, no hash (partial fetch), only elided
+  ``redacted_content``.
 
 Two-pass structure mirrors ``converse/attachments.py``: Pass 1 builds
 source dicts (only fileData needs a resolution store), fires resolvers
@@ -32,8 +33,9 @@ import mimetypes
 from ...config_base import BaseConfig
 from ...content_utils import truncate_middle
 from ...events import AIAccessedFile
+from .._fetch_semaphore import get_fetch_semaphore
 from ..turn import after_last_assistant
-from .gcs import MAX_PARALLEL_FETCHES, _resolve_gcs_attachment
+from .gcs import _resolve_gcs_attachment
 from .schema import (
     GeminiBlob,
     GeminiFileData,
@@ -56,8 +58,8 @@ async def extract_attachments(
     Gemini's role naming.
 
     fileData sources are resolved concurrently up-front (bounded by
-    ``MAX_PARALLEL_FETCHES``). Inline base64 attachments are decoded
-    synchronously as the second pass walks messages.
+    the shared ``get_fetch_semaphore``). Inline base64 attachments are
+    decoded synchronously as the second pass walks messages.
 
     Duplicates in the fresh-turn window (same file referenced twice)
     are NOT deduped here — the shared ``finalize`` pass canonicalizes
@@ -79,7 +81,7 @@ async def extract_attachments(
                 file_data_dicts.append((part.fileData, {"fileUri": part.fileData.fileUri}))
 
     if file_data_dicts:
-        sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+        sem = get_fetch_semaphore()
 
         async def _guarded(src: dict) -> None:  # type: ignore[type-arg]
             async with sem:
