@@ -99,7 +99,7 @@ def query_audit_entries(
     *,
     client: LoggingClient,
     project_id: str,
-    region: str,  # reserved for future per-region filters
+    region: str,
     ts_range: tuple[datetime, datetime],
 ) -> list[AuditEntry]:
     """Fetch Vertex Gemini audit entries in the given time range.
@@ -109,15 +109,17 @@ def query_audit_entries(
     itself sync). Audit entries per tick are usually <500 in count,
     which the API returns in one page in tens of ms.
 
-    Region is reserved for a future project-agnostic multi-region
-    setup; the current filter is project-scoped which implicitly
-    covers all regions in that project.
+    The filter pins to the caller's ``region`` via
+    ``resource.labels.location`` so cross-region audit entries never
+    reach Python — a single-region forwarder deployment can't
+    correlate them anyway (the BQ dataset is region-scoped). The
+    per-row resource-name suffix check in ``_resolve_identity`` stays
+    as belt-and-suspenders.
 
     ``datetime.isoformat()`` on our timezone-aware timestamps yields
     RFC 3339 output; Cloud Logging accepts both ``+00:00`` and ``Z``
     suffix forms.
     """
-    del region  # unused, see kwarg docstring
     ts_lo, ts_hi = ts_range
     return [
         AuditEntry.from_log_entry(e)
@@ -128,6 +130,7 @@ def query_audit_entries(
                 'AND protoPayload.serviceName="aiplatform.googleapis.com" '
                 'AND protoPayload.methodName:"generateContent" '
                 f'AND resource.labels.project_id="{project_id}" '
+                f'AND resource.labels.location="{region}" '
                 f'AND timestamp>="{ts_lo.isoformat()}" '
                 f'AND timestamp<="{ts_hi.isoformat()}"'
             ),
