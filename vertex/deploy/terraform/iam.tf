@@ -56,3 +56,26 @@ resource "google_project_iam_member" "run_invoker" {
   role    = "roles/run.invoker"
   member  = "serviceAccount:${google_service_account.forwarder.email}"
 }
+
+# fileData bucket access — grants roles/storage.objectViewer on either
+# every bucket in the project (var.filedata_buckets == ["*"]) or the
+# specific buckets listed. Empty list (default) → no grants, fileData
+# resolver falls back to stub entries.
+locals {
+  filedata_wildcard      = length(var.filedata_buckets) == 1 && var.filedata_buckets[0] == "*"
+  filedata_bucket_grants = local.filedata_wildcard ? toset([]) : toset(var.filedata_buckets)
+}
+
+resource "google_project_iam_member" "filedata_project_wide" {
+  count   = local.filedata_wildcard ? 1 : 0
+  project = var.project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${google_service_account.forwarder.email}"
+}
+
+resource "google_storage_bucket_iam_member" "filedata_per_bucket" {
+  for_each = local.filedata_bucket_grants
+  bucket   = each.value
+  role     = "roles/storage.objectViewer"
+  member   = "serviceAccount:${google_service_account.forwarder.email}"
+}

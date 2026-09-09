@@ -15,8 +15,7 @@ logging on each configured publisher model via `setPublisherModelConfig`.
 
 - **Supported**: Gemini `generateContent` and `streamGenerateContent`.
 - **Deferred**: `rawPredict` (Anthropic / Llama / Mistral on Vertex),
-  server-side tool grounding, GCS fetch for `fileData` attachments
-  (stubs only in v1), per-invocation identity correlation
+  server-side tool grounding, per-invocation identity correlation
   (`identity_details` ships as `{"kind": "gcp"}`).
 
 ## Known limitations
@@ -52,6 +51,17 @@ gotchas to plan around. Extend as new ones are discovered.
   are possible (a normal-completion response that happens to hit the
   token cap exactly). Client-aborted streams don't log a BQ row at
   all — the forwarder is honest about not observing them.
+- **`fileData` requires bucket IAM grants.** Attachments referenced by
+  `gs://` URI need `roles/storage.objectViewer` on the containing
+  bucket for the forwarder SA. Grant per-bucket via
+  `filedata_buckets = ["bucket-a", ...]` in the Terraform module, or
+  project-wide via `filedata_buckets = ["*"]`. Unlisted or unreadable
+  buckets emit stub `AIAccessedFile` entries (URI + media_type, no
+  hash, no byte_length) instead of failing the tick.
+- **Cross-project `fileData` buckets.** The TF module grants IAM only
+  against `project_id`; buckets in other GCP projects need
+  customer-managed IAM. The forwarder still stubs them if
+  inaccessible.
 
 ## Development
 

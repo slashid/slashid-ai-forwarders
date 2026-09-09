@@ -20,6 +20,12 @@ dependencies = [
 # don't need aioboto3.
 converse = ["aioboto3>=15.0"]
 
+# Vertex Gemini fileData attachment resolution (GCS HEAD + GET).
+# Pulled in by ``slashid-ai-forwarder-core[gcs]``; the Vertex
+# forwarder depends on this extra. Non-Vertex forwarders (Bedrock)
+# don't need gcloud-aio-storage.
+gcs = ["gcloud-aio-storage>=8.0"]
+
 [dependency-groups]
 dev = [
     "pyyaml>=6.0",
