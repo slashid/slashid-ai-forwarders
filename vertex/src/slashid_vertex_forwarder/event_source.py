@@ -240,17 +240,56 @@ class BqEventSource:
         self._audit_buffer_seconds = audit_buffer_seconds
 
     def fetch(self, checkpoint: Checkpoint) -> list[Entry]:
+        """Two-query orchestration: BQ payload → audit-log window →
+        per-row identity stamping. Rows come back with
+        ``identity_details`` populated (or empty if no consensus).
+
+        Sync end-to-end. Cloud Logging's ``list_entries`` and BigQuery's
+        ``job.result()`` both block anyway, so making the source layer
+        async would be theatre.
+        """
         query, params = self._build_query(checkpoint)
         from google.cloud import bigquery
 
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = self._client.query(query, job_config=job_config)
-        entries: list[Entry] = []
+        payload_rows: list[Entry] = []
         for row in job.result():
             entry = _row_to_entry(row, region=self._region)
             if entry is not None:
-                entries.append(entry)
-        return entries
+                payload_rows.append(entry)
+        if not payload_rows:
+            return []
+
+        # Predict each row's audit timestamp first (bias-corrected), then
+        # take the tight envelope + ±_WINDOW slack. Matches the per-row
+        # window exactly — everything the filter lets through is a
+        # potential candidate for at least one row.
+        predicted = [_predict_audit_ts(r) for r in payload_rows]
+        ts_range = (min(predicted) - _WINDOW, max(predicted) + _WINDOW)
+        audit_entries = self._query_audit(ts_range)
+
+        for row in payload_rows:
+            row.identity_details = _resolve_identity(row, audit_entries)
+        return payload_rows
+
+    def _query_audit(
+        self,
+        ts_range: tuple[datetime, datetime],
+    ) -> list[AuditEntry]:
+        """Fetch matching Cloud Audit Log entries. Overridden in tests
+        via monkeypatch."""
+        from google.cloud import logging as gcp_logging
+
+        from .audit_source import query_audit_entries
+
+        client = gcp_logging.Client(project=self._project_id)
+        return query_audit_entries(
+            client=client,
+            project_id=self._project_id,
+            region=self._region,
+            ts_range=ts_range,
+        )
 
     def _build_query(
         self,

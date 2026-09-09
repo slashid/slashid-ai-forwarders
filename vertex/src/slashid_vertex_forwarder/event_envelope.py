@@ -23,7 +23,6 @@ from slashid_ai_forwarder_core.events import (
     AIInvocationTokens,
     AIModel,
     EventEnvelope,
-    GCPIdentityDetails,
 )
 
 from .event_source import Entry
@@ -57,7 +56,7 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
     return EventEnvelope(
         request_id=entry.request_id,
         timestamp=entry.logging_time.isoformat(),
-        identity_details=GCPIdentityDetails(),
+        identity_details=entry.identity_details,
         model=AIModel(
             id=entry.model_path,
             provider=_publisher_from_model_path(entry.model_path),

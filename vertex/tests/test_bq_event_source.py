@@ -19,6 +19,15 @@ import pytest
 from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
 
 
+@pytest.fixture(autouse=True)
+def _stub_query_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent `fetch()` from hitting google.cloud.logging by default.
+
+    Individual tests that want to assert on the audit-query wiring
+    re-monkeypatch ``_query_audit`` explicitly."""
+    monkeypatch.setattr(BqEventSource, "_query_audit", lambda self, ts_range: [])
+
+
 class _FakeQueryJob:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
@@ -744,6 +753,106 @@ def test_resolve_identity_length_1_mixed_with_length_2_partial_attribution() -> 
     assert result.credential_chain[1].principal_email is None
     assert result.credential_chain[1].principal_subject is None
     assert result.credential_chain[1].oauth_client_id is None
+
+
+def test_fetch_stamps_identity_details_on_entries(monkeypatch) -> None:
+    """End-to-end: fetch queries payload, queries audit, stamps identity
+    on each returned Entry. All sync."""
+    from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
+
+    bq_client = MagicMock()
+    bq_client.query.return_value.result.return_value = [_minimal_row()]
+
+    predicted_row_time = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    matching_audit = _mk_audit(
+        timestamp=predicted_row_time + timedelta(milliseconds=50),
+    )
+
+    monkeypatch.setattr(
+        BqEventSource, "_query_audit", lambda self, ts_range: [matching_audit]
+    )
+
+    source = BqEventSource(
+        client=bq_client,
+        project_id="p",
+        dataset_id="d",
+        region="us-central1",
+        max_rows_per_tick=100,
+        audit_buffer_seconds=0,
+    )
+    entries = source.fetch(Checkpoint(None, None))
+    assert len(entries) == 1
+    chain = entries[0].identity_details.credential_chain
+    assert chain is not None
+    assert chain[0].principal_email == "alice@example.com"
+
+
+def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> None:
+    """The audit query's ts_range is [min_predicted - _WINDOW, max_predicted
+    + _WINDOW] — computed per row."""
+    from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint, _WINDOW
+
+    bq_client = MagicMock()
+    row1 = _minimal_row(
+        request_id=1,
+        logging_time=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+        metadata={"request_latency": 0.0},
+    )
+    row2 = _minimal_row(
+        request_id=2,
+        logging_time=datetime(2026, 9, 9, 12, 0, 5, tzinfo=UTC),
+        metadata={"request_latency": 0.0},
+    )
+    bq_client.query.return_value.result.return_value = [row1, row2]
+
+    captured: list[tuple] = []
+
+    def _capture(self, ts_range):
+        captured.append(ts_range)
+        return []
+
+    monkeypatch.setattr(BqEventSource, "_query_audit", _capture)
+
+    source = BqEventSource(
+        client=bq_client,
+        project_id="p",
+        dataset_id="d",
+        region="us-central1",
+        max_rows_per_tick=100,
+        audit_buffer_seconds=0,
+    )
+    source.fetch(Checkpoint(None, None))
+    lo, hi = captured[0]
+    assert lo == datetime(2026, 9, 9, 12, 0, 0, 50000, tzinfo=UTC) - _WINDOW
+    assert hi == datetime(2026, 9, 9, 12, 0, 5, 50000, tzinfo=UTC) + _WINDOW
+
+
+def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
+    """No BQ rows → no audit query fired."""
+    from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
+
+    bq_client = MagicMock()
+    bq_client.query.return_value.result.return_value = []
+
+    called = {"n": 0}
+
+    def _fail_if_called(self, ts_range):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(BqEventSource, "_query_audit", _fail_if_called)
+
+    source = BqEventSource(
+        client=bq_client,
+        project_id="p",
+        dataset_id="d",
+        region="us-central1",
+        max_rows_per_tick=100,
+        audit_buffer_seconds=0,
+    )
+    entries = source.fetch(Checkpoint(None, None))
+    assert entries == []
+    assert called["n"] == 0
 
 
 def test_resolve_identity_audit_entries_out_of_order_still_works() -> None:
