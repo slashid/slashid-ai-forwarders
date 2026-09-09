@@ -152,6 +152,6 @@ def test_query_audit_entries_builds_filter_and_calls_client() -> None:
     assert 'timestamp<="2026-09-09T12:00:02' in filter_str
     assert 'protoPayload.methodName:"generateContent"' in filter_str
     assert 'protoPayload.serviceName="aiplatform.googleapis.com"' in filter_str
-    assert 'resource.labels.location="us-central1"' in filter_str
+    assert 'protoPayload.resourceName:"/locations/us-central1/"' in filter_str
     assert kwargs["order_by"] == "timestamp asc"
     assert kwargs["resource_names"] == ["projects/p"]
