@@ -63,13 +63,11 @@ def test_envelope_populates_basic_fields() -> None:
 
 
 def test_envelope_identity_is_empty_gcp() -> None:
-    """V1 punts on identity — GCPIdentityDetails() with all fields None."""
+    """V1 punts on identity — GCPIdentityDetails() with credential_chain=None."""
     env = vertex_envelope(_entry())
     assert env is not None
     assert isinstance(env.identity_details, GCPIdentityDetails)
-    assert env.identity_details.principal_email is None
-    assert env.identity_details.service_account_email is None
-    assert env.identity_details.oauth_client_id is None
+    assert env.identity_details.credential_chain is None
     # Serialize form is the minimal wire shape.
     wire = env.identity_details.model_dump(mode="json", exclude_none=True)
     assert wire == {"kind": "gcp"}

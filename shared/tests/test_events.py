@@ -936,7 +936,7 @@ def test_identity_details_union_dispatches_on_kind() -> None:
     }
     event = AIInvocationObservedV1.model_validate(raw_gcp)
     assert isinstance(event.identity_details, GCPIdentityDetails)
-    assert event.identity_details.principal_email is None
+    assert event.identity_details.credential_chain is None
 
     # AWS side still requires principal_arn — union stays strict per-variant.
     from pydantic import ValidationError
@@ -1142,3 +1142,90 @@ def test_redact_for_logging_walks_nested_lists() -> None:
     redacted = redact_for_logging(payload)
     assert redacted["used_tools"][0]["extra"][0] == {}
     assert redacted["used_tools"][0]["tool_id"] == "1"
+
+
+async def test_gcp_identity_details_credential_chain_empty() -> None:
+    """Default construction: kind=gcp, credential_chain=None."""
+    from slashid_ai_forwarder_core.events import GCPIdentityDetails
+
+    ident = GCPIdentityDetails()
+    assert ident.kind == "gcp"
+    assert ident.credential_chain is None
+    assert ident.model_dump(mode="json", exclude_none=True) == {"kind": "gcp"}
+
+
+async def test_gcp_identity_details_length_1_chain_human() -> None:
+    from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+
+    ident = GCPIdentityDetails(
+        credential_chain=[
+            GCPCredential(
+                principal_email="alice@example.com",
+                principal_subject="user:alice@example.com",
+                oauth_client_id="32555940559.apps.googleusercontent.com",
+            )
+        ]
+    )
+    dumped = ident.model_dump(mode="json", exclude_none=True)
+    assert dumped == {
+        "kind": "gcp",
+        "credential_chain": [
+            {
+                "principal_email": "alice@example.com",
+                "principal_subject": "user:alice@example.com",
+                "oauth_client_id": "32555940559.apps.googleusercontent.com",
+            }
+        ],
+    }
+
+
+async def test_gcp_identity_details_length_2_chain_impersonation() -> None:
+    from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+
+    ident = GCPIdentityDetails(
+        credential_chain=[
+            GCPCredential(
+                principal_email="alice@example.com",
+                principal_subject="user:alice@example.com",
+            ),
+            GCPCredential(
+                principal_email="sa@proj.iam.gserviceaccount.com",
+                principal_subject="serviceAccount:sa@proj.iam.gserviceaccount.com",
+            ),
+        ]
+    )
+    dumped = ident.model_dump(mode="json", exclude_none=True)
+    assert dumped["credential_chain"][0]["principal_email"] == "alice@example.com"
+    assert dumped["credential_chain"][1]["principal_subject"].startswith("serviceAccount:")
+
+
+async def test_gcp_identity_details_partial_credential_empty_position() -> None:
+    """Partial attribution: root populated, tail empty → tail serializes to {}."""
+    from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+
+    ident = GCPIdentityDetails(
+        credential_chain=[
+            GCPCredential(principal_email="alice@example.com"),
+            GCPCredential(),  # all fields None
+        ]
+    )
+    dumped = ident.model_dump(mode="json", exclude_none=True)
+    assert dumped["credential_chain"][1] == {}
+    assert dumped["credential_chain"][0]["principal_email"] == "alice@example.com"
+
+
+async def test_gcp_identity_details_discriminated_union_still_works() -> None:
+    from slashid_ai_forwarder_core.events import (
+        AIInvocationObservedV1,
+        GCPIdentityDetails,
+    )
+
+    ev = AIInvocationObservedV1.model_validate({
+        "request_id": "r1",
+        "timestamp": "2026-09-09T12:00:00Z",
+        "identity_details": {"kind": "gcp"},
+        "model": {"id": "publishers/google/models/gemini-2.5-flash"},
+        "parsed_as": "vertex-gemini-generate",
+    })
+    assert isinstance(ev.identity_details, GCPIdentityDetails)
+    assert ev.identity_details.credential_chain is None
