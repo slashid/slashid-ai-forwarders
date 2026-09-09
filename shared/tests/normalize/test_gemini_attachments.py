@@ -303,11 +303,13 @@ async def test_file_data_full_body_computes_all_three_hashes(
     assert f.redacted_content == "the quick brown fox"
 
 
-async def test_file_data_oversized_range_get_no_hash_only_snippet(
+async def test_file_data_oversized_range_get_keeps_md5_from_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Opt-in + oversized: no hash (bytes incomplete), redacted_content shows
-    head+tail elided by ``truncate_middle``. byte_length comes from HEAD."""
+    """Opt-in + oversized: sha256/sha1 uncomputable (bytes incomplete), but
+    md5 from GCS metadata still lands — it's authoritative on the full
+    object. redacted_content shows head+tail elided by ``truncate_middle``.
+    byte_length comes from HEAD."""
 
     async def _fake_resolve(source: dict, **_kw) -> None:  # type: ignore[type-arg]
         source["_resolved_byte_length"] = 10_000_000
@@ -330,7 +332,7 @@ async def test_file_data_oversized_range_get_no_hash_only_snippet(
     )
     assert len(files) == 1
     f = files[0]
-    assert f.content_hashes is None  # partial fetch → no hash
+    assert f.content_hashes == {"md5": "deadbeef"}
     assert f.byte_length == 10_000_000
     assert f.redacted_content is not None
     assert "HEAD" in f.redacted_content

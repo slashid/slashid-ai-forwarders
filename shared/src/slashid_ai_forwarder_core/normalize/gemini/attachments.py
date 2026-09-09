@@ -146,9 +146,11 @@ def _from_file_data(
       1. Full bytes stashed (``_resolved_bytes``) → all three hashes computed
          locally, ``redacted_content`` = full decoded text (opt-in).
       2. Head + tail stashed (``_resolved_head_bytes`` / ``_resolved_tail_bytes``)
-         → no hash (partial fetch), ``redacted_content`` = head + "…" + tail
-         middle-elided by ``truncate_middle`` (opt-in only, since Pass 1 only
-         fetches ranges when include_raw_content=True).
+         → md5 preserved from GCS metadata (authoritative on the full object
+         even under partial fetch); sha256/sha1 uncomputable so omitted.
+         ``redacted_content`` = head + "…" + tail middle-elided by
+         ``truncate_middle`` (opt-in only, since Pass 1 only fetches ranges
+         when include_raw_content=True).
       3. Metadata only (``_resolved_byte_length`` + ``_resolved_md5_hex``) →
          ``content_hashes = {"md5": <hex>}``, no ``redacted_content``.
 
@@ -190,8 +192,10 @@ def _from_file_data(
                 bytes(raw_bytes).decode(errors="replace"), config.max_content_size
             )
     elif isinstance(head_bytes, (bytes, bytearray)) and isinstance(tail_bytes, (bytes, bytearray)):
-        # Partial fetch (oversized): no hash — bytes incomplete.
-        content_hashes = None
+        # Partial fetch (oversized): sha256/sha1 uncomputable (bytes incomplete),
+        # but md5 from GCS metadata is authoritative on the full object — keep it.
+        md5_hex = src_dict.get("_resolved_md5_hex")
+        content_hashes = {"md5": md5_hex} if isinstance(md5_hex, str) else None
         if config.include_raw_content:
             head_str = bytes(head_bytes).decode(errors="replace")
             tail_str = bytes(tail_bytes).decode(errors="replace")
