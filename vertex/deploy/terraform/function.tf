@@ -153,6 +153,7 @@ resource "google_cloudfunctions2_function" "forwarder" {
       SLASHID_FIRESTORE_DATABASE              = var.firestore_database
       SLASHID_FIRESTORE_CHECKPOINT_COLLECTION = var.firestore_checkpoint_collection
       SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT   = var.firestore_checkpoint_document
+      SLASHID_AUDIT_BUFFER_SECONDS            = tostring(var.audit_buffer_seconds)
       SLASHID_INCLUDE_RAW_CONTENT             = tostring(var.include_raw_content)
       SLASHID_MAX_CONTENT_SIZE                = tostring(var.max_content_size)
       SLASHID_MAX_ROWS_PER_TICK               = tostring(var.max_rows_per_tick)
