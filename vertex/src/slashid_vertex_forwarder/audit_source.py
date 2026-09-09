@@ -16,6 +16,7 @@ everything else on the LogEntry stays untouched. Delegation info
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -121,6 +122,11 @@ def query_audit_entries(
     suffix forms.
     """
     ts_lo, ts_hi = ts_range
+    # ``json.dumps`` on string values gives us the double-quoted,
+    # JSON-escaped shape the Cloud Logging filter language expects —
+    # future-proof against any interpolated value containing quotes
+    # or backslashes (project IDs and regions are constrained
+    # today, but the escape is free).
     return [
         AuditEntry.from_log_entry(e)
         for e in client.list_entries(
@@ -129,10 +135,10 @@ def query_audit_entries(
                 'resource.type="audited_resource" '
                 'AND protoPayload.serviceName="aiplatform.googleapis.com" '
                 'AND protoPayload.methodName:"generateContent" '
-                f'AND resource.labels.project_id="{project_id}" '
-                f'AND resource.labels.location="{region}" '
-                f'AND timestamp>="{ts_lo.isoformat()}" '
-                f'AND timestamp<="{ts_hi.isoformat()}"'
+                f"AND resource.labels.project_id={json.dumps(project_id)} "
+                f"AND resource.labels.location={json.dumps(region)} "
+                f"AND timestamp>={json.dumps(ts_lo.isoformat())} "
+                f"AND timestamp<={json.dumps(ts_hi.isoformat())}"
             ),
             order_by="timestamp asc",
         )
