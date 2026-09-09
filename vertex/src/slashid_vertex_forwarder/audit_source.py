@@ -3,104 +3,102 @@
 Wraps ``google.cloud.logging.Client.list_entries()`` to fetch
 ``PredictionService.GenerateContent`` and ``StreamGenerateContent``
 audit entries in a bounded time window. Parses each LogEntry's
-protoPayload (an AuditLog proto) into an ``AuditEntry`` dataclass
-that the join in ``event_source.py`` consumes.
+``protoPayload`` (an ``AuditLog`` proto) into an ``AuditEntry`` pydantic
+model that the join in ``event_source.py`` consumes.
 
-Only fields the join needs are extracted; everything else on the
-LogEntry stays untouched. Delegation info (impersonation chain)
-preserves order (root -> effective) and is exposed as a list of
+Fields are declared via pydantic ``AliasPath`` so the audit-log
+camelCase paths land directly on the model — no hand-rolled
+``.get(...) or {}`` chain. Only fields the join needs are extracted;
+everything else on the LogEntry stays untouched. Delegation info
+(impersonation chain) preserves order (root at [0]) as a list of
 ``DelegationHop``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from pydantic import AliasPath, BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from google.cloud.logging import Client as LoggingClient
 
 
-@dataclass(frozen=True)
-class DelegationHop:
+class DelegationHop(BaseModel):
     """One hop in ``AuditEntry.delegation_chain``.
 
-    Maps to one entry in ``AuditLog.authenticationInfo.serviceAccountDelegationInfo[]``.
+    Maps to one entry in
+    ``AuditLog.authenticationInfo.serviceAccountDelegationInfo[]``.
+    ``first_party_email`` reaches into ``firstPartyPrincipal.principalEmail``
+    via a nested alias path; direct construction with the flat kwarg
+    stays supported via ``populate_by_name``.
     """
 
-    principal_subject: str | None = None
-    first_party_email: str | None = None
+    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
+
+    principal_subject: str | None = Field(default=None, validation_alias="principalSubject")
+    first_party_email: str | None = Field(
+        default=None,
+        validation_alias=AliasPath("firstPartyPrincipal", "principalEmail"),
+    )
 
 
-@dataclass(frozen=True)
-class AuditEntry:
+class AuditEntry(BaseModel):
     """One Vertex Gemini audit log entry, projected to the fields the
     identity-correlation join reads.
 
-    - ``timestamp``: the LogEntry's ``timestamp`` (request receipt time,
-      nanosecond precision).
-    - ``resource_name`` / ``method_name``: from protoPayload, used to
-      pin the candidate set to the right region + model + method.
-    - ``effective_*`` fields: describe the effective principal
-      (post-impersonation); come from ``authenticationInfo``.
-    - ``delegation_chain``: preserves root -> intermediate hops
-      of the impersonation chain, if any.
+    Validation happens directly against a ``google.cloud.logging.LogEntry``
+    shape (with ``timestamp`` on the outer LogEntry and everything else
+    under ``payload`` — the parsed ``AuditLog`` proto). Field aliases via
+    ``AliasPath`` map camelCase audit-log paths to snake_case attributes.
     """
 
+    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
+
     timestamp: datetime
-    resource_name: str
-    method_name: str
-    effective_principal_email: str | None = None
-    effective_principal_subject: str | None = None
-    effective_oauth_client_id: str | None = None
-    delegation_chain: list[DelegationHop] = field(default_factory=list)
+    resource_name: str = Field(
+        default="",
+        validation_alias=AliasPath("payload", "resourceName"),
+    )
+    method_name: str = Field(
+        default="",
+        validation_alias=AliasPath("payload", "methodName"),
+    )
+    effective_principal_email: str | None = Field(
+        default=None,
+        validation_alias=AliasPath("payload", "authenticationInfo", "principalEmail"),
+    )
+    effective_principal_subject: str | None = Field(
+        default=None,
+        validation_alias=AliasPath("payload", "authenticationInfo", "principalSubject"),
+    )
+    effective_oauth_client_id: str | None = Field(
+        default=None,
+        validation_alias=AliasPath("payload", "authenticationInfo", "oauthInfo", "oauthClientId"),
+    )
+    delegation_chain: list[DelegationHop] = Field(
+        default_factory=list,
+        validation_alias=AliasPath("payload", "authenticationInfo", "serviceAccountDelegationInfo"),
+    )
 
     @classmethod
     def from_log_entry(cls, entry: Any) -> AuditEntry:
-        """Extract the fields we need from a ``google.cloud.logging.LogEntry``.
+        """Build from a ``google.cloud.logging.LogEntry``.
 
-        ``entry.payload`` is the parsed AuditLog proto as a dict-like.
-        Malformed / missing fields degrade to None rather than raise --
-        one broken entry shouldn't fail the whole tick.
+        Wraps ``model_validate`` — the LogEntry has ``timestamp`` at the
+        outer level and the AuditLog proto under ``payload`` (dict on the
+        Cloud Logging v3+ Python client). ``AliasPath`` declarations on
+        the fields pull each nested value directly.
         """
-        payload: dict[str, Any] = getattr(entry, "payload", {}) or {}
-        auth = payload.get("authenticationInfo") or {}
-
-        oauth = auth.get("oauthInfo") or {}
-        delegation_raw = auth.get("serviceAccountDelegationInfo") or []
-        delegation = [
-            DelegationHop(
-                principal_subject=hop.get("principalSubject"),
-                first_party_email=(hop.get("firstPartyPrincipal") or {}).get("principalEmail"),
-            )
-            for hop in delegation_raw
-            if isinstance(hop, dict)
-        ]
-
-        return cls(
-            timestamp=entry.timestamp,
-            resource_name=str(payload.get("resourceName") or ""),
-            method_name=str(payload.get("methodName") or ""),
-            effective_principal_email=auth.get("principalEmail"),
-            effective_principal_subject=auth.get("principalSubject"),
-            effective_oauth_client_id=oauth.get("oauthClientId"),
-            delegation_chain=delegation,
-        )
-
-
-_FILTER_TEMPLATE = (
-    'resource.type="audited_resource" '
-    'AND protoPayload.serviceName="aiplatform.googleapis.com" '
-    'AND protoPayload.methodName:"generateContent" '
-    'AND resource.labels.project_id="{project_id}" '
-    'AND timestamp>="{ts_lo}" '
-    'AND timestamp<="{ts_hi}"'
-)
+        return cls.model_validate({"timestamp": entry.timestamp, "payload": entry.payload or {}})
 
 
 def query_audit_entries(
     *,
-    client: Any,  # google.cloud.logging.Client
+    client: LoggingClient,
     project_id: str,
-    region: str,
+    region: str,  # reserved for future per-region filters
     ts_range: tuple[datetime, datetime],
 ) -> list[AuditEntry]:
     """Fetch Vertex Gemini audit entries in the given time range.
@@ -113,24 +111,25 @@ def query_audit_entries(
     Region is reserved for a future project-agnostic multi-region
     setup; the current filter is project-scoped which implicitly
     covers all regions in that project.
+
+    ``datetime.isoformat()`` on our timezone-aware timestamps yields
+    RFC 3339 output; Cloud Logging accepts both ``+00:00`` and ``Z``
+    suffix forms.
     """
+    del region  # unused, see kwarg docstring
     ts_lo, ts_hi = ts_range
-    filter_str = _FILTER_TEMPLATE.format(
-        project_id=project_id,
-        ts_lo=_rfc3339(ts_lo),
-        ts_hi=_rfc3339(ts_hi),
-    )
-    entries: list[AuditEntry] = []
-    for e in client.list_entries(
-        resource_names=[f"projects/{project_id}"],
-        filter_=filter_str,
-        order_by="timestamp asc",
-    ):
-        entries.append(AuditEntry.from_log_entry(e))
-    return entries
-
-
-def _rfc3339(ts: datetime) -> str:
-    """RFC3339 timestamp with nanosecond precision, ``Z`` suffix. Cloud
-    Logging filter expects this exact shape."""
-    return ts.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    return [
+        AuditEntry.from_log_entry(e)
+        for e in client.list_entries(
+            resource_names=[f"projects/{project_id}"],
+            filter_=(
+                'resource.type="audited_resource" '
+                'AND protoPayload.serviceName="aiplatform.googleapis.com" '
+                'AND protoPayload.methodName:"generateContent" '
+                f'AND resource.labels.project_id="{project_id}" '
+                f'AND timestamp>="{ts_lo.isoformat()}" '
+                f'AND timestamp<="{ts_hi.isoformat()}"'
+            ),
+            order_by="timestamp asc",
+        )
+    ]
