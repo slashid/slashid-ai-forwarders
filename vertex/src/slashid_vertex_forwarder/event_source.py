@@ -59,11 +59,15 @@ def _credential_chain(a: AuditEntry) -> list[GCPCredential]:
     """Reconstruct the full credential chain from one audit entry:
     delegation hops (root at [0]) + effective principal (at [-1]).
 
-    ``oauth_client_id`` from ``authenticationInfo.oauthInfo`` attaches
-    to the ROOT credential — for OAuth-authenticated non-impersonated
-    calls, [0] == [-1] so it lands on the single entry; for impersonated
-    calls the effective SA's token isn't OAuth-obtained, so
-    ``effective_oauth_client_id`` is typically absent regardless."""
+    ``oauth_client_id`` from ``authenticationInfo.oauthInfo`` describes
+    the token that authenticated THIS request — that's the effective
+    credential (chain[-1]). For non-impersonated calls chain[0] ==
+    chain[-1] so both interpretations coincide; for impersonated calls
+    the value uniquely identifies the effective SA's OAuth flow (a
+    numeric ID for SA-issued tokens, or the CLI's registered client ID
+    for direct user calls). The audit log does not preserve the
+    ROOT's OAuth flow across impersonation hops, so ``chain[0]``
+    remains oauth-less."""
     chain = [
         GCPCredential(
             principal_email=hop.first_party_email,
@@ -75,10 +79,9 @@ def _credential_chain(a: AuditEntry) -> list[GCPCredential]:
         GCPCredential(
             principal_email=a.effective_principal_email,
             principal_subject=a.effective_principal_subject,
+            oauth_client_id=a.effective_oauth_client_id,
         )
     )
-    if a.effective_oauth_client_id is not None:
-        chain[0] = chain[0].model_copy(update={"oauth_client_id": a.effective_oauth_client_id})
     return chain
 
 
@@ -100,7 +103,13 @@ def _consensus_chain(
     lengths = {len(ch) for ch in chains}
     if len(lengths) != 1:
         # Length mismatch → normalize to [root, effective] (2-entry chain).
-        chains = [[ch[0], ch[-1]] for ch in chains]
+        # For a length-1 original, ch[0] == ch[-1] and carries oauth on the
+        # tail slot. When we duplicate that credential into the root slot
+        # of the normalized pair, strip ``oauth_client_id`` off it —
+        # ``oauth_client_id`` semantically belongs only to the effective
+        # position, and consensus across mismatched chains would otherwise
+        # leak the effective's oauth into the normalized root.
+        chains = [[ch[0].model_copy(update={"oauth_client_id": None}), ch[-1]] for ch in chains]
     n = len(chains[0])
     result = [
         GCPCredential(
@@ -274,12 +283,20 @@ class BqEventSource:
         ts_range: tuple[datetime, datetime],
     ) -> list[AuditEntry]:
         """Fetch matching Cloud Audit Log entries. Overridden in tests
-        via monkeypatch."""
+        via monkeypatch.
+
+        ``_use_grpc=False`` forces REST transport. The gRPC transport
+        in ``google-cloud-logging`` drops several nested fields from
+        the ``AuditLog`` protoPayload (empirically: ``oauthInfo``,
+        ``serviceAccountDelegationInfo``) that we depend on for
+        credential-chain reconstruction. REST returns the full
+        LogEntry payload. See identity-correlation smoke findings
+        (2026-09-09)."""
         from google.cloud import logging as gcp_logging
 
         from .audit_source import query_audit_entries
 
-        client = gcp_logging.Client(project=self._project_id)
+        client = gcp_logging.Client(project=self._project_id, _use_grpc=False)
         return query_audit_entries(
             client=client,
             project_id=self._project_id,
