@@ -15,8 +15,7 @@ logging on each configured publisher model via `setPublisherModelConfig`.
 
 - **Supported**: Gemini `generateContent` and `streamGenerateContent`.
 - **Deferred**: `rawPredict` (Anthropic / Llama / Mistral on Vertex),
-  server-side tool grounding, per-invocation identity correlation
-  (`identity_details` ships as `{"kind": "gcp"}`).
+  server-side tool grounding.
 
 ## Known limitations
 
@@ -31,12 +30,20 @@ gotchas to plan around. Extend as new ones are discovered.
   nothing. Considered alternatives (Eventarc for BQ, BQ subscriptions)
   are wrong-direction or job-level only; the design POC (2026-09-04)
   confirmed no per-row push path exists.
-- **No per-invocation identity.** BigQuery request-response rows carry
-  no caller principal; Cloud Audit Logs carry the principal but not the
-  payload. A time-based join is fragile under concurrency, so v1 emits
-  `identity_details = {"kind": "gcp"}` with all fields empty. Downstream
-  cannot tell "who called Vertex". Correlation is deferred to a later
-  phase.
+- **Identity resolution is buffered.** Payload events are held for 30s
+  (configurable via `audit_buffer_seconds`) so Cloud Audit Logs have
+  time to land for the identity-correlation join. Total observed
+  latency from Gemini call to emitted event is ~90-120s (30s
+  forwarder buffer + 60s BQ streaming buffer). Lower the buffer to
+  trade identity coverage for lower latency.
+- **Multi-tenant ambiguity yields partial identity.** When two
+  distinct callers hit the same Gemini model + method within ~200ms,
+  per-field per-position consensus emits only the fields where every
+  candidate agrees. Same user via two OAuth clients →
+  `credential_chain[0].principal_email` still emitted, `oauth_client_id`
+  drops. Two distinct users → identity drops entirely
+  (`credential_chain = None`). Rare for single-tenant projects;
+  possible in high-QPS multi-tenant deployments.
 - **Per-model logging enrollment.** `setPublisherModelConfig` is scoped
   to one publisher model at a time — no project-wide "log every Vertex
   call" toggle. New models require adding to `observed_models` in the

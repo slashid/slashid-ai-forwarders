@@ -177,21 +177,37 @@ class AWSIdentityDetails(_WireModel):
     access_key_id: str | None = None
 
 
-class GCPIdentityDetails(_WireModel):
-    """GCP-source shape of AIInvocationObservedV1.identity_details.
+class GCPCredential(_WireModel):
+    """One credential in ``GCPIdentityDetails.credential_chain``.
 
-    All-optional for the Phase 3.1 Vertex forwarder — v1 does not
-    correlate identity per-invocation (BQ request-response logging rows
-    carry no principal), so events emit ``{"kind": "gcp"}`` and nothing
-    else. Later phases add audit-log correlation and populate the
-    ``principal_email`` / ``service_account_email`` / ``oauth_client_id``
-    fields as they become available.
+    Represents either the original credential ([0]) or an impersonation
+    hop leading to the effective principal ([-1]). ``oauth_client_id``
+    is populated only at index 0 when the root credential was
+    OAuth-obtained; impersonated credentials are minted via
+    ``iam.generateAccessToken`` and have no OAuth client.
+    """
+
+    principal_email: str | None = None
+    principal_subject: str | None = None
+    oauth_client_id: str | None = None
+
+
+class GCPIdentityDetails(_WireModel):
+    """GCP-source shape of ``AIInvocationObservedV1.identity_details``.
+
+    ``credential_chain`` captures the full auth path from the original
+    credential ([0]) to the effective principal ([-1], the one the API
+    sees). For non-impersonated calls, chain has length 1 where root
+    == effective. For ``--impersonate-service-account`` and similar
+    flows, chain has length ≥ 2.
+
+    ``credential_chain = None`` means identity resolution failed — the
+    Vertex identity-correlation phase saw either no matching audit
+    entries or entries that disagreed at both endpoints of the chain.
     """
 
     kind: Literal["gcp"] = "gcp"
-    principal_email: str | None = None
-    service_account_email: str | None = None
-    oauth_client_id: str | None = None
+    credential_chain: list[GCPCredential] | None = None
 
 
 IdentityDetails = Annotated[

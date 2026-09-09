@@ -57,6 +57,14 @@ resource "google_project_iam_member" "run_invoker" {
   member  = "serviceAccount:${google_service_account.forwarder.email}"
 }
 
+# ``logging.list_entries()`` reads audit log entries directly through
+# the Cloud Logging API — one grant, no sink needed. Read-only surface.
+resource "google_project_iam_member" "logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.forwarder.email}"
+}
+
 # fileData bucket access — grants roles/storage.objectViewer on either
 # every bucket in the project (var.filedata_buckets == ["*"]) or the
 # specific buckets listed. Empty list (default) → no grants, fileData

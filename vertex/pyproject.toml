@@ -1,6 +1,6 @@
 [project]
 name = "slashid-vertex-forwarder"
-version = "0.1.2"
+version = "0.1.3"
 description = "GCP Cloud Function forwarding Vertex AI generateContent request-response logs to SlashID NHI"
 requires-python = ">=3.13"
 license = { text = "Apache-2.0" }
@@ -10,6 +10,7 @@ dependencies = [
     "functions-framework>=3.5",
     "google-cloud-bigquery>=3.20",
     "google-cloud-firestore>=2.16",
+    "google-cloud-logging>=3.11",
     "google-cloud-secret-manager>=2.20",
     "httpx>=0.28",
 ]

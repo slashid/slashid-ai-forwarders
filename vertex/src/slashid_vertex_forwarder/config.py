@@ -33,6 +33,10 @@ class Config(BaseConfig):
     # Per-tick bounds — Cloud Function 2nd gen has a 9-minute max runtime;
     # 1000 rows/tick at ~50-100ms each stays well inside that.
     max_rows_per_tick: int = 1000
+    # Buffer applied to BQ payload rows so Cloud Audit Logs have time
+    # to land before we join. Default 30s covers p99+ of audit lag.
+    # See identity-correlation phase design doc.
+    audit_buffer_seconds: int = 30
 
 
 @cache

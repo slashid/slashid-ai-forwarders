@@ -23,6 +23,7 @@ def _entry(
     region: str = "us-central1",
     request_body: GeminiRequestBody | None = None,
     response_body: GeminiResponse | None = None,
+    api_method: str = "GenerateContent",
 ) -> Entry:
     return Entry(
         request_id=request_id,
@@ -50,6 +51,7 @@ def _entry(
                 },
             }
         ),
+        api_method=api_method,
     )
 
 
@@ -63,13 +65,11 @@ def test_envelope_populates_basic_fields() -> None:
 
 
 def test_envelope_identity_is_empty_gcp() -> None:
-    """V1 punts on identity — GCPIdentityDetails() with all fields None."""
+    """V1 punts on identity — GCPIdentityDetails() with credential_chain=None."""
     env = vertex_envelope(_entry())
     assert env is not None
     assert isinstance(env.identity_details, GCPIdentityDetails)
-    assert env.identity_details.principal_email is None
-    assert env.identity_details.service_account_email is None
-    assert env.identity_details.oauth_client_id is None
+    assert env.identity_details.credential_chain is None
     # Serialize form is the minimal wire shape.
     wire = env.identity_details.model_dump(mode="json", exclude_none=True)
     assert wire == {"kind": "gcp"}
@@ -161,3 +161,65 @@ def test_envelope_drops_when_request_id_empty() -> None:
     match bedrock_envelope's shape."""
     env = vertex_envelope(_entry(request_id=""))
     assert env is None
+
+
+def test_envelope_reads_pre_attached_identity_details() -> None:
+    """When Entry.identity_details is populated by the source, envelope
+    passes it through unchanged (does not construct a fresh empty one)."""
+    from datetime import UTC, datetime
+
+    from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+    from slashid_ai_forwarder_core.normalize.gemini.schema import (
+        GeminiRequestBody,
+        GeminiResponse,
+    )
+
+    from slashid_vertex_forwarder.event_envelope import vertex_envelope
+    from slashid_vertex_forwarder.event_source import Entry
+
+    entry = Entry(
+        request_id="1",
+        logging_time=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+        model_path="publishers/google/models/gemini-2.5-flash",
+        region="us-central1",
+        request_body=GeminiRequestBody.model_validate({"contents": []}),
+        response_body=GeminiResponse.model_validate({"candidates": [], "usageMetadata": {}}),
+        api_method="GenerateContent",
+        request_latency_ms=100.0,
+        identity_details=GCPIdentityDetails(
+            credential_chain=[GCPCredential(principal_email="alice@example.com")]
+        ),
+    )
+    env = vertex_envelope(entry)
+    assert env is not None
+    assert isinstance(env.identity_details, GCPIdentityDetails)
+    assert env.identity_details.credential_chain is not None
+    assert env.identity_details.credential_chain[0].principal_email == "alice@example.com"
+
+
+def test_envelope_empty_identity_still_serializes_to_kind_gcp() -> None:
+    from datetime import UTC, datetime
+
+    from slashid_ai_forwarder_core.events import GCPIdentityDetails
+    from slashid_ai_forwarder_core.normalize.gemini.schema import (
+        GeminiRequestBody,
+        GeminiResponse,
+    )
+
+    from slashid_vertex_forwarder.event_envelope import vertex_envelope
+    from slashid_vertex_forwarder.event_source import Entry
+
+    entry = Entry(
+        request_id="1",
+        logging_time=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+        model_path="publishers/google/models/gemini-2.5-flash",
+        region="us-central1",
+        request_body=GeminiRequestBody.model_validate({"contents": []}),
+        response_body=GeminiResponse.model_validate({"candidates": [], "usageMetadata": {}}),
+        api_method="GenerateContent",
+    )
+    env = vertex_envelope(entry)
+    assert env is not None
+    assert isinstance(env.identity_details, GCPIdentityDetails)
+    dumped = env.identity_details.model_dump(mode="json", exclude_none=True)
+    assert dumped == {"kind": "gcp"}

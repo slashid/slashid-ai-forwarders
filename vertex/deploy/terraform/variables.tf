@@ -112,6 +112,17 @@ variable "max_rows_per_tick" {
   default     = 1000
 }
 
+variable "audit_buffer_seconds" {
+  description = <<-EOT
+    Seconds to wait before processing a BQ payload row, giving Cloud
+    Audit Logs time to land for the identity-correlation join. Larger
+    buffer = higher chance of identity resolution, higher event
+    latency. Default 30s covers p99+ of audit lag.
+  EOT
+  type        = number
+  default     = 30
+}
+
 variable "request_timeout_seconds" {
   description = "HTTP client timeout for the push to SlashID."
   type        = number

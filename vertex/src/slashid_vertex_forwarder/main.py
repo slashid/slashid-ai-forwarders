@@ -36,6 +36,7 @@ def _source(config: Config) -> BqEventSource:
         dataset_id=config.bq_dataset,
         region=config.gcp_region,
         max_rows_per_tick=config.max_rows_per_tick,
+        audit_buffer_seconds=config.audit_buffer_seconds,
     )
 
 
