@@ -110,12 +110,15 @@ def query_audit_entries(
     itself sync). Audit entries per tick are usually <500 in count,
     which the API returns in one page in tens of ms.
 
-    The filter pins to the caller's ``region`` via
-    ``resource.labels.location`` so cross-region audit entries never
-    reach Python — a single-region forwarder deployment can't
-    correlate them anyway (the BQ dataset is region-scoped). The
-    per-row resource-name suffix check in ``_resolve_identity`` stays
-    as belt-and-suspenders.
+    The filter pins to the caller's ``region`` via a substring match
+    on ``protoPayload.resourceName`` (which carries
+    ``/locations/<region>/`` as part of the path) so cross-region
+    audit entries never reach Python — a single-region forwarder
+    deployment can't correlate them anyway (the BQ dataset is
+    region-scoped). Vertex audit logs don't populate
+    ``resource.labels.location``; only ``method`` / ``project_id`` /
+    ``service`` show up there. The per-row resource-name suffix check
+    in ``_resolve_identity`` stays as belt-and-suspenders.
 
     ``datetime.isoformat()`` on our timezone-aware timestamps yields
     RFC 3339 output; Cloud Logging accepts both ``+00:00`` and ``Z``
@@ -136,7 +139,7 @@ def query_audit_entries(
                 'AND protoPayload.serviceName="aiplatform.googleapis.com" '
                 'AND protoPayload.methodName:"generateContent" '
                 f"AND resource.labels.project_id={json.dumps(project_id)} "
-                f"AND resource.labels.location={json.dumps(region)} "
+                f"AND protoPayload.resourceName:{json.dumps(f'/locations/{region}/')} "
                 f"AND timestamp>={json.dumps(ts_lo.isoformat())} "
                 f"AND timestamp<={json.dumps(ts_hi.isoformat())}"
             ),
