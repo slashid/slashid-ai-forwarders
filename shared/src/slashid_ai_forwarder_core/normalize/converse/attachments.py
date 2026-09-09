@@ -22,8 +22,9 @@ import mimetypes
 from ...config_base import BaseConfig
 from ...content_utils import truncate_middle
 from ...events import AIAccessedFile
+from .._fetch_semaphore import get_fetch_semaphore
 from ..turn import after_last_assistant
-from .s3 import MAX_PARALLEL_FETCHES, _resolve_s3_attachment
+from .s3 import _resolve_s3_attachment
 from .schema import (
     ConverseDocumentBlock,
     ConverseDocumentSource,
@@ -65,8 +66,8 @@ async def extract_attachments(
     contribute — earlier attachments were reported on prior events.
 
     S3-sourced attachments are resolved concurrently up-front (bounded by
-    ``MAX_PARALLEL_FETCHES``). Inline base64 attachments are decoded
-    synchronously as the second pass walks messages.
+    the shared ``get_fetch_semaphore``). Inline base64 attachments are
+    decoded synchronously as the second pass walks messages.
 
     Duplicates in the fresh-turn window (same file referenced twice) are
     NOT deduped here — the shared ``finalize`` pass canonicalizes
@@ -100,7 +101,7 @@ async def extract_attachments(
                         s3_source_dicts.append(src_dict)
 
     if s3_source_dicts:
-        sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+        sem = get_fetch_semaphore()
 
         async def _guarded(src: dict) -> None:  # type: ignore[type-arg]
             async with sem:

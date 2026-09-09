@@ -23,6 +23,7 @@ from functools import cache
 from typing import Any
 
 import aioboto3
+from slashid_ai_forwarder_core.normalize._fetch_semaphore import get_fetch_semaphore
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -31,10 +32,6 @@ from tenacity import (
 )
 
 log = logging.getLogger(__name__)
-
-
-# Cap concurrent S3 calls within one Lambda invocation.
-MAX_PARALLEL_FETCHES = 8
 
 
 @cache
@@ -153,7 +150,7 @@ async def resolve_offloaded_bodies(records: list[dict[str, Any]]) -> None:
     if not tasks:
         return
 
-    sem = asyncio.Semaphore(MAX_PARALLEL_FETCHES)
+    sem = get_fetch_semaphore()
 
     async def _guarded(path: str) -> dict[str, Any] | list[Any] | None:
         async with sem:

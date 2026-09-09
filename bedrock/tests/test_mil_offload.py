@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from slashid_ai_forwarder_core.normalize import _fetch_semaphore
 
 from slashid_bedrock_forwarder import mil_offload
 
@@ -13,6 +14,15 @@ from slashid_bedrock_forwarder import mil_offload
 def _reset_session() -> None:
     """Make sure no test leaks the cached aioboto3 session into another."""
     mil_offload._get_session.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_fetch_semaphore() -> None:
+    """The shared fetch semaphore is a process-global singleton — clear the
+    cache between tests so each test gets one bound to its own event loop
+    (pytest-asyncio's default function-scoped loops otherwise raise
+    ``RuntimeError: got Future <Future ...> attached to a different loop``)."""
+    _fetch_semaphore.get_fetch_semaphore.cache_clear()
 
 
 def test_parse_s3_uri_happy() -> None:
@@ -137,7 +147,7 @@ async def test_resolve_offloaded_bodies_caps_concurrency(
     await mil_offload.resolve_offloaded_bodies(records)
 
     assert len(fetched) == 50  # everyone eventually runs
-    assert max_in_flight <= mil_offload.MAX_PARALLEL_FETCHES, (
+    assert max_in_flight <= _fetch_semaphore.MAX_PARALLEL_FETCHES, (
         f"concurrency cap breached: peaked at {max_in_flight}, "
-        f"limit is {mil_offload.MAX_PARALLEL_FETCHES}"
+        f"limit is {_fetch_semaphore.MAX_PARALLEL_FETCHES}"
     )

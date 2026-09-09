@@ -24,13 +24,6 @@ from ...content_utils import SNAP_TOLERANCE
 log = logging.getLogger(__name__)
 
 
-# Cap concurrent S3 calls within one Lambda invocation.
-# Duplicated from bedrock/mil_offload.py — the two paths don't need to stay
-# coupled (they run against different S3 objects with different cost curves)
-# but keeping the same limit avoids surprising the operator.
-MAX_PARALLEL_FETCHES = 8
-
-
 @cache
 def _get_session() -> aioboto3.Session:
     return aioboto3.Session()
