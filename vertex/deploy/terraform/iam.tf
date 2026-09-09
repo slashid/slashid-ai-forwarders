@@ -58,10 +58,14 @@ resource "google_project_iam_member" "run_invoker" {
 }
 
 # ``logging.list_entries()`` reads audit log entries directly through
-# the Cloud Logging API — one grant, no sink needed. Read-only surface.
+# the Cloud Logging API. Data Access audit logs (which is what Vertex
+# Gemini ``Generate*Content`` calls produce) are considered private
+# and require ``roles/logging.privateLogViewer`` — ``roles/logging.viewer``
+# alone returns zero entries for Data Access reads (silent, not a
+# permission error).
 resource "google_project_iam_member" "logging_viewer" {
   project = var.project_id
-  role    = "roles/logging.viewer"
+  role    = "roles/logging.privateLogViewer"
   member  = "serviceAccount:${google_service_account.forwarder.email}"
 }
 
