@@ -19,17 +19,125 @@ server dedupes on ``request_id``.
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from slashid_ai_forwarder_core.events import GCPIdentityDetails
+from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
 from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
 )
 
+from .audit_source import AuditEntry
+
 log = logging.getLogger(__name__)
+
+
+# --- Identity-correlation join (see identity-correlation design doc) --------
+
+_WINDOW = timedelta(milliseconds=200)
+_BIAS = timedelta(milliseconds=50)  # audit is ~50ms LATER than predicted
+
+
+def _predict_audit_ts(row: Entry) -> datetime:
+    """Predicted audit-log timestamp for a BQ payload row: rolls back
+    from ``logging_time`` by ``request_latency_ms`` and adds the fixed
+    +50ms clock/write-skew bias observed in the benchmark."""
+    latency = timedelta(milliseconds=row.request_latency_ms or 0)
+    return row.logging_time - latency + _BIAS
+
+
+def _consensus(vals: set[str | None]) -> str | None:
+    """Return the sole value everyone agrees on; None on disagreement.
+    ``None`` counts as a value — mixed None/populated is disagreement."""
+    return next(iter(vals)) if len(vals) == 1 else None
+
+
+def _credential_chain(a: AuditEntry) -> list[GCPCredential]:
+    """Reconstruct the full credential chain from one audit entry:
+    delegation hops (root at [0]) + effective principal (at [-1]).
+
+    ``oauth_client_id`` from ``authenticationInfo.oauthInfo`` attaches
+    to the ROOT credential — for OAuth-authenticated non-impersonated
+    calls, [0] == [-1] so it lands on the single entry; for impersonated
+    calls the effective SA's token isn't OAuth-obtained, so
+    ``effective_oauth_client_id`` is typically absent regardless."""
+    chain = [
+        GCPCredential(
+            principal_email=hop.first_party_email,
+            principal_subject=hop.principal_subject,
+        )
+        for hop in a.delegation_chain
+    ]
+    chain.append(
+        GCPCredential(
+            principal_email=a.effective_principal_email,
+            principal_subject=a.effective_principal_subject,
+        )
+    )
+    if a.effective_oauth_client_id is not None:
+        chain[0] = chain[0].model_copy(
+            update={"oauth_client_id": a.effective_oauth_client_id}
+        )
+    return chain
+
+
+def _consensus_chain(
+    candidates: list[AuditEntry],
+) -> list[GCPCredential] | None:
+    """Return the credential chain every candidate agrees on. When
+    candidates agree on chain length, per-position per-field consensus
+    over the full chain. When lengths differ, fall back to normalizing
+    every chain to ``[root, effective]`` and consensus on that.
+
+    Returns None only when BOTH endpoints (chain[0] and chain[-1]) are
+    empty after consensus. Partial results (one endpoint populated, the
+    other empty) still ship.
+    """
+    if not candidates:
+        return None
+    chains = [_credential_chain(c) for c in candidates]
+    lengths = {len(ch) for ch in chains}
+    if len(lengths) != 1:
+        # Length mismatch → normalize to [root, effective] (2-entry chain).
+        chains = [[ch[0], ch[-1]] for ch in chains]
+    n = len(chains[0])
+    result = [
+        GCPCredential(
+            principal_email=_consensus({ch[i].principal_email for ch in chains}),
+            principal_subject=_consensus({ch[i].principal_subject for ch in chains}),
+            oauth_client_id=_consensus({ch[i].oauth_client_id for ch in chains}),
+        )
+        for i in range(n)
+    ]
+    fields = ("principal_email", "principal_subject", "oauth_client_id")
+    root_empty = all(getattr(result[0], f) is None for f in fields)
+    tail_empty = all(getattr(result[-1], f) is None for f in fields)
+    if root_empty and tail_empty:
+        return None
+    return result
+
+
+def _resolve_identity(
+    row: Entry, audit_entries: list[AuditEntry]
+) -> GCPIdentityDetails:
+    """``audit_entries`` MUST be sorted ascending by timestamp — the
+    caller queries the log API with ``order_by="timestamp asc"``. We
+    bisect the sorted list to slice the time window in O(log N)."""
+    predicted = _predict_audit_ts(row)
+    i = bisect_left(audit_entries, predicted - _WINDOW, key=lambda a: a.timestamp)
+    j = bisect_right(audit_entries, predicted + _WINDOW, key=lambda a: a.timestamp)
+
+    method_suffix = row.api_method
+    resource_suffix = f"/locations/{row.region}/{row.model_path}"
+    candidates = [
+        a for a in audit_entries[i:j]
+        if a.method_name.endswith("." + method_suffix)
+        and a.resource_name.endswith(resource_suffix)
+    ]
+    return GCPIdentityDetails(credential_chain=_consensus_chain(candidates))
 
 
 @dataclass(frozen=True)
