@@ -161,10 +161,3 @@ def test_envelope_drops_when_request_id_empty() -> None:
     match bedrock_envelope's shape."""
     env = vertex_envelope(_entry(request_id=""))
     assert env is None
-
-
-# Note: stop_reason coverage lives on the normalizer, not the envelope
-# (build_event_from_normalized reads normalized.output.stop_reason).
-# Gemini finishReason mapping + streaming heuristic:
-#   shared/tests/normalize/test_gemini_stop_reasons.py
-#   shared/tests/normalize/test_gemini_to_normalized_invocation.yaml

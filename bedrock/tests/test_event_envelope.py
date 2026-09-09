@@ -202,15 +202,6 @@ def test_bedrock_envelope_defaults_tokens_to_zero_when_absent() -> None:
     assert env.tokens.cache_write == 0
 
 
-# Note: stop_reason coverage lives on the normalizer, not the envelope
-# (build_event_from_normalized reads normalized.output.stop_reason).
-# Vendor stop_reason mappings:
-#   shared/tests/normalize/test_converse_stop_reasons.py
-#   shared/tests/normalize/test_anthropic_stop_reasons.py
-# For parsed_as="unknown" (no normalizer runs), wire stop_reason falls
-# back to the NormalizedInvocationOutput default ("unknown").
-
-
 # --- timestamp normalisation ----------------------------------------------
 
 
