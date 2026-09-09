@@ -17,12 +17,13 @@ everything else on the LogEntry stays untouched. Delegation info
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from google.cloud.logging import Client as LoggingClient
+    from google.cloud.logging import LogEntry
 
 
 class DelegationHop(BaseModel):
@@ -83,7 +84,7 @@ class AuditEntry(BaseModel):
     )
 
     @classmethod
-    def from_log_entry(cls, entry: Any) -> AuditEntry:
+    def from_log_entry(cls, entry: LogEntry) -> AuditEntry:
         """Build from a ``google.cloud.logging.LogEntry``.
 
         Wraps ``model_validate`` — the LogEntry has ``timestamp`` at the
