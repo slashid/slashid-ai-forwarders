@@ -277,8 +277,9 @@ class EventEnvelope(_WireModel):
     Every field maps 1:1 onto a top-level ``AIInvocationObservedV1``
     field the record-derived envelope owns (as opposed to
     normalized-conversation-derived fields like ``available_tools``,
-    ``used_tools``, ``input``/``output``, ``accessed_files``, which stay
-    with the pure shared builder). Vendor-specific envelope constructors
+    ``used_tools``, ``stop_reason``, ``input``/``output``,
+    ``accessed_files``, which stay with the pure shared builder).
+    Vendor-specific envelope constructors
     (Bedrock's ``bedrock_envelope``, Vertex's future equivalent) return
     ``None`` on drop conditions and populate an ``EventEnvelope``
     otherwise; the shared builder never has to touch a raw record.
@@ -295,7 +296,6 @@ class EventEnvelope(_WireModel):
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     parsed_as: str
-    stop_reason: AIStopReason | None = None
 
 
 # --- record parsing ---------------------------------------------------------
@@ -504,7 +504,7 @@ async def build_event_from_normalized(
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
-        stop_reason=envelope.stop_reason,
+        stop_reason=normalized.output.stop_reason,
         input=_build_content(
             _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
             include_text=config.include_raw_content,

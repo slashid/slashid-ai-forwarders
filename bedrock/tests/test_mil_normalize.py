@@ -726,8 +726,11 @@ async def test_e2e_unrecognized_shape_emits_parsed_as_unknown() -> None:
     assert envelope is not None
     event = await build_event_from_normalized(normalized, envelope, config=_CONFIG)
     assert event.parsed_as == "unknown"
-    # Semantic fields empty/None on unknown-shape records.
-    assert event.stop_reason is None
+    # Semantic fields empty/best-effort on unknown-shape records.
+    # No normalizer runs → NormalizedInvocation() default →
+    # output.stop_reason defaults to "unknown" (the sentinel value),
+    # which surfaces on the wire in place of a real vendor mapping.
+    assert event.stop_reason == "unknown"
     assert event.used_tools is None
     assert event.available_tools is None
     # Model + identity + tokens survive from the envelope.

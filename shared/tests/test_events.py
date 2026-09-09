@@ -77,7 +77,13 @@ def _mil_record(**overrides: Any) -> dict[str, Any]:
             "accessKeyId": "AKIAEXAMPLE",
         },
         "input": {"inputTokenCount": 100, "cacheReadInputTokenCount": 5},
-        "output": {"outputTokenCount": 50, "outputBodyJson": {"stopReason": "end_turn"}},
+        "output": {
+            "outputTokenCount": 50,
+            "outputBodyJson": {
+                "stopReason": "end_turn",
+                "output": {"message": {"role": "assistant", "content": []}},
+            },
+        },
     }
     base.update(overrides)
     return base
@@ -102,10 +108,6 @@ def _envelope(record: dict[str, Any]) -> EventEnvelope:
     out = record.get("output") or {}
     raw_model_id = str(record.get("modelId") or "")
 
-    obody = out.get("outputBodyJson")
-    stop_raw = obody.get("stopReason") if isinstance(obody, dict) else None
-    stop_reason = stop_raw if stop_raw in {"end_turn", "tool_use"} else None
-
     return EventEnvelope(
         request_id=str(record["requestId"]),
         timestamp=record.get("timestamp", "2026-06-01T12:00:00+00:00"),
@@ -119,7 +121,6 @@ def _envelope(record: dict[str, Any]) -> EventEnvelope:
             reasoning=0,
         ),
         parsed_as=record.get("_parsed_as", "unknown"),
-        stop_reason=stop_reason,
     )
 
 
@@ -175,6 +176,7 @@ async def test_build_event_with_tools_and_used_ids() -> None:
                 "stopReason": "tool_use",
                 "output": {
                     "message": {
+                        "role": "assistant",
                         "content": [
                             {
                                 "toolUse": {
@@ -182,7 +184,7 @@ async def test_build_event_with_tools_and_used_ids() -> None:
                                     "input": {},
                                 }
                             }
-                        ]
+                        ],
                     }
                 },
             },

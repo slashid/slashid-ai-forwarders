@@ -202,31 +202,6 @@ def test_bedrock_envelope_defaults_tokens_to_zero_when_absent() -> None:
     assert env.tokens.cache_write == 0
 
 
-# --- stop_reason -----------------------------------------------------------
-
-
-def test_bedrock_envelope_unknown_stop_reason_falls_back_to_unknown() -> None:
-    record = _mil_record(output={"outputTokenCount": 5, "outputBodyJson": {"stopReason": "wat"}})
-    env = bedrock_envelope(record)
-    assert env is not None
-    assert env.stop_reason == "unknown"
-
-
-def test_bedrock_envelope_stop_reason_none_when_output_body_non_dict() -> None:
-    """Non-Anthropic streams reach us as raw lists — skip cleanly."""
-    record = _mil_record(output={"outputTokenCount": 0, "outputBodyJson": []})
-    env = bedrock_envelope(record)
-    assert env is not None
-    assert env.stop_reason is None
-
-
-def test_bedrock_envelope_stop_reason_none_when_stop_reason_missing() -> None:
-    record = _mil_record(output={"outputTokenCount": 0, "outputBodyJson": {}})
-    env = bedrock_envelope(record)
-    assert env is not None
-    assert env.stop_reason is None
-
-
 # --- timestamp normalisation ----------------------------------------------
 
 
