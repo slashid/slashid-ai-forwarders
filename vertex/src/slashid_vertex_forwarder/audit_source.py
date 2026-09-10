@@ -60,6 +60,7 @@ class AuditEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
     timestamp: datetime
+    insert_id: str = Field(default="", validation_alias="insertId")
     resource_name: str = Field(
         default="",
         validation_alias=AliasPath("payload", "resourceName"),
@@ -94,7 +95,13 @@ class AuditEntry(BaseModel):
         Cloud Logging v3+ Python client). ``AliasPath`` declarations on
         the fields pull each nested value directly.
         """
-        return cls.model_validate({"timestamp": entry.timestamp, "payload": entry.payload or {}})
+        return cls.model_validate(
+            {
+                "timestamp": entry.timestamp,
+                "insertId": entry.insert_id,
+                "payload": entry.payload or {},
+            }
+        )
 
 
 def query_audit_entries(
