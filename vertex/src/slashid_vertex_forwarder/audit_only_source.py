@@ -9,11 +9,16 @@ This source polls those entries and emits sparse
 payload.
 
 Server-side filter is publisher-level (non-Google in the configured
-region for the relevant methods); client-side, entries are further
-narrowed to the customer's ``observed_models`` allowlist. The
-compound checkpoint tie-break ``(timestamp, id) > (cp.timestamp, cp.id)``
-is server-side — Cloud Logging honors lexicographic string comparison
-on ``insertId`` (verified empirically 2026-09-09).
+region for the relevant methods) plus a coarse ``timestamp >= cp_ts``.
+Client-side, entries are further narrowed to the customer's
+``observed_models`` allowlist and the strict compound
+``(timestamp, id) > (cp.timestamp, cp.id)`` is re-applied in Python.
+The compound must run client-side because Cloud Logging stores audit
+timestamps at nanosecond precision (``…432004832Z``) while the Python
+client library truncates them to microsecond (``…432004``) on parse;
+sending a strict ``timestamp>`` with the truncated μs cp gets
+re-matched by the server's ns comparator, and the tie-break on
+``insertId`` never fires.
 """
 
 from __future__ import annotations
@@ -47,12 +52,24 @@ def query_audit_only_entries(
     checkpoint: Checkpoint,
     max_entries: int,
 ) -> list[AuditEntry]:
-    """Fetch non-Google-publisher audit entries past the checkpoint.
+    """Fetch non-Google-publisher audit entries at or past the checkpoint.
 
-    The compound ``(timestamp, id) > checkpoint`` filter is server-side.
-    Cloud Logging's ``order_by="timestamp asc"`` orders by timestamp
-    only — callers sort by ``(timestamp, insert_id)`` for the compound
-    order the checkpoint contract expects.
+    Server-side filter is loose (``timestamp >= cp_ts``). Cloud Logging
+    audit entries have **nanosecond**-precision timestamps on the wire
+    (``…432004832Z``) but the Python client's parser truncates them to
+    **microsecond** (``…432004``). If we sent a strict ``timestamp>cp_ts``
+    with the truncated cp back to the server, the server's ns-precision
+    comparator would re-match the same entry — its true ns tail is
+    strictly greater than the truncated μs watermark, so the tie-break
+    on ``insertId`` never fires.
+
+    The fix is to keep the server filter coarse and re-apply the
+    strict compound ``(timestamp, insert_id) > (cp_ts, cp_id)`` in
+    Python, where both sides operate at μs precision. The caller sorts
+    and applies the exact filter after this returns.
+
+    Over-fetch cost is bounded by the number of entries sharing the
+    watermark's μs — one in practice.
 
     Every interpolated string uses ``json.dumps`` for filter-language
     escaping (same pattern Phase 3.6 uses).
@@ -72,10 +89,9 @@ def query_audit_only_entries(
         f"resource.labels.project_id={json.dumps(project_id)}",
         f"({method_clause})",
     ]
-    if checkpoint.timestamp is not None and checkpoint.id is not None:
+    if checkpoint.timestamp is not None:
         cp_ts = json.dumps(checkpoint.timestamp.isoformat())
-        cp_id = json.dumps(checkpoint.id)
-        parts.append(f"(timestamp>{cp_ts} OR (timestamp={cp_ts} AND insertId>{cp_id}))")
+        parts.append(f"timestamp>={cp_ts}")
     filter_ = " AND ".join(parts)
     return [
         AuditEntry.from_log_entry(e)
@@ -150,15 +166,29 @@ class AuditOnlyEventSource:
 
         # Sort by (timestamp, insert_id) — Cloud Logging orders by
         # timestamp only, so ties need Python resolution to match the
-        # checkpoint contract.
-        raw_sorted = sorted(raw, key=lambda a: (a.timestamp, a.insert_id))
+        # checkpoint contract. The server-side filter is coarse
+        # (``timestamp >= cp_ts``) because sending a strict ``>`` with
+        # a μs-truncated cp gets re-matched by the ns-precision server
+        # (the client library truncated ``.432004832`` to ``.432004``,
+        # so ``server_ns > client_μs`` is always true for the source
+        # entry). We re-apply the strict compound ``(timestamp, id) >
+        # (cp_ts, cp_id)`` here in Python, where both sides live at μs.
+        raw_filtered = sorted(raw, key=lambda a: (a.timestamp, a.insert_id))
+        if checkpoint.timestamp is not None and checkpoint.id is not None:
+            cp_pair = (checkpoint.timestamp, checkpoint.id)
+            raw_filtered = [a for a in raw_filtered if (a.timestamp, a.insert_id) > cp_pair]
+        if not raw_filtered:
+            # Server returned only entries we've already seen (typically
+            # just the watermark itself echoing back through the coarse
+            # ``>=`` filter). Nothing to emit, nothing to advance.
+            return [], None
         next_cp = Checkpoint(
-            timestamp=raw_sorted[-1].timestamp,
-            id=raw_sorted[-1].insert_id,
+            timestamp=raw_filtered[-1].timestamp,
+            id=raw_filtered[-1].insert_id,
         )
 
         envelopes: list[EventEnvelope] = []
-        for audit in raw_sorted:
+        for audit in raw_filtered:
             publisher, model = _parse_model_path(audit.resource_name)
             if publisher is None or model is None:
                 log.warning(

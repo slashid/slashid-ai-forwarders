@@ -39,9 +39,13 @@ class _FakeLoggingClient:
         return self._entries
 
 
-def test_query_audit_only_entries_filter_includes_compound_tiebreak() -> None:
-    """Filter must include the compound (timestamp, id) > checkpoint
-    tuple — verified empirically to work server-side on Cloud Logging."""
+def test_query_audit_only_entries_filter_uses_loose_ge_on_timestamp() -> None:
+    """Server-side filter is ``timestamp >= cp_ts`` only. The Python
+    caller re-applies the strict compound ``(timestamp, id) > cp`` because
+    Cloud Logging stores audit timestamps at ns precision but the client
+    library truncates to μs on parse — a strict ``timestamp > cp_ts``
+    sent with the μs cp gets re-matched by the server's ns comparator.
+    """
     from slashid_vertex_forwarder.audit_only_source import query_audit_only_entries
 
     client = _FakeLoggingClient()
@@ -61,10 +65,11 @@ def test_query_audit_only_entries_filter_includes_compound_tiebreak() -> None:
     assert 'protoPayload.serviceName="aiplatform.googleapis.com"' in filter_
     assert 'NOT protoPayload.resourceName:"/publishers/google/"' in filter_
     assert "/locations/europe-west1/" in filter_
-    # Compound tie-break:
-    assert 'timestamp>"2026-09-09T12:00:00+00:00"' in filter_
-    assert 'timestamp="2026-09-09T12:00:00+00:00"' in filter_
-    assert 'insertId>"audit-xyz"' in filter_
+    assert 'timestamp>="2026-09-09T12:00:00+00:00"' in filter_
+    # No strict ``>`` on timestamp and no ``insertId`` clause — those
+    # would re-match the watermark entry via server-side ns comparison.
+    assert 'timestamp>"' not in filter_
+    assert "insertId" not in filter_
     assert client.calls[0]["order_by"] == "timestamp asc"
     assert client.calls[0]["resource_names"] == ["projects/p1"]
     assert client.calls[0]["max_results"] == 1000
@@ -256,6 +261,50 @@ def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
     events, next_cp = source.fetch()
     assert events == []
     assert next_cp is None
+
+
+def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
+    """Server-side filter is ``timestamp >= cp_ts``, so the watermark
+    entry echoes back every tick — Python must drop it via the strict
+    ``(timestamp, id) > (cp_ts, cp_id)`` filter and NOT re-emit it.
+
+    Reproduces the production dedup bug on strong-hue-507702-k7 where
+    audit entry insertId ``1hvqc9mf1uny5x`` re-fired on 3 consecutive
+    ticks (2026-09-10 04:50, 04:51, 04:52 UTC) because the Cloud
+    Logging server's ns-precision comparator matched the same entry
+    despite the μs-precision cp being stored client-side. Under this
+    fix the server still echoes the entry back (loose ``>=``) but
+    Python drops it and reports ``next_checkpoint=None``.
+    """
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    # 04:31:45.432004 μs — what Python parses from ``.432004832Z``.
+    t1_truncated = datetime(2026, 9, 10, 4, 31, 45, 432004, tzinfo=UTC)
+    fake_client = _FakeLoggingClient(
+        [
+            _fake_log_entry(
+                insert_id="1hvqc9mf1uny5x",
+                timestamp=t1_truncated,
+                resource_name="projects/p/locations/r/publishers/openai/models/gpt-oss-120b-maas",
+            ),
+        ]
+    )
+    # Existing checkpoint == the entry the server echoes back.
+    store = _FakeCheckpointStore(
+        initial=Checkpoint(timestamp=t1_truncated, id="1hvqc9mf1uny5x"),
+    )
+    source = AuditOnlyEventSource(
+        logging_client=fake_client,
+        checkpoint_store=store,
+        project_id="p",
+        region="r",
+        observed_models=["openai/gpt-oss-120b-maas"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, next_cp = source.fetch()
+    assert events == [], "watermark echo must not be re-emitted"
+    assert next_cp is None, "nothing new past the watermark → don't advance"
 
 
 def test_commit_saves_to_checkpoint_store() -> None:
