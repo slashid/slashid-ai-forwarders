@@ -34,27 +34,42 @@ PARSED_AS_GOOGLE = "vertex-google"
 PARSED_AS_AUDIT = "vertex-audit"
 
 
-_MODEL_PATH_RE = re.compile(r"(?:.+/)?publishers/([^/]+)/models/(.+)$")
+_MODEL_PATH_RE = re.compile(r"(?:.+/)?publishers/([^/]+)/models/([^@]+)(?:@(.+))?$")
 
 
-def _parse_model_path(path: str) -> tuple[str | None, str | None]:
-    """Extract (publisher, model_name) from a Vertex path.
+def _parse_model_path(path: str) -> tuple[str | None, str | None, str | None]:
+    """Extract ``(publisher, model_name, version)`` from a Vertex path.
 
     Accepts either the short form ``publishers/<pub>/models/<model>``
     or the long form
     ``projects/<proj>/locations/<region>/publishers/<pub>/models/<model>``
-    — the leading segment group is optional in the regex. Greedy ``.+``
-    on the model group preserves any embedded slashes (Vertex fine-tuned
-    / deployed variants occasionally carry ``endpoints/<id>``-style
-    suffixes).
+    — the leading segment group is optional. ``[^@]+`` on the model
+    group preserves embedded slashes (Vertex fine-tuned / deployed
+    variants occasionally carry ``endpoints/<id>``-style suffixes) but
+    stops at the first ``@`` so the optional trailing ``@<version>``
+    binds to its own group.
 
-    Returns (None, None) on any shape that doesn't match — callers drop
-    the field rather than surface a partial parse.
+    Vertex Model Garden pins some publisher models with an
+    ``@<version>`` suffix at call time (Anthropic Claude is the
+    canonical case: ``claude-sonnet-4-5@20250929``). Google's Gemini
+    and Meta's Llama don't use the suffix as of the current catalog;
+    ``version`` is ``None`` in those cases.
+
+    Callers use ``model_name`` for allowlist matching and
+    ``AIModel.name`` on the wire, ``version`` for ``AIModel.version``,
+    and reconstruct the full path for ``AIModel.id`` / ``raw_model_id``.
+
+    Returns ``(None, None, None)`` on any shape that doesn't match —
+    callers drop the field rather than surface a partial parse.
     """
     match = _MODEL_PATH_RE.match(path)
     if match is None:
-        return None, None
-    return match.group(1) or None, match.group(2) or None
+        return None, None, None
+    return (
+        match.group(1) or None,
+        match.group(2) or None,
+        match.group(3) or None,
+    )
 
 
 def _short_method(method_name: str) -> str:
@@ -89,10 +104,11 @@ def vertex_audit_only_envelope(audit: AuditEntry) -> EventEnvelope | None:
 
     if not audit.insert_id:
         return None
-    publisher, model = _parse_model_path(audit.resource_name)
+    publisher, model, version = _parse_model_path(audit.resource_name)
     if publisher is None or model is None:
         return None
-    model_path = f"publishers/{publisher}/models/{model}"
+    full = f"{model}@{version}" if version else model
+    model_path = f"publishers/{publisher}/models/{full}"
     return EventEnvelope(
         request_id=audit.insert_id,
         timestamp=audit.timestamp.isoformat(),
@@ -103,6 +119,7 @@ def vertex_audit_only_envelope(audit: AuditEntry) -> EventEnvelope | None:
             id=model_path,
             name=model,
             provider=publisher,
+            version=version,
             raw_model_id=model_path,
         ),
         parsed_as=PARSED_AS_AUDIT,
@@ -129,7 +146,7 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
         cache_write=0,  # Gemini does not expose a cache-write count
         reasoning=int(usage.thoughtsTokenCount or 0),
     )
-    publisher, model_name = _parse_model_path(entry.model_path)
+    publisher, model_name, version = _parse_model_path(entry.model_path)
 
     return EventEnvelope(
         request_id=entry.request_id,
@@ -139,6 +156,7 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
             id=entry.model_path,
             name=model_name,
             provider=publisher,
+            version=version,
             raw_model_id=entry.model_path,
         ),
         tokens=tokens,

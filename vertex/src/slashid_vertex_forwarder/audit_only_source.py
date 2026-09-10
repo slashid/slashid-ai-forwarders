@@ -209,7 +209,7 @@ class AuditOnlyEventSource:
 
         envelopes: list[EventEnvelope] = []
         for audit in raw_filtered:
-            publisher, model = _parse_model_path(audit.resource_name)
+            publisher, model, _ = _parse_model_path(audit.resource_name)
             if publisher is None or model is None:
                 log.warning(
                     "dropping audit entry with unparseable resource_name: %s (insertId=%s)",
@@ -217,6 +217,11 @@ class AuditOnlyEventSource:
                     audit.insert_id,
                 )
                 continue
+            # ``observed_models`` entries are always bare
+            # (``<pub>/<model>``); Vertex may pin the audit entry with
+            # an ``@YYYYMMDD`` version (Anthropic Claude on Vertex is
+            # the canonical case), but the allowlist doesn't distinguish
+            # versions — compare bare-to-bare.
             if f"{publisher}/{model}" not in self._observed_models:
                 continue
             envelope = vertex_audit_only_envelope(audit)

@@ -200,23 +200,34 @@ def test_envelope_reads_pre_attached_identity_details() -> None:
 @pytest.mark.parametrize(
     "path, expected",
     [
+        # Bare — no @version suffix
         (
             "publishers/anthropic/models/claude-sonnet-4-5",
-            ("anthropic", "claude-sonnet-4-5"),
+            ("anthropic", "claude-sonnet-4-5", None),
         ),
         (
             "projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
-            ("anthropic", "claude-sonnet-4-5"),
+            ("anthropic", "claude-sonnet-4-5", None),
         ),
+        # Fine-tuned / deployed variants keep embedded slashes.
         (
             "publishers/google/models/my-tuned/endpoints/abc123",
-            ("google", "my-tuned/endpoints/abc123"),
+            ("google", "my-tuned/endpoints/abc123", None),
         ),
-        ("not-a-path", (None, None)),
-        ("", (None, None)),
+        # ``@YYYYMMDD`` version pin — Vertex Anthropic canonical case.
+        (
+            "publishers/anthropic/models/claude-sonnet-4-5@20250929",
+            ("anthropic", "claude-sonnet-4-5", "20250929"),
+        ),
+        (
+            "projects/p/locations/r/publishers/anthropic/models/claude-opus-4-1@20250805",
+            ("anthropic", "claude-opus-4-1", "20250805"),
+        ),
+        ("not-a-path", (None, None, None)),
+        ("", (None, None, None)),
     ],
 )
-def test_parse_model_path(path: str, expected: tuple[str | None, str | None]) -> None:
+def test_parse_model_path(path: str, expected: tuple[str | None, str | None, str | None]) -> None:
     from slashid_vertex_forwarder.event_envelope import _parse_model_path
 
     assert _parse_model_path(path) == expected
