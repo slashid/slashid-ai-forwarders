@@ -253,6 +253,7 @@
   "qwen/qwen3-next-80b-a3b-instruct-maas",
   "qwen/qwen3-next-80b-a3b-thinking-maas",
   "qwen/qwen3-vl",
+  "qwen/qwen3.8",
   "qwen/qwq",
   "runwayml/stable-diffusion-inpainting",
   "salesforce/blip-image-captioning-base",
