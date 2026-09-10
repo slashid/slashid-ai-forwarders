@@ -932,7 +932,7 @@ def test_identity_details_union_dispatches_on_kind() -> None:
         "timestamp": "t",
         "identity_details": {"kind": "gcp"},
         "model": {"id": "m"},
-        "parsed_as": "vertex-gemini-generate",
+        "parsed_as": "vertex-google",
     }
     event = AIInvocationObservedV1.model_validate(raw_gcp)
     assert isinstance(event.identity_details, GCPIdentityDetails)
@@ -954,7 +954,7 @@ def test_gcp_identity_details_wire_form_round_trips_on_envelope() -> None:
         timestamp="t",
         identity_details=GCPIdentityDetails(),
         model=AIModel(id="publishers/google/models/gemini-2.5-flash"),
-        parsed_as="vertex-gemini-generate",
+        parsed_as="vertex-google",
     )
     assert env.identity_details.kind == "gcp"
     wire = env.model_dump(mode="json", exclude_none=True)
@@ -1226,7 +1226,7 @@ async def test_gcp_identity_details_discriminated_union_still_works() -> None:
             "timestamp": "2026-09-09T12:00:00Z",
             "identity_details": {"kind": "gcp"},
             "model": {"id": "publishers/google/models/gemini-2.5-flash"},
-            "parsed_as": "vertex-gemini-generate",
+            "parsed_as": "vertex-google",
         }
     )
     assert isinstance(ev.identity_details, GCPIdentityDetails)

@@ -39,7 +39,7 @@ def _event(
     request_id: str = "42",
     timestamp: datetime | None = None,
     model_id: str = "publishers/google/models/gemini-2.5-flash",
-    parsed_as: str = "vertex-gemini-generate",
+    parsed_as: str = "vertex-google",
     input_tokens: int = 5,
     output_tokens: int = 2,
 ) -> AIInvocationObservedV1:
@@ -117,7 +117,7 @@ def test_run_tick_pushes_events_and_commits_checkpoint(
     assert len(captured["events"]) == 1
     pushed = captured["events"][0]
     assert pushed.request_id == "42"
-    assert pushed.parsed_as == "vertex-gemini-generate"
+    assert pushed.parsed_as == "vertex-google"
     assert pushed.identity_details.kind == "gcp"
     # The event is passed through unchanged — no build_event_from_normalized
     # call inside the handler anymore.

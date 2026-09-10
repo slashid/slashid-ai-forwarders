@@ -33,14 +33,13 @@ from .event_source import Entry
 if TYPE_CHECKING:
     from .audit_only_source import AuditOnlyEntry
 
-# Kept as a module-level constant so tests and downstream consumers can
-# pattern-match on the exact string. Convention (see events.py:246):
-# ``<vendor>-<vendor_model_family>-<shape>``.
-PARSED_AS = "vertex-gemini-generate"
-
-# Wire ``parsed_as`` for audit-only events. Convention (see events.py):
-# ``<vendor>-<record-shape>``. Provider + model.name differentiate
-# publishers; no per-publisher parsed_as value.
+# Wire ``parsed_as`` values — the record shape's identifier. Downstream
+# consumers pattern-match on these to know which fields are populated:
+# ``vertex-google`` events (BQ payload path) carry full input/output/
+# tokens/stop_reason; ``vertex-audit`` events (non-Google publishers)
+# are sparse — identity + model reference only. Provider + model.name
+# on ``AIModel`` differentiate publishers within each shape.
+PARSED_AS = "vertex-google"
 PARSED_AS_AUDIT = "vertex-audit"
 
 

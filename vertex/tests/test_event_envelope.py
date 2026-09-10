@@ -61,7 +61,7 @@ def test_envelope_populates_basic_fields() -> None:
     assert env.request_id == "3292372995731278848"
     assert env.timestamp == "2026-09-05T02:43:59+00:00"
     assert env.parsed_as == PARSED_AS
-    assert env.parsed_as == "vertex-gemini-generate"
+    assert env.parsed_as == "vertex-google"
 
 
 def test_envelope_identity_is_empty_gcp() -> None:
