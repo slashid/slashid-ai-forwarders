@@ -20,6 +20,7 @@ dist/
 .idea/
 .DS_Store
 .serena/
+.claude/
 
 # Local secrets / fixtures
 .env

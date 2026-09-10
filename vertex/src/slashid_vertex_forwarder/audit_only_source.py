@@ -257,9 +257,19 @@ class AuditOnlyEventSource:
             envelope = vertex_audit_only_envelope(entry)
             if envelope is None:
                 return None
-            return await build_event_from_normalized(
+            event = await build_event_from_normalized(
                 NormalizedInvocation(), envelope, config=self._config
             )
+            # NormalizedInvocationOutput.stop_reason defaults to the
+            # ``"unknown"`` sentinel, which the shared builder passes
+            # through to the wire. Audit-only events know nothing about
+            # stop_reason — null it out post-build so the wire event
+            # matches the sparse-fields contract in the design doc.
+            # Also drop ``output`` (which the shared builder populated
+            # with a hash of ``{stop_reason: "unknown"}``).
+            event.stop_reason = None
+            event.output = None
+            return event
 
         built_or_none = await asyncio.gather(*(_build(e) for e in entries))
         return [e for e in built_or_none if e is not None]

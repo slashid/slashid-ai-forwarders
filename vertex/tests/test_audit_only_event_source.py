@@ -182,12 +182,14 @@ def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
     assert events[0].model.name == "claude-sonnet-4-5"
     assert events[0].model.id == "publishers/anthropic/models/claude-sonnet-4-5"
     assert events[0].tokens.input == 0
-    # Sparse: empty NormalizedInvocation() drops input/used_tools/accessed_files.
-    # ``output`` currently carries a hash of {"stop_reason":"unknown"} because
-    # the shared builder leaves that default in; a follow-up in the shared
-    # builder can strip it. For now the content is stable across every
-    # audit-only event (same hash) and carries no privacy risk.
+    # Sparse-by-design: audit logs carry no request/response payload,
+    # so every derived field stays null. ``stop_reason`` and ``output``
+    # are nulled post-build (the shared builder leaves the
+    # ``stop_reason="unknown"`` sentinel in place; AuditOnlyEventSource
+    # strips it for the audit path).
     assert events[0].input is None
+    assert events[0].output is None
+    assert events[0].stop_reason is None
     assert events[0].used_tools is None
     assert events[0].accessed_files is None
     assert events[0].available_tools is None
