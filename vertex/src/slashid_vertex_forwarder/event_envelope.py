@@ -76,9 +76,10 @@ def vertex_audit_only_envelope(audit: AuditEntry) -> EventEnvelope | None:
     ``insert_id`` is empty (should not happen given the Cloud Logging
     contract, but mirrors ``vertex_envelope``'s None-return shape).
     Sparse-by-design: tokens default to zero (audit logs carry no token
-    counts), and ``stop_reason`` / ``input`` / ``output`` /
-    ``used_tools`` / ``accessed_files`` are nulled by
-    ``AuditOnlyEventSource`` post-build.
+    counts) and all conversation-shaped fields stay ``None`` under
+    ``build_sparse_event``. ``is_error`` propagates from the audit
+    entry's gRPC status; the shared builder maps it to
+    ``stop_reason="error"``.
     """
     # Local import: audit_source imports GCPCredential from
     # slashid_ai_forwarder_core, not from this module — no cycle risk.
@@ -105,6 +106,7 @@ def vertex_audit_only_envelope(audit: AuditEntry) -> EventEnvelope | None:
             raw_model_id=model_path,
         ),
         parsed_as=PARSED_AS_AUDIT,
+        is_error=audit.is_error,
     )
 
 

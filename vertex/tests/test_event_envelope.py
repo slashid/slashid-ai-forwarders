@@ -300,6 +300,38 @@ def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
     assert identity.credential_chain is not None
     assert len(identity.credential_chain) == 1
     assert identity.credential_chain[0].principal_email == "user@example.com"
+    # No status → is_error stays False.
+    assert env.is_error is False
+
+
+def test_vertex_audit_only_envelope_propagates_is_error_from_status_code() -> None:
+    """Non-zero gRPC status → ``envelope.is_error=True``. Reproduces the
+    OpenAI ``:rawPredict`` FAILED_PRECONDITION case observed on
+    strong-hue-507702-k7 (status code 9).
+    """
+    from slashid_vertex_forwarder.audit_source import AuditEntry
+    from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
+
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "log-err",
+            "timestamp": datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+            "payload": {
+                "resourceName": (
+                    "projects/p/locations/us-central1/publishers/openai/models/gpt-oss-120b-maas"
+                ),
+                "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
+                "authenticationInfo": {"principalEmail": "user@example.com"},
+                "status": {
+                    "code": 9,
+                    "message": "OpenMaaS model is not allowed to be called from this method.",
+                },
+            },
+        }
+    )
+    env = vertex_audit_only_envelope(audit)
+    assert env is not None
+    assert env.is_error is True
 
 
 def test_vertex_audit_only_envelope_drops_when_insert_id_empty() -> None:

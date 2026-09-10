@@ -50,6 +50,7 @@ AIStopReason = Literal[
     "malformed_model_output",
     "malformed_tool_use",
     "model_context_window_exceeded",
+    "error",
     "unknown",
 ]
 
@@ -312,6 +313,13 @@ class EventEnvelope(_WireModel):
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     parsed_as: str
+    # True when the vendor recorded a server-side error for the request
+    # (non-zero gRPC status on Cloud Audit Logs, non-2xx HTTP status on
+    # BQ payload rows, ``error`` set on Bedrock/Converse). When True the
+    # shared builder overrides ``stop_reason`` to ``"error"`` — an
+    # errored request has no legit ``end_turn`` / ``max_tokens`` /
+    # ``tool_use`` etc.
+    is_error: bool = False
 
 
 # --- record parsing ---------------------------------------------------------
@@ -520,7 +528,7 @@ async def build_event_from_normalized(
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
-        stop_reason=normalized.output.stop_reason,
+        stop_reason="error" if envelope.is_error else normalized.output.stop_reason,
         input=_build_content(
             _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
             include_text=config.include_raw_content,
@@ -532,4 +540,38 @@ async def build_event_from_normalized(
             max_content_size=config.max_content_size,
         ),
         accessed_files=normalized.accessed_files or None,
+    )
+
+
+def build_sparse_event(
+    envelope: EventEnvelope,
+    *,
+    config: BaseConfig,
+) -> AIInvocationObservedV1:
+    """Assemble an ``AIInvocationObservedV1`` from an envelope alone.
+
+    For sources that observe an invocation happened but can see nothing
+    about its shape — Cloud Audit Logs for non-Google Vertex publishers,
+    Purview UAL entries, similar audit-envelope-only paths. All
+    conversation-shaped fields (``available_tools``, ``used_tools``,
+    ``input``, ``output``, ``accessed_files``) stay ``None`` at the type
+    level rather than being nulled after the fact.
+
+    ``stop_reason`` is ``"error"`` when the envelope flags an error and
+    ``None`` otherwise — consistent with the ``is_error`` override in
+    ``build_event_from_normalized``.
+
+    ``config`` is unused today but kept in the signature so the sparse
+    builder can pick up any config-gated cross-cutting later (payload
+    redaction, per-tenant policies) without a caller-visible change.
+    """
+    del config
+    return AIInvocationObservedV1(
+        request_id=envelope.request_id,
+        timestamp=envelope.timestamp,
+        identity_details=envelope.identity_details,
+        model=envelope.model,
+        tokens=envelope.tokens,
+        parsed_as=envelope.parsed_as,
+        stop_reason="error" if envelope.is_error else None,
     )

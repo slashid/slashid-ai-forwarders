@@ -85,6 +85,22 @@ class AuditEntry(BaseModel):
         default_factory=list,
         validation_alias=AliasPath("payload", "authenticationInfo", "serviceAccountDelegationInfo"),
     )
+    # gRPC status code on ``protoPayload.status``. Absent (whole
+    # ``status`` object empty) on success, so the default of 0 covers
+    # both "missing" and "explicitly OK". Non-zero → server-side error.
+    status_code: int = Field(
+        default=0,
+        validation_alias=AliasPath("payload", "status", "code"),
+    )
+
+    @property
+    def is_error(self) -> bool:
+        """True when the audit entry represents a failed request.
+
+        Cloud Audit Logs write ``protoPayload.status.code`` as a gRPC
+        status: 0 (OK) is elided on success, non-zero on failure.
+        """
+        return self.status_code != 0
 
     @classmethod
     def from_log_entry(cls, entry: LogEntry) -> AuditEntry:

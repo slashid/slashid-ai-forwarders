@@ -23,7 +23,6 @@ re-matched by the server's ns comparator, and the tie-break on
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from collections.abc import Sequence
@@ -206,36 +205,20 @@ class AuditOnlyEventSource:
         if not envelopes:
             return [], next_cp
 
-        events = asyncio.run(self._build_events(envelopes))
-        return events, next_cp
+        return self._build_events(envelopes), next_cp
 
     def commit(self, checkpoint: Checkpoint) -> None:
         """Advance the source's checkpoint. Called by the handler after
         successful wire push."""
         self._checkpoint_store.save(checkpoint)
 
-    async def _build_events(self, envelopes: list[EventEnvelope]) -> list[AIInvocationObservedV1]:
-        """Turn a list of envelopes into final wire events.
-
-        Audit-only events carry no invocation shape — the canonical
-        ``NormalizedInvocation`` is intentionally empty. The shared
-        builder leaves ``input`` / ``used_tools`` / ``accessed_files``
-        null at their defaults; ``stop_reason`` (defaults to the
-        ``"unknown"`` sentinel) and ``output`` (populated with a hash
-        of that sentinel) are nulled post-build so the wire event
-        matches the sparse-fields contract.
+    def _build_events(self, envelopes: list[EventEnvelope]) -> list[AIInvocationObservedV1]:
+        """Turn a list of envelopes into final wire events via
+        ``build_sparse_event`` — envelope-only, no normalization pass,
+        every conversation-shaped field stays ``None`` at the type
+        level. ``is_error`` on the envelope maps to
+        ``stop_reason="error"`` inside the shared builder.
         """
-        from slashid_ai_forwarder_core.events import build_event_from_normalized
-        from slashid_ai_forwarder_core.normalize.normalized.types import (
-            NormalizedInvocation,
-        )
+        from slashid_ai_forwarder_core.events import build_sparse_event
 
-        async def _build(envelope: EventEnvelope) -> AIInvocationObservedV1:
-            event = await build_event_from_normalized(
-                NormalizedInvocation(), envelope, config=self._config
-            )
-            event.stop_reason = None
-            event.output = None
-            return event
-
-        return list(await asyncio.gather(*(_build(e) for e in envelopes)))
+        return [build_sparse_event(e, config=self._config) for e in envelopes]
