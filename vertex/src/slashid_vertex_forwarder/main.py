@@ -15,6 +15,7 @@ from functools import cache
 import functions_framework
 from cloudevents.http import CloudEvent
 
+from .audit_only_source import AuditOnlyEventSource
 from .checkpoint_store import FirestoreCheckpointStore
 from .config import Config, load_config
 from .event_source import BqEventSource, EventSource
@@ -25,11 +26,13 @@ log = logging.getLogger(__name__)
 
 @cache
 def _sources(config: Config) -> list[EventSource]:
-    """Cached per Cloud Function container — the BigQuery and Firestore
-    clients are heavy to construct (auth, discovery) so we keep them
-    warm across ticks. AuditOnlyEventSource construction lands in a
-    later chunk once the class exists."""
+    """Cached per Cloud Function container — the BigQuery, Firestore,
+    and Cloud Logging clients are heavy to construct (auth, discovery)
+    so we keep them warm across ticks. The Firestore client is shared
+    between the two sources' checkpoint stores; they get independent
+    documents so their watermarks don't collide."""
     from google.cloud import bigquery, firestore
+    from google.cloud import logging as gcp_logging
 
     firestore_client = firestore.Client(
         project=config.gcp_project_id,
@@ -51,6 +54,24 @@ def _sources(config: Config) -> list[EventSource]:
         audit_buffer_seconds=config.audit_buffer_seconds,
     )
     sources: list[EventSource] = [bq_source]
+
+    if config.audit_observed_models:
+        audit_source = AuditOnlyEventSource(
+            logging_client=gcp_logging.Client(
+                project=config.gcp_project_id, _use_grpc=False,
+            ),
+            checkpoint_store=FirestoreCheckpointStore(
+                client=firestore_client,
+                collection=config.firestore_checkpoint_collection,
+                document=config.audit_only_checkpoint_document,
+            ),
+            config=config,
+            project_id=config.gcp_project_id,
+            region=config.gcp_region,
+            observed_models=config.audit_observed_models,
+            max_entries_per_tick=config.max_rows_per_tick,
+        )
+        sources.append(audit_source)
     return sources
 
 
