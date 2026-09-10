@@ -12,8 +12,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from slashid_ai_forwarder_core.events import GCPIdentityDetails
-
 from slashid_vertex_forwarder.config import Config
 from slashid_vertex_forwarder.event_source import Checkpoint
 
@@ -38,25 +36,6 @@ class _FakeLoggingClient:
     def list_entries(self, **kwargs: Any) -> list[Any]:
         self.calls.append(dict(kwargs))
         return self._entries
-
-
-def test_audit_only_entry_checkpoint_property() -> None:
-    """AuditOnlyEntry.checkpoint returns a Checkpoint at (timestamp, insert_id)."""
-    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEntry
-
-    ts = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
-    entry = AuditOnlyEntry(
-        insert_id="log-abc",
-        timestamp=ts,
-        resource_name="projects/p/locations/us-central1/publishers/anthropic/models/claude-sonnet-4-5",
-        method_name="google.cloud.aiplatform.v1.PredictionService.RawPredict",
-        model_path="publishers/anthropic/models/claude-sonnet-4-5",
-        publisher="anthropic",
-        model="claude-sonnet-4-5",
-        region="us-central1",
-        identity_details=GCPIdentityDetails(),
-    )
-    assert entry.checkpoint == Checkpoint(timestamp=ts, id="log-abc")
 
 
 def test_query_audit_only_entries_filter_includes_compound_tiebreak() -> None:

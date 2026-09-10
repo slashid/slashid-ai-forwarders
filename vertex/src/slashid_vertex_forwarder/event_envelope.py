@@ -1,20 +1,10 @@
-"""BQ row (``Entry``) → shared ``EventEnvelope``.
+"""Vertex records → shared ``EventEnvelope``.
 
 Mirrors ``bedrock/event_envelope.py`` — the vendor-specific half of the
-event build. Reads directly from the ``Entry`` (which itself wraps one
-BQ request-response logging row); produces a vendor-neutral
-``EventEnvelope`` which the shared pure
-``build_event_from_normalized`` turns into an
-``AIInvocationObservedV1``.
-
-Tokens live inside ``response_body.usageMetadata`` — parsed there
-rather than off the record's top-level fields (Bedrock reads
-top-level; Vertex hides them inside the response payload).
-
-V1 punts on caller identity: BQ rows carry no principal (see the
-2026-09-04 POC findings). Every event ships with
-``identity_details = {"kind": "gcp"}`` until a later phase adds
-audit-log correlation.
+event build. Two builders share this file because both paths (BQ payload
+via ``vertex_envelope``; audit-log-only via ``vertex_audit_only_envelope``)
+map onto the same wire schema and use the shared ``_parse_model_path``
+helper.
 """
 
 from __future__ import annotations
@@ -26,12 +16,13 @@ from slashid_ai_forwarder_core.events import (
     AIInvocationTokens,
     AIModel,
     EventEnvelope,
+    GCPIdentityDetails,
 )
 
 from .event_source import Entry
 
 if TYPE_CHECKING:
-    from .audit_only_source import AuditOnlyEntry
+    from .audit_source import AuditEntry
 
 # Wire ``parsed_as`` values — the record shape's identifier. Downstream
 # consumers pattern-match on these to know which fields are populated:
@@ -39,7 +30,7 @@ if TYPE_CHECKING:
 # tokens/stop_reason; ``vertex-audit`` events (non-Google publishers)
 # are sparse — identity + model reference only. Provider + model.name
 # on ``AIModel`` differentiate publishers within each shape.
-PARSED_AS = "vertex-google"
+PARSED_AS_GOOGLE = "vertex-google"
 PARSED_AS_AUDIT = "vertex-audit"
 
 
@@ -76,27 +67,42 @@ def _short_method(method_name: str) -> str:
     return tail[:1].lower() + tail[1:]
 
 
-def vertex_audit_only_envelope(entry: AuditOnlyEntry) -> EventEnvelope | None:
-    """Build the vendor-neutral ``EventEnvelope`` for one audit-log
-    entry from a non-Google publisher.
+def vertex_audit_only_envelope(audit: AuditEntry) -> EventEnvelope | None:
+    """Build the vendor-neutral ``EventEnvelope`` for one non-Google
+    audit-log entry.
 
-    ``request_id`` is the Cloud Logging ``insertId`` — server dedupes
-    on this to make replays safe. Sparse-by-design: tokens default to
-    zero (no token data is present in audit logs), and stop_reason /
-    input / output / used_tools / accessed_files stay null via the
-    shared builder's defaults.
+    Returns ``None`` when the entry's ``resource_name`` doesn't parse
+    into a ``publishers/<pub>/models/<model>`` shape or when the
+    ``insert_id`` is empty (should not happen given the Cloud Logging
+    contract, but mirrors ``vertex_envelope``'s None-return shape).
+    Sparse-by-design: tokens default to zero (audit logs carry no token
+    counts), and ``stop_reason`` / ``input`` / ``output`` /
+    ``used_tools`` / ``accessed_files`` are nulled by
+    ``AuditOnlyEventSource`` post-build.
     """
-    if not entry.insert_id:
+    # Local import: audit_source imports GCPCredential from
+    # slashid_ai_forwarder_core, not from this module — no cycle risk.
+    # Keeping it lazy so tests can construct EventEnvelope directly
+    # without dragging in google.cloud.logging shape validators.
+    from .audit_source import _credential_chain
+
+    if not audit.insert_id:
         return None
+    publisher, model = _parse_model_path(audit.resource_name)
+    if publisher is None or model is None:
+        return None
+    model_path = f"publishers/{publisher}/models/{model}"
     return EventEnvelope(
-        request_id=entry.insert_id,
-        timestamp=entry.timestamp.isoformat(),
-        identity_details=entry.identity_details,
+        request_id=audit.insert_id,
+        timestamp=audit.timestamp.isoformat(),
+        identity_details=GCPIdentityDetails(
+            credential_chain=_credential_chain(audit) or None,
+        ),
         model=AIModel(
-            id=entry.model_path,
-            name=entry.model,
-            provider=entry.publisher,
-            raw_model_id=entry.model_path,
+            id=model_path,
+            name=model,
+            provider=publisher,
+            raw_model_id=model_path,
         ),
         parsed_as=PARSED_AS_AUDIT,
     )
@@ -134,5 +140,5 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
             raw_model_id=entry.model_path,
         ),
         tokens=tokens,
-        parsed_as=PARSED_AS,
+        parsed_as=PARSED_AS_GOOGLE,
     )

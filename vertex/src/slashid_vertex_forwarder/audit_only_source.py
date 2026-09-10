@@ -22,13 +22,11 @@ import asyncio
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
-    GCPIdentityDetails,
+    EventEnvelope,
 )
 
 from .audit_source import AuditEntry
@@ -39,32 +37,6 @@ if TYPE_CHECKING:
     from .config import Config
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class AuditOnlyEntry:
-    """One audit-log invocation projected to the wire-relevant fields.
-
-    ``model_path`` is the canonical short form (matches what BQ payload
-    entries carry). ``publisher`` and ``model`` are pre-parsed for the
-    envelope builder. ``method_name`` is the raw FQN (e.g.
-    ``google.cloud.aiplatform.v1.PredictionService.RawPredict``);
-    ``_short_method`` peels the tail suffix for the wire event.
-    """
-
-    insert_id: str
-    timestamp: datetime
-    resource_name: str
-    method_name: str
-    model_path: str
-    publisher: str
-    model: str
-    region: str
-    identity_details: GCPIdentityDetails
-
-    @property
-    def checkpoint(self) -> Checkpoint:
-        return Checkpoint(timestamp=self.timestamp, id=self.insert_id)
 
 
 def query_audit_only_entries(
@@ -127,11 +99,12 @@ class AuditOnlyEventSource:
     publisher-level (non-Google); client-side each entry's
     ``<pub>/<model>`` is compared against the allowlist.
 
-    The full source-specific pipeline lives inside ``fetch``:
-    Cloud Logging query → parse → filter → envelope → build final
-    ``AIInvocationObservedV1`` via ``build_event_from_normalized`` on
-    an empty ``NormalizedInvocation()``. Audit-only events are sparse
-    by design — no request/response payload exists to normalize.
+    ``fetch`` runs the full source-specific pipeline: Cloud Logging
+    query → sort → per-entry parse + observed_models filter → envelope
+    → build final ``AIInvocationObservedV1`` via
+    ``build_event_from_normalized`` on an empty ``NormalizedInvocation()``.
+    Audit-only events are sparse by design — no request/response payload
+    exists to normalize.
     """
 
     def __init__(
@@ -165,6 +138,8 @@ class AuditOnlyEventSource:
         parse or ``observed_models`` filter — so permanent misses never
         stall the pipeline. ``None`` on zero raw entries.
         """
+        from .event_envelope import _parse_model_path, vertex_audit_only_envelope
+
         checkpoint = self._checkpoint_store.load()
         raw = query_audit_only_entries(
             client=self._logging_client,
@@ -185,16 +160,26 @@ class AuditOnlyEventSource:
             id=raw_sorted[-1].insert_id,
         )
 
-        entries: list[AuditOnlyEntry] = []
+        envelopes: list[EventEnvelope] = []
         for audit in raw_sorted:
-            entry = self._to_audit_only_entry(audit)
-            if entry is not None:
-                entries.append(entry)
+            publisher, model = _parse_model_path(audit.resource_name)
+            if publisher is None or model is None:
+                log.warning(
+                    "dropping audit entry with unparseable resource_name: %s (insertId=%s)",
+                    audit.resource_name,
+                    audit.insert_id,
+                )
+                continue
+            if f"{publisher}/{model}" not in self._observed_models:
+                continue
+            envelope = vertex_audit_only_envelope(audit)
+            if envelope is not None:
+                envelopes.append(envelope)
 
-        if not entries:
+        if not envelopes:
             return [], next_cp
 
-        events = asyncio.run(self._build_events(entries))
+        events = asyncio.run(self._build_events(envelopes))
         return events, next_cp
 
     def commit(self, checkpoint: Checkpoint) -> None:
@@ -202,74 +187,30 @@ class AuditOnlyEventSource:
         successful wire push."""
         self._checkpoint_store.save(checkpoint)
 
-    def _to_audit_only_entry(self, audit: AuditEntry) -> AuditOnlyEntry | None:
-        """Parse an AuditEntry into an AuditOnlyEntry. Drops the entry
-        when the resource_name doesn't match ``publishers/<pub>/models/<model>``
-        or when ``<pub>/<model>`` is not in ``observed_models``."""
-        from .audit_source import _credential_chain
-        from .event_envelope import _parse_model_path
-
-        publisher, model = _parse_model_path(audit.resource_name)
-        if publisher is None or model is None:
-            log.warning(
-                "dropping audit entry with unparseable resource_name: %s (insertId=%s)",
-                audit.resource_name,
-                audit.insert_id,
-            )
-            return None
-        pair = f"{publisher}/{model}"
-        if pair not in self._observed_models:
-            return None
-
-        chain = _credential_chain(audit)
-        return AuditOnlyEntry(
-            insert_id=audit.insert_id,
-            timestamp=audit.timestamp,
-            resource_name=audit.resource_name,
-            method_name=audit.method_name,
-            model_path=f"publishers/{publisher}/models/{model}",
-            publisher=publisher,
-            model=model,
-            region=self._region,
-            identity_details=GCPIdentityDetails(
-                credential_chain=chain or None,
-            ),
-        )
-
     async def _build_events(
-        self, entries: list[AuditOnlyEntry]
+        self, envelopes: list[EventEnvelope]
     ) -> list[AIInvocationObservedV1]:
-        """Turn AuditOnlyEntry list into final wire events.
+        """Turn a list of envelopes into final wire events.
 
-        Audit-only entries carry no request/response payload, so the
-        canonical ``NormalizedInvocation`` is intentionally empty; the
-        shared builder leaves ``input`` / ``output`` / ``used_tools`` /
-        ``accessed_files`` at their null defaults.
+        Audit-only events carry no invocation shape — the canonical
+        ``NormalizedInvocation`` is intentionally empty. The shared
+        builder leaves ``input`` / ``used_tools`` / ``accessed_files``
+        null at their defaults; ``stop_reason`` (defaults to the
+        ``"unknown"`` sentinel) and ``output`` (populated with a hash
+        of that sentinel) are nulled post-build so the wire event
+        matches the sparse-fields contract.
         """
         from slashid_ai_forwarder_core.events import build_event_from_normalized
         from slashid_ai_forwarder_core.normalize.normalized.types import (
             NormalizedInvocation,
         )
 
-        from .event_envelope import vertex_audit_only_envelope
-
-        async def _build(entry: AuditOnlyEntry) -> AIInvocationObservedV1 | None:
-            envelope = vertex_audit_only_envelope(entry)
-            if envelope is None:
-                return None
+        async def _build(envelope: EventEnvelope) -> AIInvocationObservedV1:
             event = await build_event_from_normalized(
                 NormalizedInvocation(), envelope, config=self._config
             )
-            # NormalizedInvocationOutput.stop_reason defaults to the
-            # ``"unknown"`` sentinel, which the shared builder passes
-            # through to the wire. Audit-only events know nothing about
-            # stop_reason — null it out post-build so the wire event
-            # matches the sparse-fields contract in the design doc.
-            # Also drop ``output`` (which the shared builder populated
-            # with a hash of ``{stop_reason: "unknown"}``).
             event.stop_reason = None
             event.output = None
             return event
 
-        built_or_none = await asyncio.gather(*(_build(e) for e in entries))
-        return [e for e in built_or_none if e is not None]
+        return list(await asyncio.gather(*(_build(e) for e in envelopes)))

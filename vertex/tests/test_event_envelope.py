@@ -11,7 +11,7 @@ from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiResponse,
 )
 
-from slashid_vertex_forwarder.event_envelope import PARSED_AS, vertex_envelope
+from slashid_vertex_forwarder.event_envelope import PARSED_AS_GOOGLE, vertex_envelope
 from slashid_vertex_forwarder.event_source import Entry
 
 
@@ -60,7 +60,7 @@ def test_envelope_populates_basic_fields() -> None:
     assert env is not None
     assert env.request_id == "3292372995731278848"
     assert env.timestamp == "2026-09-05T02:43:59+00:00"
-    assert env.parsed_as == PARSED_AS
+    assert env.parsed_as == PARSED_AS_GOOGLE
     assert env.parsed_as == "vertex-google"
 
 
@@ -260,29 +260,25 @@ def test_short_method(fqn: str, expected: str) -> None:
 
 
 def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
-    from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
-
-    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEntry
+    from slashid_vertex_forwarder.audit_source import AuditEntry
     from slashid_vertex_forwarder.event_envelope import (
         PARSED_AS_AUDIT,
         vertex_audit_only_envelope,
     )
 
-    ident = GCPIdentityDetails(
-        credential_chain=[GCPCredential(principal_email="user@example.com")]
-    )
-    entry = AuditOnlyEntry(
-        insert_id="log-xyz",
-        timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
-        resource_name="projects/p/locations/us-central1/publishers/anthropic/models/claude-sonnet-4-5",
-        method_name="google.cloud.aiplatform.v1.PredictionService.RawPredict",
-        model_path="publishers/anthropic/models/claude-sonnet-4-5",
-        publisher="anthropic",
-        model="claude-sonnet-4-5",
-        region="us-central1",
-        identity_details=ident,
-    )
-    env = vertex_audit_only_envelope(entry)
+    audit = AuditEntry.model_validate({
+        "insertId": "log-xyz",
+        "timestamp": datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+        "payload": {
+            "resourceName": "projects/p/locations/us-central1/publishers/anthropic/models/claude-sonnet-4-5",
+            "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
+            "authenticationInfo": {
+                "principalEmail": "user@example.com",
+                "oauthInfo": {"oauthClientId": "abc"},
+            },
+        },
+    })
+    env = vertex_audit_only_envelope(audit)
     assert env is not None
     assert env.request_id == "log-xyz"
     assert env.timestamp == "2026-09-09T12:00:00+00:00"
@@ -294,27 +290,37 @@ def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
     assert env.model.raw_model_id == "publishers/anthropic/models/claude-sonnet-4-5"
     assert env.tokens.input == 0
     assert env.tokens.output == 0
-    assert env.identity_details == ident
+    # Identity is reconstructed from the audit's authenticationInfo via
+    # _credential_chain — direct-user length-1 chain.
+    assert env.identity_details.credential_chain is not None
+    assert len(env.identity_details.credential_chain) == 1
+    assert env.identity_details.credential_chain[0].principal_email == "user@example.com"
 
 
 def test_vertex_audit_only_envelope_drops_when_insert_id_empty() -> None:
-    from slashid_ai_forwarder_core.events import GCPIdentityDetails
-
-    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEntry
+    from slashid_vertex_forwarder.audit_source import AuditEntry
     from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
 
-    entry = AuditOnlyEntry(
-        insert_id="",
-        timestamp=datetime(2026, 9, 9, tzinfo=UTC),
-        resource_name="projects/p/locations/r/publishers/anthropic/models/x",
-        method_name="foo.Bar",
-        model_path="publishers/anthropic/models/x",
-        publisher="anthropic",
-        model="x",
-        region="r",
-        identity_details=GCPIdentityDetails(),
-    )
-    assert vertex_audit_only_envelope(entry) is None
+    audit = AuditEntry.model_validate({
+        "insertId": "",
+        "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+        "payload": {
+            "resourceName": "projects/p/locations/r/publishers/anthropic/models/x",
+        },
+    })
+    assert vertex_audit_only_envelope(audit) is None
+
+
+def test_vertex_audit_only_envelope_drops_when_resource_name_unparseable() -> None:
+    from slashid_vertex_forwarder.audit_source import AuditEntry
+    from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
+
+    audit = AuditEntry.model_validate({
+        "insertId": "log-xyz",
+        "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+        "payload": {"resourceName": "not-a-vertex-path"},
+    })
+    assert vertex_audit_only_envelope(audit) is None
 
 
 def test_envelope_empty_identity_still_serializes_to_kind_gcp() -> None:
