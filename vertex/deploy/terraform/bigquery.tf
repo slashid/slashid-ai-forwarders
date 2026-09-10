@@ -25,7 +25,7 @@ resource "google_bigquery_dataset" "reqresp_logs" {
 }
 
 resource "google_bigquery_table" "per_model" {
-  for_each   = local.observed_models
+  for_each   = local.google_observed_models
   dataset_id = google_bigquery_dataset.reqresp_logs.dataset_id
   table_id   = "slashid_vertex_reqresp_${each.key}"
 
@@ -89,7 +89,7 @@ resource "google_bigquery_table" "per_model" {
 # isn't unset — the API has no clear "clear" verb — but
 # ``enabled: false`` stops writes reliably.
 resource "null_resource" "publisher_model_logging" {
-  for_each = local.observed_models
+  for_each = local.google_observed_models
 
   # ``self`` inside a destroy-time provisioner only sees ``triggers`` —
   # copy every field the destroy command references so it works after

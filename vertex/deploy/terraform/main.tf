@@ -14,22 +14,26 @@ provider "google" {
 locals {
   # Maintained Model Garden catalog — refreshed via ``refresh_models.sh``.
   # ``all_models`` is every publisher/model entry we know about;
-  # ``gemini_models`` is filtered to ``google/gemini-*`` (the subset
-  # phase 3.1 can actually forward).
+  # ``gemini_models`` is filtered to ``google/gemini-*`` (BQ payload
+  # path was Gemini-only through Phase 3.6).
   all_models    = jsondecode(file("${path.module}/all_models.json"))
   gemini_models = [for m in local.all_models : m if startswith(m, "google/gemini-")]
 
-  # Effective ``observed_models``: caller override wins; otherwise
-  # default to every currently-catalogued Gemini model. Callers who
-  # want a broader scope can pass ``jsondecode(file("all_models.json"))``
-  # explicitly, or their own curated list.
-  effective_observed_models = coalesce(var.observed_models, local.gemini_models)
+  # Phase 3.7: default expands to every catalogued model. Google
+  # entries drive the BQ payload path (setPublisherModelConfig +
+  # per-model table); non-Google entries drive the audit-log-only
+  # path (AuditOnlyEventSource client-side filter).
+  effective_observed_models = coalesce(var.observed_models, local.all_models)
 
-  # Split "publisher/model" entries into their two segments up-front —
-  # both the BQ table naming and the setPublisherModelConfig REST call
-  # need the pair. Table slug replaces the separators BQ rejects.
-  observed_models = {
-    for m in local.effective_observed_models :
+  google_observed = [for m in local.effective_observed_models : m if startswith(m, "google/")]
+  audit_observed  = [for m in local.effective_observed_models : m if !startswith(m, "google/")]
+
+  # Split "publisher/model" entries — Google side drives BQ table
+  # naming and setPublisherModelConfig calls; the audit side is
+  # passed to the CF as an env var without needing per-model TF
+  # resources.
+  google_observed_models = {
+    for m in local.google_observed :
     replace(replace(m, "/", "_"), ".", "_") => {
       publisher = split("/", m)[0]
       model     = split("/", m)[1]
