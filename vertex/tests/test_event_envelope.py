@@ -11,7 +11,7 @@ from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiResponse,
 )
 
-from slashid_vertex_forwarder.event_envelope import PARSED_AS, vertex_envelope
+from slashid_vertex_forwarder.event_envelope import PARSED_AS_GOOGLE, vertex_envelope
 from slashid_vertex_forwarder.event_source import Entry
 
 
@@ -60,8 +60,8 @@ def test_envelope_populates_basic_fields() -> None:
     assert env is not None
     assert env.request_id == "3292372995731278848"
     assert env.timestamp == "2026-09-05T02:43:59+00:00"
-    assert env.parsed_as == PARSED_AS
-    assert env.parsed_as == "vertex-gemini-generate"
+    assert env.parsed_as == PARSED_AS_GOOGLE
+    assert env.parsed_as == "vertex-google"
 
 
 def test_envelope_identity_is_empty_gcp() -> None:
@@ -195,6 +195,141 @@ def test_envelope_reads_pre_attached_identity_details() -> None:
     assert isinstance(env.identity_details, GCPIdentityDetails)
     assert env.identity_details.credential_chain is not None
     assert env.identity_details.credential_chain[0].principal_email == "alice@example.com"
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        (
+            "publishers/anthropic/models/claude-sonnet-4-5",
+            ("anthropic", "claude-sonnet-4-5"),
+        ),
+        (
+            "projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
+            ("anthropic", "claude-sonnet-4-5"),
+        ),
+        (
+            "publishers/google/models/my-tuned/endpoints/abc123",
+            ("google", "my-tuned/endpoints/abc123"),
+        ),
+        ("not-a-path", (None, None)),
+        ("", (None, None)),
+    ],
+)
+def test_parse_model_path(path: str, expected: tuple[str | None, str | None]) -> None:
+    from slashid_vertex_forwarder.event_envelope import _parse_model_path
+
+    assert _parse_model_path(path) == expected
+
+
+def test_vertex_envelope_populates_model_name() -> None:
+    """BQ envelope now emits AIModel.name from the model segment of the
+    publisher path — consistency with the upcoming audit-only envelope."""
+    env = vertex_envelope(_entry(model_path="publishers/google/models/gemini-2.5-flash"))
+    assert env is not None
+    assert env.model.name == "gemini-2.5-flash"
+    assert env.model.provider == "google"
+    assert env.model.id == "publishers/google/models/gemini-2.5-flash"
+    assert env.model.raw_model_id == "publishers/google/models/gemini-2.5-flash"
+
+
+@pytest.mark.parametrize(
+    "fqn, expected",
+    [
+        ("google.cloud.aiplatform.v1.PredictionService.RawPredict", "rawPredict"),
+        (
+            "google.cloud.aiplatform.v1.PredictionService.StreamRawPredict",
+            "streamRawPredict",
+        ),
+        ("google.cloud.aiplatform.v1.PredictionService.Predict", "predict"),
+        (
+            "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+            "generateContent",
+        ),
+        (
+            "google.cloud.aiplatform.v1.PredictionService.StreamGenerateContent",
+            "streamGenerateContent",
+        ),
+        ("", ""),
+    ],
+)
+def test_short_method(fqn: str, expected: str) -> None:
+    from slashid_vertex_forwarder.event_envelope import _short_method
+
+    assert _short_method(fqn) == expected
+
+
+def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
+    from slashid_vertex_forwarder.audit_source import AuditEntry
+    from slashid_vertex_forwarder.event_envelope import (
+        PARSED_AS_AUDIT,
+        vertex_audit_only_envelope,
+    )
+
+    resource_name = "projects/p/locations/us-central1/publishers/anthropic/models/claude-sonnet-4-5"
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "log-xyz",
+            "timestamp": datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+            "payload": {
+                "resourceName": resource_name,
+                "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
+                "authenticationInfo": {
+                    "principalEmail": "user@example.com",
+                    "oauthInfo": {"oauthClientId": "abc"},
+                },
+            },
+        }
+    )
+    env = vertex_audit_only_envelope(audit)
+    assert env is not None
+    assert env.request_id == "log-xyz"
+    assert env.timestamp == "2026-09-09T12:00:00+00:00"
+    assert env.parsed_as == "vertex-audit"
+    assert env.parsed_as == PARSED_AS_AUDIT
+    assert env.model.id == "publishers/anthropic/models/claude-sonnet-4-5"
+    assert env.model.name == "claude-sonnet-4-5"
+    assert env.model.provider == "anthropic"
+    assert env.model.raw_model_id == "publishers/anthropic/models/claude-sonnet-4-5"
+    assert env.tokens.input == 0
+    assert env.tokens.output == 0
+    # Identity is reconstructed from the audit's authenticationInfo via
+    # _credential_chain — direct-user length-1 chain.
+    identity = env.identity_details
+    assert isinstance(identity, GCPIdentityDetails)
+    assert identity.credential_chain is not None
+    assert len(identity.credential_chain) == 1
+    assert identity.credential_chain[0].principal_email == "user@example.com"
+
+
+def test_vertex_audit_only_envelope_drops_when_insert_id_empty() -> None:
+    from slashid_vertex_forwarder.audit_source import AuditEntry
+    from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
+
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "",
+            "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+            "payload": {
+                "resourceName": "projects/p/locations/r/publishers/anthropic/models/x",
+            },
+        }
+    )
+    assert vertex_audit_only_envelope(audit) is None
+
+
+def test_vertex_audit_only_envelope_drops_when_resource_name_unparseable() -> None:
+    from slashid_vertex_forwarder.audit_source import AuditEntry
+    from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
+
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "log-xyz",
+            "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+            "payload": {"resourceName": "not-a-vertex-path"},
+        }
+    )
+    assert vertex_audit_only_envelope(audit) is None
 
 
 def test_envelope_empty_identity_still_serializes_to_kind_gcp() -> None:

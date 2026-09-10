@@ -26,10 +26,12 @@ class Config(BaseConfig):
     # Named Firestore database — multi-database Firestore is GA, so we
     # isolate the forwarder from the project's ``(default)`` database.
     firestore_database: str = Field(default="slashid-vertex", min_length=1)
-    # Firestore collection/document path used as the polling checkpoint.
-    # Value defaults match the Terraform module's provisioned names.
+    # Firestore collection under which the per-source checkpoint
+    # documents live. Configurable so a customer with a pre-existing
+    # ``(default)``-database convention can point us at a named
+    # sub-collection. Document names within it are hardcoded in
+    # ``main.py`` — one per source, so their watermarks don't collide.
     firestore_checkpoint_collection: str = Field(default="slashid_vertex", min_length=1)
-    firestore_checkpoint_document: str = Field(default="checkpoint", min_length=1)
     # Per-tick bounds — Cloud Function 2nd gen has a 9-minute max runtime;
     # 1000 rows/tick at ~50-100ms each stays well inside that.
     max_rows_per_tick: int = 1000
@@ -37,6 +39,9 @@ class Config(BaseConfig):
     # to land before we join. Default 30s covers p99+ of audit lag.
     # See identity-correlation phase design doc.
     audit_buffer_seconds: int = 30
+    # Non-Google publisher/model pairs to observe via audit logs.
+    # Empty list disables AuditOnlyEventSource at wiring time.
+    audit_observed_models: list[str] = Field(default_factory=list)
 
 
 @cache

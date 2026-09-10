@@ -49,6 +49,14 @@ gotchas to plan around. Extend as new ones are discovered.
   call" toggle. New models require adding to `observed_models` in the
   Terraform module and re-applying. First-time enablement takes ~10
   minutes to propagate.
+- **Non-Google publisher observability is audit-log-only.** Vertex's
+  BQ request-response logging (`setPublisherModelConfig`) is
+  Google-only — verified empirically. Non-Google publishers
+  (Anthropic, Meta, Mistral AI, xAI, …) surface as sparse
+  `AIInvocationObservedV1` events with `parsed_as="vertex-audit"`:
+  identity, timestamp, and model reference are populated; tokens,
+  stop reason, and input/output payloads are null. See Phase 3.7
+  design doc for the mechanism.
 - **Streaming `stop_reason` is heuristic.** Vertex's BQ log for
   `streamGenerateContent` drops the merged entry's `finishReason`
   (`null`), so a streaming event's `stop_reason` reflects a

@@ -179,12 +179,6 @@ variable "firestore_checkpoint_collection" {
   default     = "slashid_vertex"
 }
 
-variable "firestore_checkpoint_document" {
-  description = "Firestore document holding the polling checkpoint."
-  type        = string
-  default     = "checkpoint"
-}
-
 variable "secret_id" {
   description = "Secret Manager secret ID storing the SlashID push token."
   type        = string

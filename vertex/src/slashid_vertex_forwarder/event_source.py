@@ -10,27 +10,35 @@ The abstraction (``EventSource`` protocol + ``Entry`` dataclass) keeps
 the handler loop source-agnostic — a later phase can swap in a joined
 BQ view or a Pub/Sub push subscription behind the same interface.
 
-Checkpoint format: ``(last_logging_time, last_request_id)``. The BQ
-query filters ``logging_time > last_logging_time`` OR (equal AND
-``request_id > last_request_id``). Boundary collisions are safe — the
-server dedupes on ``request_id``.
+Checkpoint format: ``(timestamp, id)``. The BQ query filters
+``logging_time > timestamp`` OR (equal AND ``request_id > id``).
+Boundary collisions are safe — the server dedupes on ``request_id``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+from slashid_ai_forwarder_core.events import (
+    AIInvocationObservedV1,
+    GCPCredential,
+    GCPIdentityDetails,
+)
 from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
 )
 
-from .audit_source import AuditEntry
+from .audit_source import AuditEntry, _credential_chain
+
+if TYPE_CHECKING:
+    from .checkpoint_store import CheckpointStore
+    from .config import Config
 
 log = logging.getLogger(__name__)
 
@@ -53,36 +61,6 @@ def _consensus(vals: set[str | None]) -> str | None:
     """Return the sole value everyone agrees on; None on disagreement.
     ``None`` counts as a value — mixed None/populated is disagreement."""
     return next(iter(vals)) if len(vals) == 1 else None
-
-
-def _credential_chain(a: AuditEntry) -> list[GCPCredential]:
-    """Reconstruct the full credential chain from one audit entry:
-    delegation hops (root at [0]) + effective principal (at [-1]).
-
-    ``oauth_client_id`` from ``authenticationInfo.oauthInfo`` describes
-    the token that authenticated THIS request — that's the effective
-    credential (chain[-1]). For non-impersonated calls chain[0] ==
-    chain[-1] so both interpretations coincide; for impersonated calls
-    the value uniquely identifies the effective SA's OAuth flow (a
-    numeric ID for SA-issued tokens, or the CLI's registered client ID
-    for direct user calls). The audit log does not preserve the
-    ROOT's OAuth flow across impersonation hops, so ``chain[0]``
-    remains oauth-less."""
-    chain = [
-        GCPCredential(
-            principal_email=hop.first_party_email,
-            principal_subject=hop.principal_subject,
-        )
-        for hop in a.delegation_chain
-    ]
-    chain.append(
-        GCPCredential(
-            principal_email=a.effective_principal_email,
-            principal_subject=a.effective_principal_subject,
-            oauth_client_id=a.effective_oauth_client_id,
-        )
-    )
-    return chain
 
 
 def _consensus_chain(
@@ -147,15 +125,15 @@ def _resolve_identity(row: Entry, audit_entries: list[AuditEntry]) -> GCPIdentit
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """The polling watermark — ``(logging_time, request_id)`` of the
-    last processed row across every logged model.
+    """The polling watermark — ``(timestamp, id)`` of the last processed
+    entry. Universal across event sources.
 
-    ``last_logging_time = None`` means "no rows seen yet"; fetch pulls
-    every row up to the batch bound.
+    ``timestamp = None`` means "no entries seen yet"; the source fetches
+    every entry up to its batch bound.
     """
 
-    last_logging_time: datetime | None
-    last_request_id: str | None
+    timestamp: datetime | None
+    id: str | None
 
 
 @dataclass
@@ -197,21 +175,41 @@ class Entry:
     def checkpoint(self) -> Checkpoint:
         """Checkpoint pointing at this entry — save after successful push."""
         return Checkpoint(
-            last_logging_time=self.logging_time,
-            last_request_id=self.request_id,
+            timestamp=self.logging_time,
+            id=self.request_id,
         )
 
 
 class EventSource(Protocol):
-    """Fetch the next batch of Vertex invocations past ``checkpoint``.
+    """Yield wire-ready ``AIInvocationObservedV1`` events past this
+    source's checkpoint.
 
-    Implementations return an ordered list (ascending by
-    ``(logging_time, request_id)``) — the handler saves the last
-    entry's ``.checkpoint`` after a successful push cycle. Empty list
-    on no new rows.
+    Each implementation owns its own ``CheckpointStore`` via its
+    constructor AND owns its full source-specific pipeline —
+    entry parsing, normalize, finalize, envelope construction, and
+    the ``build_event_from_normalized`` join. The handler treats
+    sources uniformly — it only sees ``AIInvocationObservedV1``.
+    Entry types stay private to their source.
+
+    ``fetch()`` loads the checkpoint internally and returns a
+    ``(events, next_checkpoint)`` tuple:
+
+    - ``events`` is the list of ``AIInvocationObservedV1`` objects
+      to push to the wire (ordered by the source's underlying
+      ``(timestamp, id)`` ascending order).
+    - ``next_checkpoint`` is the watermark to save after successful
+      push. ``None`` means "no raw records seen this tick" (checkpoint
+      stays put). A non-None value advances past raw records the source
+      saw even when they were dropped during parsing — so a permanent
+      parse failure doesn't stall the pipeline.
+
+    ``commit(checkpoint)`` saves the watermark; called by the handler
+    after successful wire push. Never called when ``next_checkpoint``
+    is ``None``.
     """
 
-    def fetch(self, checkpoint: Checkpoint) -> list[Entry]: ...
+    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]: ...
+    def commit(self, checkpoint: Checkpoint) -> None: ...
 
 
 class BqEventSource:
@@ -231,6 +229,8 @@ class BqEventSource:
         # google.cloud.bigquery.Client — kept untyped so GCP client deps don't
         # bleed into the type-check surface (they're runtime-only).
         client: Any,
+        checkpoint_store: CheckpointStore,
+        config: Config,
         project_id: str,
         dataset_id: str,
         region: str,
@@ -238,33 +238,68 @@ class BqEventSource:
         audit_buffer_seconds: int = 0,
     ) -> None:
         self._client = client
+        self._checkpoint_store = checkpoint_store
+        self._config = config
         self._project_id = project_id
         self._dataset_id = dataset_id
         self._region = region
         self._max_rows_per_tick = max_rows_per_tick
         self._audit_buffer_seconds = audit_buffer_seconds
 
-    def fetch(self, checkpoint: Checkpoint) -> list[Entry]:
+    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
         """Two-query orchestration: BQ payload → audit-log window →
-        per-row identity stamping. Rows come back with
-        ``identity_details`` populated (or empty if no consensus).
+        per-row identity stamping → envelope construction → normalize →
+        finalize → build final wire event. Returns
+        (events, next_checkpoint).
 
-        Sync end-to-end. Cloud Logging's ``list_entries`` and BigQuery's
-        ``job.result()`` both block anyway, so making the source layer
-        async would be theatre.
+        ``next_checkpoint`` reflects the max ``(logging_time, request_id)``
+        across ALL raw BQ rows — including rows that ``_row_to_entry``
+        drops as unparseable — so permanent parse failures do not stall
+        the pipeline. ``None`` on zero raw rows.
+
+        The BigQuery + Cloud Logging half is sync (both APIs block); the
+        Gemini normalize/finalize/build_event half is async and driven
+        via a single ``asyncio.run`` inside fetch. The handler stays
+        sync-oriented and doesn't need to know which sources are async
+        under the hood.
         """
-        query, params = self._build_query(checkpoint)
         from google.cloud import bigquery
 
+        checkpoint = self._checkpoint_store.load()
+        query, params = self._build_query(checkpoint)
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = self._client.query(query, job_config=job_config)
+
         payload_rows: list[Entry] = []
+        max_ts: datetime | None = None
+        max_id: str | None = None
+        raw_seen = 0
         for row in job.result():
+            raw_seen += 1
+            # Track max (timestamp, id) across ALL raw rows for
+            # next_checkpoint, even if _row_to_entry drops this one.
+            row_ts = row.get("logging_time")
+            row_id = row.get("request_id")
+            if row_ts is not None and row_id is not None:
+                row_id_str = str(row_id)
+                if max_ts is None or (row_ts, row_id_str) > (
+                    max_ts,
+                    max_id or "",
+                ):
+                    max_ts = row_ts
+                    max_id = row_id_str
+
             entry = _row_to_entry(row, region=self._region)
             if entry is not None:
                 payload_rows.append(entry)
+
+        if raw_seen == 0:
+            return [], None
+
+        next_checkpoint = Checkpoint(timestamp=max_ts, id=max_id)
+
         if not payload_rows:
-            return []
+            return [], next_checkpoint
 
         # Predict each row's audit timestamp first (bias-corrected), then
         # take the tight envelope + ±_WINDOW slack. Matches the per-row
@@ -276,7 +311,14 @@ class BqEventSource:
 
         for row in payload_rows:
             row.identity_details = _resolve_identity(row, audit_entries)
-        return payload_rows
+
+        events = asyncio.run(_gemini_pipeline(payload_rows, self._config))
+        return events, next_checkpoint
+
+    def commit(self, checkpoint: Checkpoint) -> None:
+        """Advance the source's checkpoint. Called by the handler after
+        successful wire push."""
+        self._checkpoint_store.save(checkpoint)
 
     def _query_audit(
         self,
@@ -332,17 +374,15 @@ class BqEventSource:
             bigquery.ScalarQueryParameter("limit", "INT64", self._max_rows_per_tick),
         ]
         where_clauses: list[str] = []
-        if checkpoint.last_logging_time is not None and checkpoint.last_request_id is not None:
+        if checkpoint.timestamp is not None and checkpoint.id is not None:
             where_clauses.append(
-                "(logging_time > @last_time "
-                "OR (logging_time = @last_time AND CAST(request_id AS STRING) > @last_req))"
+                "(logging_time > @cp_ts "
+                "OR (logging_time = @cp_ts AND CAST(request_id AS STRING) > @cp_id))"
             )
             params.extend(
                 [
-                    bigquery.ScalarQueryParameter(
-                        "last_time", "TIMESTAMP", checkpoint.last_logging_time
-                    ),
-                    bigquery.ScalarQueryParameter("last_req", "STRING", checkpoint.last_request_id),
+                    bigquery.ScalarQueryParameter("cp_ts", "TIMESTAMP", checkpoint.timestamp),
+                    bigquery.ScalarQueryParameter("cp_id", "STRING", checkpoint.id),
                 ]
             )
         if self._audit_buffer_seconds > 0:
@@ -463,3 +503,51 @@ def _parse_latency_ms(metadata: Any) -> float | None:
         return float(raw)
     except (TypeError, ValueError):
         return None
+
+
+async def _gemini_pipeline(
+    entries: list[Entry],
+    config: Config,
+) -> list[AIInvocationObservedV1]:
+    """Async Gemini-specific half of the BQ source pipeline.
+
+    For each parsed BQ ``Entry``: normalize the Gemini request/response
+    into the canonical ``NormalizedInvocation`` shape, finalize (in-place
+    post-processing — attachment hashing, accessed-file extraction,
+    etc.), then build the ``EventEnvelope`` and combine with the
+    normalized invocation into a final ``AIInvocationObservedV1``.
+
+    Runs the normalize+finalize step concurrently across entries via
+    ``asyncio.gather``. Entries whose envelope build returns ``None``
+    (missing request_id — should not happen in practice) drop out.
+    """
+    from slashid_ai_forwarder_core.events import build_event_from_normalized
+    from slashid_ai_forwarder_core.normalize.finalize import finalize
+    from slashid_ai_forwarder_core.normalize.gemini.normalize import (
+        to_normalized_invocation,
+    )
+    from slashid_ai_forwarder_core.normalize.normalized.types import (
+        NormalizedInvocation,
+    )
+
+    from .event_envelope import vertex_envelope
+
+    async def _prepare(entry: Entry) -> tuple[NormalizedInvocation, Entry]:
+        normalized = await to_normalized_invocation(
+            entry.request_body, entry.response_body, config=config
+        )
+        finalize(normalized, config=config)
+        return normalized, entry
+
+    prepared = await asyncio.gather(*(_prepare(e) for e in entries))
+
+    async def _build(
+        normalized: NormalizedInvocation, entry: Entry
+    ) -> AIInvocationObservedV1 | None:
+        envelope = vertex_envelope(entry)
+        if envelope is None:
+            return None
+        return await build_event_from_normalized(normalized, envelope, config=config)
+
+    built_or_none = await asyncio.gather(*(_build(n, e) for n, e in prepared))
+    return [e for e in built_or_none if e is not None]

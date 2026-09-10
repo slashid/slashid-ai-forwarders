@@ -76,9 +76,9 @@ def test_load_returns_empty_when_document_absent() -> None:
 def test_save_and_load_round_trip() -> None:
     store, _ = _store()
     when = datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
-    store.save(Checkpoint(last_logging_time=when, last_request_id="42"))
+    store.save(Checkpoint(timestamp=when, id="42"))
     cp = store.load()
-    assert cp == Checkpoint(last_logging_time=when, last_request_id="42")
+    assert cp == Checkpoint(timestamp=when, id="42")
 
 
 def test_save_normalizes_naive_datetime_to_utc() -> None:
@@ -86,14 +86,14 @@ def test_save_normalizes_naive_datetime_to_utc() -> None:
     the load-side comparison against tz-aware BQ timestamps works."""
     store, client = _store()
     naive = datetime(2026, 9, 5, 2, 43, 59)
-    store.save(Checkpoint(last_logging_time=naive, last_request_id="42"))
-    stored = client.storage["slashid_vertex/checkpoint"]["last_logging_time"]
+    store.save(Checkpoint(timestamp=naive, id="42"))
+    stored = client.storage["slashid_vertex/checkpoint"]["timestamp"]
     assert stored.tzinfo is not None
 
 
 def test_save_persists_to_correct_document_path() -> None:
     store, client = _store()
-    store.save(Checkpoint(last_logging_time=datetime(2026, 9, 5, tzinfo=UTC), last_request_id="1"))
+    store.save(Checkpoint(timestamp=datetime(2026, 9, 5, tzinfo=UTC), id="1"))
     assert "slashid_vertex/checkpoint" in client.storage
 
 
@@ -103,12 +103,12 @@ def test_load_normalizes_naive_stored_datetime() -> None:
     store, client = _store()
     naive = datetime(2026, 9, 5, 2, 43, 59)
     client.storage["slashid_vertex/checkpoint"] = {
-        "last_logging_time": naive,
-        "last_request_id": "42",
+        "timestamp": naive,
+        "id": "42",
     }
     cp = store.load()
-    assert cp.last_logging_time is not None
-    assert cp.last_logging_time.tzinfo is not None
+    assert cp.timestamp is not None
+    assert cp.timestamp.tzinfo is not None
 
 
 def test_save_null_checkpoint_round_trips_as_empty() -> None:

@@ -34,7 +34,6 @@ def test_dataset_and_checkpoint_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     assert cfg.bq_dataset == "slashid_vertex_reqresp_logs"
     assert cfg.firestore_database == "slashid-vertex"
     assert cfg.firestore_checkpoint_collection == "slashid_vertex"
-    assert cfg.firestore_checkpoint_document == "checkpoint"
     assert cfg.max_rows_per_tick == 1000
 
 
@@ -44,14 +43,12 @@ def test_dataset_and_checkpoint_overrides(monkeypatch: pytest.MonkeyPatch) -> No
         SLASHID_BQ_DATASET="custom_dataset",
         SLASHID_FIRESTORE_DATABASE="custom-db",
         SLASHID_FIRESTORE_CHECKPOINT_COLLECTION="custom_col",
-        SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT="custom_doc",
         SLASHID_MAX_ROWS_PER_TICK="500",
     )
     cfg = Config()
     assert cfg.bq_dataset == "custom_dataset"
     assert cfg.firestore_database == "custom-db"
     assert cfg.firestore_checkpoint_collection == "custom_col"
-    assert cfg.firestore_checkpoint_document == "custom_doc"
     assert cfg.max_rows_per_tick == 500
 
 
@@ -59,3 +56,21 @@ def test_endpoint_trailing_slash_stripped(monkeypatch: pytest.MonkeyPatch) -> No
     _env(monkeypatch, SLASHID_ENDPOINT="http://test/")
     cfg = Config()
     assert cfg.endpoint == "http://test"
+
+
+def test_config_audit_observed_models_default_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    cfg = Config()
+    assert cfg.audit_observed_models == []
+
+
+def test_config_audit_observed_models_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(
+        monkeypatch,
+        SLASHID_AUDIT_OBSERVED_MODELS='["anthropic/claude-sonnet-4-5","meta/llama-3.3-70b-instruct-maas"]',
+    )
+    cfg = Config()
+    assert cfg.audit_observed_models == [
+        "anthropic/claude-sonnet-4-5",
+        "meta/llama-3.3-70b-instruct-maas",
+    ]

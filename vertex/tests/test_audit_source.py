@@ -44,6 +44,7 @@ def _audit_log_entry(
         ai["serviceAccountDelegationInfo"] = delegation
 
     entry = MagicMock()
+    entry.insert_id = ""
     entry.timestamp = timestamp
     entry.payload = payload
     return entry
@@ -122,6 +123,7 @@ def test_audit_entry_from_impersonation_2_hops() -> None:
 
 def test_audit_entry_missing_authentication_info_stubs_out() -> None:
     entry = MagicMock()
+    entry.insert_id = ""
     entry.timestamp = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
     entry.payload = {
         "resourceName": "projects/p/locations/us-central1/publishers/google/models/x",
@@ -155,3 +157,48 @@ def test_query_audit_entries_builds_filter_and_calls_client() -> None:
     assert 'protoPayload.resourceName:"/locations/us-central1/"' in filter_str
     assert kwargs["order_by"] == "timestamp asc"
     assert kwargs["resource_names"] == ["projects/p"]
+
+
+def test_audit_entry_extracts_insert_id() -> None:
+    """AuditEntry.from_log_entry pulls insertId from the LogEntry."""
+    from slashid_vertex_forwarder.audit_source import AuditEntry
+
+    entry = MagicMock()
+    entry.insert_id = "hasty-piglet-42"
+    entry.timestamp = datetime(2026, 9, 9, tzinfo=UTC)
+    entry.payload = {
+        "resourceName": "projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
+        "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
+    }
+
+    a = AuditEntry.from_log_entry(entry)
+    assert a.insert_id == "hasty-piglet-42"
+
+
+def test_credential_chain_single_credential_from_direct_user() -> None:
+    """Direct user (no impersonation) → single credential in chain.
+
+    Co-located here in ``test_audit_source`` after ``_credential_chain``
+    moved out of ``event_source.py``; the exhaustive
+    length-2/length-3/oauth-handling coverage lives in
+    ``test_bq_event_source`` alongside ``_consensus_chain``.
+    """
+    from slashid_vertex_forwarder.audit_source import AuditEntry, _credential_chain
+
+    audit = AuditEntry.model_validate(
+        {
+            "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+            "payload": {
+                "authenticationInfo": {
+                    "principalEmail": "user@example.com",
+                    "principalSubject": "user:user@example.com",
+                    "oauthInfo": {"oauthClientId": "764086051850-abc.apps.googleusercontent.com"},
+                },
+            },
+        }
+    )
+    chain = _credential_chain(audit)
+    assert len(chain) == 1
+    assert chain[0].principal_email == "user@example.com"
+    assert chain[0].principal_subject == "user:user@example.com"
+    assert chain[0].oauth_client_id == "764086051850-abc.apps.googleusercontent.com"
