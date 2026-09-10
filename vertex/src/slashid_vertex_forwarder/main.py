@@ -17,7 +17,7 @@ from cloudevents.http import CloudEvent
 
 from .audit_only_source import AuditOnlyEventSource
 from .checkpoint_store import FirestoreCheckpointStore
-from .config import Config, load_config
+from .config import load_config
 from .event_source import BqEventSource, EventSource
 from .handler import run_tick
 
@@ -32,14 +32,22 @@ _AUDIT_ONLY_CHECKPOINT_DOC = "checkpoint_audit_only"
 
 
 @cache
-def _sources(config: Config) -> list[EventSource]:
+def _sources() -> list[EventSource]:
     """Cached per Cloud Function container — the BigQuery, Firestore,
     and Cloud Logging clients are heavy to construct (auth, discovery)
     so we keep them warm across ticks. The Firestore client is shared
     between the two sources' checkpoint stores; they get independent
-    documents so their watermarks don't collide."""
+    documents so their watermarks don't collide.
+
+    Nullary so ``@cache`` doesn't need to hash the ``Config`` (which
+    holds a ``list[str] audit_observed_models`` — pydantic auto-``__hash__``
+    tries to hash the raw dict and chokes on the list). ``load_config()``
+    is itself cached, so pulling it inside is free.
+    """
     from google.cloud import bigquery, firestore
     from google.cloud import logging as gcp_logging
+
+    config = load_config()
 
     firestore_client = firestore.Client(
         project=config.gcp_project_id,
@@ -92,6 +100,5 @@ def handler(cloud_event: CloudEvent) -> None:
     for observability rather than the return value.
     """
     del cloud_event
-    config = load_config()
-    counters = run_tick(sources=_sources(config), config=config)
+    counters = run_tick(sources=_sources(), config=load_config())
     log.info("tick complete: %s", json.dumps(counters, separators=(",", ":")))
