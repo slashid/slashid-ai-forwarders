@@ -19,7 +19,7 @@ resource "google_firestore_database" "vertex" {
 
   project     = var.project_id
   name        = var.firestore_database
-  location_id = var.region
+  location_id = local.deployment_region
   type        = "FIRESTORE_NATIVE"
 
   # Firestore databases can't be undeleted; protect against

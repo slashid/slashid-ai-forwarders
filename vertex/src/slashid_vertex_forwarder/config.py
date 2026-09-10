@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from functools import cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from slashid_ai_forwarder_core.config_base import BaseConfig
 
 
@@ -19,10 +19,16 @@ class Config(BaseConfig):
     """Vertex-specific forwarder runtime configuration."""
 
     gcp_project_id: str = Field(..., min_length=1)
-    gcp_region: str = Field(..., min_length=1)
-    # BigQuery dataset that holds one table per logged publisher model
-    # (see Terraform module — ``slashid_vertex_reqresp_<model_slug>``).
-    bq_dataset: str = Field(default="slashid_vertex_reqresp_logs", min_length=1)
+    # Regions the forwarder observes. One BigQuery source per entry,
+    # plus one audit-only source whose Cloud Logging filter OR's every
+    # entry. Required — the forwarder needs at least one region.
+    gcp_regions: list[str] = Field(default_factory=list)
+    # BigQuery dataset PREFIX. The actual per-region dataset name is
+    # ``{bq_dataset_prefix}_{region_slug}`` — ``region_slug`` is
+    # ``region.replace("-", "_")`` (BQ dataset IDs disallow ``-``).
+    # Multiple regions get multiple datasets, each pinned to that
+    # region's location; a single-region deploy is the trivial case.
+    bq_dataset_prefix: str = Field(default="slashid_vertex_reqresp_logs", min_length=1)
     # Named Firestore database — multi-database Firestore is GA, so we
     # isolate the forwarder from the project's ``(default)`` database.
     firestore_database: str = Field(default="slashid-vertex", min_length=1)
@@ -42,6 +48,16 @@ class Config(BaseConfig):
     # Non-Google publisher/model pairs to observe via audit logs.
     # Empty list disables AuditOnlyEventSource at wiring time.
     audit_observed_models: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _require_regions(self) -> Config:
+        """The forwarder needs at least one region to observe."""
+        if not self.gcp_regions:
+            raise ValueError(
+                "at least one region required: set SLASHID_GCP_REGIONS "
+                '(JSON list, e.g. \'["us-central1","europe-west1"]\')'
+            )
+        return self
 
 
 @cache

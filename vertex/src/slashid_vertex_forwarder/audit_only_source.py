@@ -54,7 +54,7 @@ def query_audit_only_entries(
     *,
     client: Any,  # google.cloud.logging.Client (REST transport)
     project_id: str,
-    region: str,
+    regions: Sequence[str],
     checkpoint: Checkpoint,
     max_entries: int,
 ) -> list[AuditEntry]:
@@ -100,12 +100,18 @@ def query_audit_only_entries(
     publisher_scope = (
         'NOT protoPayload.resourceName:"/publishers/google/" OR protoPayload.status.code!=0'
     )
+    # Multi-region: OR the per-region substring matches. Cloud Logging
+    # aggregates audit entries globally, so a single query covers every
+    # region the customer opted into via ``config.gcp_regions``.
+    region_clause = " OR ".join(
+        f"protoPayload.resourceName:{json.dumps(f'/locations/{r}/')}" for r in regions
+    )
     parts = [
         'resource.type="audited_resource"',
         'protoPayload.serviceName="aiplatform.googleapis.com"',
         'protoPayload.resourceName:"/publishers/"',
         f"({publisher_scope})",
-        f"protoPayload.resourceName:{json.dumps(f'/locations/{region}/')}",
+        f"({region_clause})",
         f"resource.labels.project_id={json.dumps(project_id)}",
         f"({method_clause})",
     ]
@@ -148,7 +154,7 @@ class AuditOnlyEventSource:
         logging_client: Any,
         checkpoint_store: CheckpointStore,
         project_id: str,
-        region: str,
+        regions: Sequence[str],
         observed_models: Sequence[str],
         max_entries_per_tick: int,
         config: Config,
@@ -156,7 +162,7 @@ class AuditOnlyEventSource:
         self._logging_client = logging_client
         self._checkpoint_store = checkpoint_store
         self._project_id = project_id
-        self._region = region
+        self._regions = list(regions)
         self._observed_models = set(observed_models)
         self._max_entries_per_tick = max_entries_per_tick
         self._config = config
@@ -177,7 +183,7 @@ class AuditOnlyEventSource:
         raw = query_audit_only_entries(
             client=self._logging_client,
             project_id=self._project_id,
-            region=self._region,
+            regions=self._regions,
             checkpoint=checkpoint,
             max_entries=self._max_entries_per_tick,
         )

@@ -8,7 +8,7 @@
 
 provider "google" {
   project = var.project_id
-  region  = var.region
+  region  = local.deployment_region
 }
 
 locals {
@@ -30,17 +30,44 @@ locals {
 
   google_observed = [for m in local.effective_observed_models : m if startswith(m, "google/")]
 
+  # The Cloud Function, Firestore, Scheduler, and release bucket all
+  # deploy to the FIRST region in ``var.regions`` — a single physical
+  # home. Vertex regions observed are the full list; deployment region
+  # is a separate concern (where the CF lives, not what it queries).
+  deployment_region = var.regions[0]
+
+  # BQ dataset IDs can't contain ``-``; the CF applies the same
+  # transform when deriving dataset names from ``config.gcp_regions``.
+  region_slugs = { for r in var.regions : r => replace(r, "-", "_") }
+
   # Split "publisher/model" entries — Google side drives BQ table
-  # naming and setPublisherModelConfig calls; the audit side is
-  # passed to the CF as an env var without needing per-model TF
-  # resources.
+  # naming and setPublisherModelConfig calls. Multi-region: the
+  # Cartesian product of ``(region, google_observed_model)`` — each
+  # (region, model) pair gets its own BQ table + own
+  # ``setPublisherModelConfig`` call.
+  #
+  # Resource key (``<region_slug>__<model_slug>``) uniquely identifies
+  # the (region, model) pair for TF. ``model_slug`` is the within-
+  # dataset table suffix — no region prefix because the dataset is
+  # already regional; ``BqEventSource`` reads via wildcard
+  # ``slashid_vertex_reqresp_*`` within a single dataset.
   google_observed_models = {
-    for m in local.google_observed :
-    replace(replace(m, "/", "_"), ".", "_") => {
-      publisher = split("/", m)[0]
-      model     = split("/", m)[1]
-      full      = m
+    for pair in setproduct(var.regions, local.google_observed) :
+    "${local.region_slugs[pair[0]]}__${replace(replace(pair[1], "/", "_"), ".", "_")}" => {
+      region     = pair[0]
+      publisher  = split("/", pair[1])[0]
+      model      = split("/", pair[1])[1]
+      full       = pair[1]
+      model_slug = replace(replace(pair[1], "/", "_"), ".", "_")
+      dataset_id = "${var.bq_dataset_prefix}_${local.region_slugs[pair[0]]}"
     }
+  }
+
+  # Per-region datasets. One entry per region; each dataset holds every
+  # observed Google model's per-model table.
+  regional_datasets = {
+    for r in var.regions :
+    r => "${var.bq_dataset_prefix}_${local.region_slugs[r]}"
   }
 
   # GCS bucket names are global — default suffix keeps first-time

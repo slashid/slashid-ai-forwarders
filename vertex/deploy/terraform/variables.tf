@@ -5,9 +5,28 @@ variable "project_id" {
   type        = string
 }
 
-variable "region" {
-  description = "GCP region for the Cloud Function, BigQuery dataset, and Vertex publisher-model config."
-  type        = string
+variable "regions" {
+  description = <<-EOT
+    Vertex regions the forwarder observes. One BigQuery dataset per
+    entry (each pinned to its own region for data-residency), and one
+    ``setPublisherModelConfig`` per (region, model) pair. The
+    audit-only source's Cloud Logging filter OR's every entry so a
+    single Cloud Function covers them all.
+
+    The Cloud Function itself, Firestore database, and Cloud Scheduler
+    all deploy to the FIRST region in the list — that's their
+    physical home. Their regional location doesn't restrict which
+    Vertex regions are observed; every entry in ``regions`` contributes
+    a BigQuery dataset and its own ``setPublisherModelConfig`` call.
+
+    Required — the forwarder needs at least one region.
+  EOT
+  type        = list(string)
+
+  validation {
+    condition     = length(var.regions) > 0
+    error_message = "regions must contain at least one entry."
+  }
 }
 
 variable "observed_models" {
@@ -161,8 +180,14 @@ variable "log_level" {
 # --- Naming overrides (all defaults follow the ``slashid_vertex_`` /
 #     ``slashid-vertex-`` prefix convention) --------------------------------
 
-variable "bq_dataset_id" {
-  description = "BigQuery dataset holding one table per logged publisher model."
+variable "bq_dataset_prefix" {
+  description = <<-EOT
+    Prefix for the per-region BigQuery datasets that hold one table
+    per logged publisher model. The actual dataset name is
+    ``{bq_dataset_prefix}_{region_slug}`` where ``region_slug`` is
+    ``region.replace("-", "_")`` (BQ dataset IDs disallow ``-``).
+    Example: ``slashid_vertex_reqresp_logs_us_central1``.
+  EOT
   type        = string
   default     = "slashid_vertex_reqresp_logs"
 }

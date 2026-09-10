@@ -21,7 +21,7 @@
 
 resource "google_storage_bucket" "release" {
   name                        = local.release_bucket
-  location                    = var.region
+  location                    = local.deployment_region
   uniform_bucket_level_access = true
   force_destroy               = true
 
@@ -104,7 +104,7 @@ resource "google_cloud_scheduler_job" "poll" {
   name        = var.scheduler_name
   schedule    = var.poll_schedule
   time_zone   = "UTC"
-  region      = var.region
+  region      = local.deployment_region
   description = "Fires the SlashID Vertex forwarder on ``${var.poll_schedule}`` (UTC)."
 
   pubsub_target {
@@ -121,7 +121,7 @@ resource "google_cloud_scheduler_job" "poll" {
 
 resource "google_cloudfunctions2_function" "forwarder" {
   name        = var.function_name
-  location    = var.region
+  location    = local.deployment_region
   description = "SlashID Vertex forwarder — polls BigQuery request-response logs and pushes to SlashID NHI."
 
   build_config {
@@ -148,8 +148,8 @@ resource "google_cloudfunctions2_function" "forwarder" {
       LOG_LEVEL                               = var.log_level
       SLASHID_ENDPOINT                        = var.slashid_endpoint
       SLASHID_GCP_PROJECT_ID                  = var.project_id
-      SLASHID_GCP_REGION                      = var.region
-      SLASHID_BQ_DATASET                      = var.bq_dataset_id
+      SLASHID_GCP_REGIONS                     = jsonencode(var.regions)
+      SLASHID_BQ_DATASET_PREFIX               = var.bq_dataset_prefix
       SLASHID_FIRESTORE_DATABASE              = var.firestore_database
       SLASHID_FIRESTORE_CHECKPOINT_COLLECTION = var.firestore_checkpoint_collection
       SLASHID_AUDIT_BUFFER_SECONDS            = tostring(var.audit_buffer_seconds)
@@ -169,7 +169,7 @@ resource "google_cloudfunctions2_function" "forwarder" {
   }
 
   event_trigger {
-    trigger_region = var.region
+    trigger_region = local.deployment_region
     event_type     = "google.cloud.pubsub.topic.v1.messagePublished"
     pubsub_topic   = google_pubsub_topic.trigger.id
     retry_policy   = "RETRY_POLICY_DO_NOT_RETRY"
