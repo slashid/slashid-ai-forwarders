@@ -17,6 +17,7 @@ Boundary collisions are safe — the server dedupes on ``request_id``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
 from slashid_ai_forwarder_core.events import (
-    EventEnvelope,
+    AIInvocationObservedV1,
     GCPCredential,
     GCPIdentityDetails,
 )
@@ -37,6 +38,7 @@ from .audit_source import AuditEntry, _credential_chain
 
 if TYPE_CHECKING:
     from .checkpoint_store import CheckpointStore
+    from .config import Config
 
 log = logging.getLogger(__name__)
 
@@ -179,18 +181,21 @@ class Entry:
 
 
 class EventSource(Protocol):
-    """Yield wire-ready envelopes past this source's checkpoint.
+    """Yield wire-ready ``AIInvocationObservedV1`` events past this
+    source's checkpoint.
 
     Each implementation owns its own ``CheckpointStore`` via its
-    constructor AND owns its entry parsing + envelope building. The
-    handler treats sources uniformly — it only sees ``EventEnvelope``.
+    constructor AND owns its full source-specific pipeline —
+    entry parsing, normalize, finalize, envelope construction, and
+    the ``build_event_from_normalized`` join. The handler treats
+    sources uniformly — it only sees ``AIInvocationObservedV1``.
     Entry types stay private to their source.
 
     ``fetch()`` loads the checkpoint internally and returns a
-    ``(envelopes, next_checkpoint)`` tuple:
+    ``(events, next_checkpoint)`` tuple:
 
-    - ``envelopes`` is the list of ``EventEnvelope`` objects to push
-      to the wire (ordered by the source's underlying
+    - ``events`` is the list of ``AIInvocationObservedV1`` objects
+      to push to the wire (ordered by the source's underlying
       ``(timestamp, id)`` ascending order).
     - ``next_checkpoint`` is the watermark to save after successful
       push. ``None`` means "no raw records seen this tick" (checkpoint
@@ -203,7 +208,7 @@ class EventSource(Protocol):
     is ``None``.
     """
 
-    def fetch(self) -> tuple[list[EventEnvelope], Checkpoint | None]: ...
+    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]: ...
     def commit(self, checkpoint: Checkpoint) -> None: ...
 
 
@@ -225,6 +230,7 @@ class BqEventSource:
         # bleed into the type-check surface (they're runtime-only).
         client: Any,
         checkpoint_store: CheckpointStore,
+        config: Config,
         project_id: str,
         dataset_id: str,
         region: str,
@@ -233,29 +239,31 @@ class BqEventSource:
     ) -> None:
         self._client = client
         self._checkpoint_store = checkpoint_store
+        self._config = config
         self._project_id = project_id
         self._dataset_id = dataset_id
         self._region = region
         self._max_rows_per_tick = max_rows_per_tick
         self._audit_buffer_seconds = audit_buffer_seconds
 
-    def fetch(self) -> tuple[list[EventEnvelope], Checkpoint | None]:
+    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
         """Two-query orchestration: BQ payload → audit-log window →
-        per-row identity stamping → envelope construction. Returns
-        (envelopes, next_checkpoint).
+        per-row identity stamping → envelope construction → normalize →
+        finalize → build final wire event. Returns
+        (events, next_checkpoint).
 
         ``next_checkpoint`` reflects the max ``(logging_time, request_id)``
         across ALL raw BQ rows — including rows that ``_row_to_entry``
         drops as unparseable — so permanent parse failures do not stall
         the pipeline. ``None`` on zero raw rows.
 
-        Sync end-to-end. Cloud Logging's ``list_entries`` and BigQuery's
-        ``job.result()`` both block anyway, so making the source layer
-        async would be theatre.
+        The BigQuery + Cloud Logging half is sync (both APIs block); the
+        Gemini normalize/finalize/build_event half is async and driven
+        via a single ``asyncio.run`` inside fetch. The handler stays
+        sync-oriented and doesn't need to know which sources are async
+        under the hood.
         """
         from google.cloud import bigquery
-
-        from .event_envelope import vertex_envelope
 
         checkpoint = self._checkpoint_store.load()
         query, params = self._build_query(checkpoint)
@@ -304,8 +312,8 @@ class BqEventSource:
         for row in payload_rows:
             row.identity_details = _resolve_identity(row, audit_entries)
 
-        envelopes = [env for r in payload_rows if (env := vertex_envelope(r)) is not None]
-        return envelopes, next_checkpoint
+        events = asyncio.run(_gemini_pipeline(payload_rows, self._config))
+        return events, next_checkpoint
 
     def commit(self, checkpoint: Checkpoint) -> None:
         """Advance the source's checkpoint. Called by the handler after
@@ -497,3 +505,51 @@ def _parse_latency_ms(metadata: Any) -> float | None:
         return float(raw)
     except (TypeError, ValueError):
         return None
+
+
+async def _gemini_pipeline(
+    entries: list[Entry],
+    config: Config,
+) -> list[AIInvocationObservedV1]:
+    """Async Gemini-specific half of the BQ source pipeline.
+
+    For each parsed BQ ``Entry``: normalize the Gemini request/response
+    into the canonical ``NormalizedInvocation`` shape, finalize (in-place
+    post-processing — attachment hashing, accessed-file extraction,
+    etc.), then build the ``EventEnvelope`` and combine with the
+    normalized invocation into a final ``AIInvocationObservedV1``.
+
+    Runs the normalize+finalize step concurrently across entries via
+    ``asyncio.gather``. Entries whose envelope build returns ``None``
+    (missing request_id — should not happen in practice) drop out.
+    """
+    from slashid_ai_forwarder_core.events import build_event_from_normalized
+    from slashid_ai_forwarder_core.normalize.finalize import finalize
+    from slashid_ai_forwarder_core.normalize.gemini.normalize import (
+        to_normalized_invocation,
+    )
+    from slashid_ai_forwarder_core.normalize.normalized.types import (
+        NormalizedInvocation,
+    )
+
+    from .event_envelope import vertex_envelope
+
+    async def _prepare(entry: Entry) -> tuple[NormalizedInvocation, Entry]:
+        normalized = await to_normalized_invocation(
+            entry.request_body, entry.response_body, config=config
+        )
+        finalize(normalized, config=config)
+        return normalized, entry
+
+    prepared = await asyncio.gather(*(_prepare(e) for e in entries))
+
+    async def _build(
+        normalized: NormalizedInvocation, entry: Entry
+    ) -> AIInvocationObservedV1 | None:
+        envelope = vertex_envelope(entry)
+        if envelope is None:
+            return None
+        return await build_event_from_normalized(normalized, envelope, config=config)
+
+    built_or_none = await asyncio.gather(*(_build(n, e) for n, e in prepared))
+    return [e for e in built_or_none if e is not None]

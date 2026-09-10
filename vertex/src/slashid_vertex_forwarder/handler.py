@@ -4,10 +4,10 @@ Runs once per Cloud Scheduler tick (Cloud Scheduler → Pub/Sub topic →
 Cloud Function 2nd gen):
 
   1. For each configured event source: fetch a bounded batch of new
-     ``EventEnvelope`` objects past the source's checkpoint (each
-     source owns its own checkpoint store).
-  2. Build ``AIInvocationObservedV1`` events + POST them to the SlashID
-     NHI sink.
+     ``AIInvocationObservedV1`` events past the source's checkpoint
+     (each source owns its own checkpoint store AND its full parse →
+     normalize → finalize → build_event pipeline).
+  2. POST them to the SlashID NHI sink.
   3. On full-batch success: commit the source's next checkpoint. On
      any failure inside a source's fetch/push: log and continue — the
      source's checkpoint stays put and the next tick reprocesses
@@ -32,11 +32,8 @@ from collections.abc import Sequence
 import httpx
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
-    EventEnvelope,
-    build_event_from_normalized,
     redact_for_logging,
 )
-from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
 from slashid_ai_forwarder_core.sink import push_invocations
 
 from .config import Config
@@ -52,24 +49,19 @@ def _log_event(event: AIInvocationObservedV1) -> None:
     log.info("event: %s", json.dumps(redacted, separators=(",", ":")))
 
 
-async def _push_envelopes(envelopes: Sequence[EventEnvelope], config: Config) -> int:
-    """Build events from envelopes and push them to the SlashID sink.
+async def _push_events(
+    events: Sequence[AIInvocationObservedV1], config: Config
+) -> int:
+    """Push already-built wire events to the SlashID sink.
 
-    Sources deliver fully-formed ``EventEnvelope`` objects — the
-    handler no longer does per-source entry-to-envelope conversion.
-    Events are built with an empty ``NormalizedInvocation`` — sparse
-    fields (input/output/stop_reason/used_tools/etc.) stay null on the
-    wire; sources that want them populated stitch them into the
-    envelope before returning it.
+    Sources deliver fully-formed ``AIInvocationObservedV1`` objects —
+    each source owns its own normalize / finalize / envelope /
+    build_event pipeline. The handler is envelope-agnostic; its job
+    here is only to log + POST.
     """
-    if not envelopes:
+    if not events:
         return 0
 
-    empty_normalized = NormalizedInvocation()
-    events = [
-        await build_event_from_normalized(empty_normalized, envelope, config=config)
-        for envelope in envelopes
-    ]
     for e in events:
         _log_event(e)
 
@@ -77,7 +69,7 @@ async def _push_envelopes(envelopes: Sequence[EventEnvelope], config: Config) ->
     async with httpx.AsyncClient(timeout=timeout) as client:
         return await push_invocations(
             client,
-            events,
+            list(events),
             endpoint=config.endpoint,
             push_token=config.push_token,
             max_retries=config.max_retries,
@@ -98,16 +90,16 @@ def run_tick(
     on request_id).
     """
     total_events = 0
-    total_envelopes = 0
+    total_events_fetched = 0
     for source in sources:
         try:
-            envelopes, next_checkpoint = source.fetch()
-            if envelopes:
-                event_count = asyncio.run(_push_envelopes(envelopes, config))
+            events, next_checkpoint = source.fetch()
+            if events:
+                event_count = asyncio.run(_push_events(events, config))
                 total_events += event_count
-                total_envelopes += len(envelopes)
+                total_events_fetched += len(events)
             if next_checkpoint is not None:
                 source.commit(next_checkpoint)
         except Exception:
             log.exception("source %s failed this tick", type(source).__name__)
-    return {"events_pushed": total_events, "envelopes_seen": total_envelopes}
+    return {"events_pushed": total_events, "envelopes_seen": total_events_fetched}

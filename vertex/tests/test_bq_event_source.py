@@ -16,7 +16,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from slashid_vertex_forwarder.config import Config
 from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
+
+
+def _config() -> Config:
+    """Minimal Config for BqEventSource fetch tests — the source now
+    threads config through to normalize/finalize/build_event so tests
+    must pass a real Config instance."""
+    return Config(
+        endpoint="https://api.slashid.com",
+        push_token="t" * 32,
+        gcp_project_id="vertex-test-507702",
+        gcp_region="us-central1",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +154,7 @@ def _source(
     src = BqEventSource(
         client=client,
         checkpoint_store=store,
+        config=_config(),
         project_id="vertex-test-507702",
         dataset_id="slashid_vertex_reqresp_logs",
         region="us-central1",
@@ -149,15 +163,26 @@ def _source(
     return src, client, store
 
 
-def test_fetch_returns_envelopes() -> None:
+def test_fetch_returns_events() -> None:
     src, _, _ = _source(rows=[_row()])
-    envelopes, _cp = src.fetch()
-    assert len(envelopes) == 1
-    env = envelopes[0]
-    assert env.request_id == "3292372995731278848"
-    assert env.model.id == "publishers/google/models/gemini-2.5-flash"
+    events, _cp = src.fetch()
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.request_id == "3292372995731278848"
+    assert ev.model.id == "publishers/google/models/gemini-2.5-flash"
     # The BQ envelope path echoes the model path on raw_model_id.
-    assert env.model.raw_model_id == "publishers/google/models/gemini-2.5-flash"
+    assert ev.model.raw_model_id == "publishers/google/models/gemini-2.5-flash"
+    # Post-fix: fetch runs the full normalize/finalize/build_event
+    # pipeline, so wire fields populated by the normalizer must land on
+    # the event. The POC response has finishReason=STOP + text output.
+    assert ev.stop_reason == "end_turn"
+    # input/output are AIInvocationContent — the normalizer emits both
+    # halves for a well-formed request/response pair.
+    assert ev.input is not None
+    assert ev.output is not None
+    # Tokens still come from the response's usageMetadata.
+    assert ev.tokens.input == 8
+    assert ev.tokens.output == 3
 
 
 def test_fetch_reads_wildcard_table_pattern() -> None:
@@ -448,6 +473,7 @@ def test_build_query_applies_buffer_cutoff() -> None:
     source = BqEventSource(
         client=MagicMock(),
         checkpoint_store=_FakeCheckpointStore(),
+        config=_config(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
@@ -466,6 +492,7 @@ def test_build_query_projects_api_method_and_metadata() -> None:
     source = BqEventSource(
         client=MagicMock(),
         checkpoint_store=_FakeCheckpointStore(),
+        config=_config(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
@@ -916,9 +943,9 @@ def test_resolve_identity_length_1_mixed_with_length_2_partial_attribution() -> 
     assert result.credential_chain[1].oauth_client_id is None
 
 
-def test_fetch_stamps_identity_details_on_envelopes(monkeypatch) -> None:
+def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
     """End-to-end: fetch queries payload, queries audit, stamps identity
-    on each returned envelope. All sync."""
+    on each returned wire event."""
     from slashid_vertex_forwarder.event_source import BqEventSource
 
     bq_client = MagicMock()
@@ -934,15 +961,16 @@ def test_fetch_stamps_identity_details_on_envelopes(monkeypatch) -> None:
     source = BqEventSource(
         client=bq_client,
         checkpoint_store=_FakeCheckpointStore(),
+        config=_config(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    envelopes, _cp = source.fetch()
-    assert len(envelopes) == 1
-    chain = envelopes[0].identity_details.credential_chain
+    events, _cp = source.fetch()
+    assert len(events) == 1
+    chain = events[0].identity_details.credential_chain
     assert chain is not None
     assert chain[0].principal_email == "alice@example.com"
 
@@ -976,6 +1004,7 @@ def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> 
     source = BqEventSource(
         client=bq_client,
         checkpoint_store=_FakeCheckpointStore(),
+        config=_config(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
@@ -1006,14 +1035,15 @@ def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
     source = BqEventSource(
         client=bq_client,
         checkpoint_store=_FakeCheckpointStore(),
+        config=_config(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    envelopes, cp = source.fetch()
-    assert envelopes == []
+    events, cp = source.fetch()
+    assert events == []
     assert cp is None
     assert called["n"] == 0
 

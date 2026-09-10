@@ -43,6 +43,7 @@ def _sources(config: Config) -> list[EventSource]:
             collection=config.firestore_checkpoint_collection,
             document=config.firestore_checkpoint_document,
         ),
+        config=config,
         project_id=config.gcp_project_id,
         dataset_id=config.bq_dataset,
         region=config.gcp_region,
