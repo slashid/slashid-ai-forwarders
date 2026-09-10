@@ -57,6 +57,23 @@ gotchas to plan around. Extend as new ones are discovered.
   identity, timestamp, and model reference are populated; tokens,
   stop reason, and input/output payloads are null. See Phase 3.7
   design doc for the mechanism.
+- **Errored Google calls take the audit path too.** Vertex's payload
+  BQ logging is response-conditional — errored `generateContent` /
+  `rawPredict` calls never land in BQ. The audit-only source's
+  server-side filter is
+  `NOT publishers/google/ OR protoPayload.status.code!=0`, so
+  errored Google entries flow through the same sparse-event pipeline
+  as non-Google traffic with `stop_reason="error"`. Successful
+  Google calls stay on the BQ payload path; no double-count.
+- **OpenAI-compat endpoint traffic is not observable.** Calls to
+  Vertex's `/endpoints/openapi/chat/completions` (and its
+  `completions` / `embeddings` siblings) do produce Cloud Audit Log
+  entries, but the request body is opaque `HttpBody` — the model
+  isn't captured anywhere in the log, and there's no downstream
+  audit trail for the resolved publisher/model either. Identity
+  and timestamp are available; the *what* is not. Route via
+  `/publishers/{publisher}/models/{model}:rawPredict` where the
+  publisher supports it if you need model-attributed observability.
 - **Streaming `stop_reason` is heuristic.** Vertex's BQ log for
   `streamGenerateContent` drops the merged entry's `finishReason`
   (`null`), so a streaming event's `stop_reason` reflects a
