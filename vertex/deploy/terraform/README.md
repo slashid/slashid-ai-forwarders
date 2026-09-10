@@ -3,12 +3,15 @@
 Provisions the customer-side GCP resources for the Vertex AI forwarder
 Cloud Function:
 
-- BigQuery dataset + one table per logged publisher model.
-- `setPublisherModelConfig` on each model so Vertex routes request-
-  response logs into the tables.
+- One BigQuery dataset PER observed region + one table per logged
+  publisher model within each dataset.
+- `setPublisherModelConfig` on each (region, model) pair so Vertex
+  routes request-response logs into the matching regional dataset.
 - Firestore Native database (optional — reuse an existing one by
   setting `create_firestore_database = false`).
 - Cloud Function 2nd gen (source zip fetched from GitHub Releases).
+  Deployed to a single region (`regions[0]`); observes every region
+  in `regions` via API calls.
 - Cloud Scheduler cron → Pub/Sub topic → Cloud Function trigger.
 - Secret Manager entry for the SlashID push token.
 - Service account with least-privilege role grants.
@@ -17,34 +20,43 @@ Cloud Function:
 
 ## Usage
 
-Minimum — enrolls every currently-catalogued `google/gemini-*` model
-by default:
+Single region — the Cloud Function, Firestore, Scheduler, and BigQuery
+dataset all live in the one region:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.5"
 
   project_id         = "customer-project-123456"
-  region             = "us-central1"
+  regions            = ["us-central1"]
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-  release_version    = "vertex-v0.1.0"
+  release_version    = "vertex-v0.1.5"
 }
 ```
 
-Explicit list — narrower scope, or including a non-Gemini publisher
-(phase 3.3+ once rawPredict lands):
+Multi-region — one BigQuery dataset per entry, all sharing a single
+Cloud Function whose audit-log filter OR's the per-region matches.
+The CF itself, Firestore, and Cloud Scheduler deploy to `regions[0]`:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.0"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.5"
 
   project_id      = "customer-project-123456"
-  region          = "us-central1"
-  observed_models = ["google/gemini-2.5-flash", "google/gemini-2.5-pro"]
+  regions         = ["us-central1", "europe-west1", "asia-northeast1"]
+  observed_models = ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4-5"]
   # ...
 }
 ```
+
+`observed_models` defaults to the module's full catalog
+(`all_models.json`) — every catalogued model on every region in
+`regions`. Set explicitly to narrow scope.
+
+Per-region datasets are named `{bq_dataset_prefix}_{region_slug}`,
+where `region_slug` replaces `-` with `_` (BQ dataset IDs disallow
+`-`). Example: `slashid_vertex_reqresp_logs_us_central1`.
 
 `slashid_push_token` is sensitive — declare it as a sensitive
 variable in your root module and source it from a secret manager
@@ -79,8 +91,12 @@ forwarder stubs them if inaccessible.
 `all_models.json` is a maintained snapshot of Vertex Model Garden's
 publisher catalog. Terraform reads it at plan time — no `gcloud`
 call, deterministic plans. When `observed_models` is omitted the
-module auto-derives the enrolment list by filtering
-`startswith("google/gemini-")`.
+module observes every catalogued model on every `regions` entry;
+Google entries get the BQ payload path (per-region
+`setPublisherModelConfig` + per-region table), and every entry —
+Google included — participates in the audit-only path (via the
+`NOT publishers/google/ OR status.code!=0` server-side filter that
+captures errored Google calls the BQ path drops).
 
 Refresh the catalog via `./refresh_models.sh --project <GCP_PROJECT>`
 (needs bash, gcloud, jq). A scheduled workflow at
@@ -107,6 +123,12 @@ terraform apply -var release_version=<prior-tag>
 Wire schema is additive (widens the `identity_details` discriminated
 union with `GCPIdentityDetails`) — downstream SlashID processing is
 compatible either way.
+
+Rolling back across the multi-region rename is destructive — the
+singular `var.region` and dataset ID `slashid_vertex_reqresp_logs`
+were removed. A downgrade to a pre-multi-region tag would try to
+recreate that dataset alongside the per-region ones; back up any
+retained rows before rolling back.
 
 ## Requirements
 

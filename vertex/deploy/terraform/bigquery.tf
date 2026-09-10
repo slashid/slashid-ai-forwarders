@@ -16,18 +16,22 @@
 # projects the columns it expects.
 
 resource "google_bigquery_dataset" "reqresp_logs" {
-  dataset_id                 = var.bq_dataset_id
-  location                   = var.region
+  for_each                   = local.regional_datasets
+  dataset_id                 = each.value
+  location                   = each.key
   delete_contents_on_destroy = false
-  description                = "SlashID Vertex forwarder — per-model Vertex request-response logging tables."
+  description                = "SlashID Vertex forwarder — per-model Vertex request-response logging tables (region ${each.key})."
 
   depends_on = [google_project_service.required]
 }
 
 resource "google_bigquery_table" "per_model" {
   for_each   = local.google_observed_models
-  dataset_id = google_bigquery_dataset.reqresp_logs.dataset_id
-  table_id   = "slashid_vertex_reqresp_${each.key}"
+  dataset_id = google_bigquery_dataset.reqresp_logs[each.value.region].dataset_id
+  # Table name is ``slashid_vertex_reqresp_<model_slug>`` (no region
+  # prefix — the dataset is already regional). BqEventSource reads via
+  # wildcard ``slashid_vertex_reqresp_*`` within a single dataset.
+  table_id = "slashid_vertex_reqresp_${each.value.model_slug}"
 
   # HOUR-on-logging_time matches Vertex's own default when the API
   # auto-creates a destination table — pinning here keeps every
@@ -100,11 +104,12 @@ resource "null_resource" "publisher_model_logging" {
     model         = each.value.full
     publisher     = each.value.publisher
     model_id      = each.value.model
+    model_slug    = each.value.model_slug
     table         = google_bigquery_table.per_model[each.key].id
     table_slug    = each.key
-    dataset       = google_bigquery_dataset.reqresp_logs.dataset_id
+    dataset       = each.value.dataset_id
     project       = var.project_id
-    region        = var.region
+    region        = each.value.region
     sampling_rate = "1.0"
     config_schema = "curl-v1beta1"
   }
@@ -113,12 +118,12 @@ resource "null_resource" "publisher_model_logging" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
-      BODY='{"publisherModelConfig":{"loggingConfig":{"enabled":true,"samplingRate":1.0,"bigqueryDestination":{"outputUri":"bq://${var.project_id}.${var.bq_dataset_id}.slashid_vertex_reqresp_${each.key}"},"enableOtelLogging":true}}}'
+      BODY='{"publisherModelConfig":{"loggingConfig":{"enabled":true,"samplingRate":1.0,"bigqueryDestination":{"outputUri":"bq://${var.project_id}.${each.value.dataset_id}.slashid_vertex_reqresp_${each.value.model_slug}"},"enableOtelLogging":true}}}'
       curl -sS --fail-with-body -X POST \
         -H "Authorization: Bearer $(gcloud auth print-access-token)" \
         -H "Content-Type: application/json" \
         --data "$${BODY}" \
-        "https://${var.region}-aiplatform.googleapis.com/v1beta1/projects/${var.project_id}/locations/${var.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig"
+        "https://${each.value.region}-aiplatform.googleapis.com/v1beta1/projects/${var.project_id}/locations/${each.value.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig"
     EOT
   }
 

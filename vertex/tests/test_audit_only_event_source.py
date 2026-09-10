@@ -22,7 +22,7 @@ def _config() -> Config:
         endpoint="https://api.slashid.com",
         push_token="t" * 32,
         gcp_project_id="vertex-test-507702",
-        gcp_region="us-central1",
+        gcp_regions=["us-central1"],
     )
 
 
@@ -56,7 +56,7 @@ def test_query_audit_only_entries_filter_uses_loose_ge_on_timestamp() -> None:
     query_audit_only_entries(
         client=client,
         project_id="p1",
-        region="europe-west1",
+        regions=["europe-west1"],
         checkpoint=cp,
         max_entries=1000,
     )
@@ -79,6 +79,32 @@ def test_query_audit_only_entries_filter_uses_loose_ge_on_timestamp() -> None:
     assert client.calls[0]["max_results"] == 1000
 
 
+def test_query_audit_only_entries_filter_ors_multiple_regions() -> None:
+    """Multi-region: server-side filter OR's the per-region substring
+    matches. Cloud Logging aggregates audit entries globally, so a
+    single query covers every ``gcp_regions`` entry.
+    """
+    from slashid_vertex_forwarder.audit_only_source import query_audit_only_entries
+
+    client = _FakeLoggingClient()
+    query_audit_only_entries(
+        client=client,
+        project_id="p1",
+        regions=["us-central1", "europe-west1", "asia-northeast1"],
+        checkpoint=Checkpoint(timestamp=None, id=None),
+        max_entries=1000,
+    )
+    filter_ = client.calls[0]["filter_"]
+    # All three region clauses present.
+    assert 'protoPayload.resourceName:"/locations/us-central1/"' in filter_
+    assert 'protoPayload.resourceName:"/locations/europe-west1/"' in filter_
+    assert 'protoPayload.resourceName:"/locations/asia-northeast1/"' in filter_
+    # OR-composed (not AND — an entry can only match one region).
+    region_start = filter_.index("/locations/us-central1/")
+    region_end = filter_.index("/locations/asia-northeast1/") + len("/locations/asia-northeast1/")
+    assert " OR " in filter_[region_start:region_end]
+
+
 def test_query_audit_only_entries_filter_empty_checkpoint_omits_tiebreak() -> None:
     """First-tick case: cp.timestamp is None. Filter omits the
     checkpoint tie-break clause."""
@@ -88,7 +114,7 @@ def test_query_audit_only_entries_filter_empty_checkpoint_omits_tiebreak() -> No
     query_audit_only_entries(
         client=client,
         project_id="p1",
-        region="europe-west1",
+        regions=["europe-west1"],
         checkpoint=Checkpoint(timestamp=None, id=None),
         max_entries=1000,
     )
@@ -166,7 +192,7 @@ def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
         logging_client=fake_client,
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=["anthropic/claude-sonnet-4-5"],
         max_entries_per_tick=100,
         config=_config(),
@@ -219,7 +245,7 @@ def test_fetch_advances_next_checkpoint_across_filter_drops() -> None:
         logging_client=fake_client,
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=["anthropic/claude-sonnet-4-5"],
         max_entries_per_tick=100,
         config=_config(),
@@ -244,7 +270,7 @@ def test_fetch_advances_next_checkpoint_across_parse_failures() -> None:
         logging_client=fake_client,
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=["anthropic/claude-sonnet-4-5"],
         max_entries_per_tick=100,
         config=_config(),
@@ -261,7 +287,7 @@ def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
         logging_client=_FakeLoggingClient([]),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=["anthropic/claude-sonnet-4-5"],
         max_entries_per_tick=100,
         config=_config(),
@@ -305,7 +331,7 @@ def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
         logging_client=fake_client,
         checkpoint_store=store,
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=["openai/gpt-oss-120b-maas"],
         max_entries_per_tick=100,
         config=_config(),
@@ -343,7 +369,7 @@ def test_fetch_captures_errored_google_call_as_audit_event() -> None:
         logging_client=fake_client,
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
-        region="r",
+        regions=["r"],
         # Whitelist now contains Google too — matches Phase 3.8's
         # simplification (audit_observed == effective_observed_models).
         observed_models=["google/gemini-2.5-flash", "anthropic/claude-sonnet-4-5"],
@@ -391,7 +417,7 @@ def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> None:
         logging_client=fake_client,
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=["anthropic/claude-sonnet-4-5"],  # bare — as the catalog ships
         max_entries_per_tick=100,
         config=_config(),
@@ -414,7 +440,7 @@ def test_commit_saves_to_checkpoint_store() -> None:
         logging_client=_FakeLoggingClient([]),
         checkpoint_store=store,
         project_id="p",
-        region="r",
+        regions=["r"],
         observed_models=[],
         max_entries_per_tick=100,
         config=_config(),

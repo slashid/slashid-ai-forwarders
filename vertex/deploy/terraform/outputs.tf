@@ -8,21 +8,24 @@ output "service_account_email" {
   value       = google_service_account.forwarder.email
 }
 
-output "bigquery_dataset_id" {
-  description = "Fully qualified BigQuery dataset holding the per-model request-response tables."
-  value       = "${var.project_id}.${google_bigquery_dataset.reqresp_logs.dataset_id}"
+output "bigquery_datasets" {
+  description = "Per-region fully qualified BigQuery datasets holding the per-model request-response tables (one dataset per ``regions`` entry)."
+  value = {
+    for region, ds in google_bigquery_dataset.reqresp_logs :
+    region => "${var.project_id}.${ds.dataset_id}"
+  }
 }
 
 output "bigquery_table_ids" {
-  description = "One BigQuery table per configured publisher model."
+  description = "One BigQuery table per (region, publisher model). Keys are ``<region_slug>__<publisher>_<model>``."
   value = {
     for slug, table in google_bigquery_table.per_model :
-    slug => "${var.project_id}.${google_bigquery_dataset.reqresp_logs.dataset_id}.${table.table_id}"
+    slug => "${var.project_id}.${google_bigquery_dataset.reqresp_logs[local.google_observed_models[slug].region].dataset_id}.${table.table_id}"
   }
 }
 
 output "firestore_checkpoint_collection" {
-  description = "Firestore collection under which the per-source checkpoint documents live (``checkpoint`` for BQ, ``checkpoint_audit_only`` for audit-only)."
+  description = "Firestore collection under which the per-source checkpoint documents live (``checkpoint_bq_<region_slug>`` per region for the BQ path, ``checkpoint_audit_only`` shared for the audit-only path)."
   value       = var.firestore_checkpoint_collection
 }
 

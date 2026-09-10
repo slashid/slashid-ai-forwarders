@@ -27,8 +27,26 @@ log = logging.getLogger(__name__)
 # customer-configurable ``firestore_checkpoint_collection``. Watermarks
 # are internal state, not a public API surface; renaming them would
 # be a breaking migration whether they were env-configurable or not.
-_BQ_CHECKPOINT_DOC = "checkpoint"
+# BQ path has a checkpoint per region (its BQ dataset is regional);
+# the audit path is cross-region by construction (one Cloud Logging
+# query over the OR-clause of ``config.gcp_regions``) so a single
+# global doc covers it.
 _AUDIT_ONLY_CHECKPOINT_DOC = "checkpoint_audit_only"
+
+
+def _bq_checkpoint_doc(region: str) -> str:
+    """Per-region BQ checkpoint doc name. ``region`` maps to a BQ dataset
+    whose watermark is independent from every other region's."""
+    slug = region.replace("-", "_")
+    return f"checkpoint_bq_{slug}"
+
+
+def _bq_dataset_id(prefix: str, region: str) -> str:
+    """Per-region dataset name — BQ dataset IDs can't contain ``-``,
+    so replace with ``_``. Matches the naming used by the Terraform
+    module (``for_each`` on ``google_bigquery_dataset.reqresp``)."""
+    slug = region.replace("-", "_")
+    return f"{prefix}_{slug}"
 
 
 @cache
@@ -36,13 +54,19 @@ def _sources() -> list[EventSource]:
     """Cached per Cloud Function container — the BigQuery, Firestore,
     and Cloud Logging clients are heavy to construct (auth, discovery)
     so we keep them warm across ticks. The Firestore client is shared
-    between the two sources' checkpoint stores; they get independent
-    documents so their watermarks don't collide.
+    across every source's checkpoint store; each source gets its own
+    document so watermarks don't collide.
+
+    Multi-region: one ``BqEventSource`` per region (each with its own
+    regional dataset + checkpoint doc) plus a single
+    ``AuditOnlyEventSource`` whose Cloud Logging filter OR's every
+    ``gcp_regions`` entry — audit logs are globally aggregated so a
+    single query covers all regions.
 
     Nullary so ``@cache`` doesn't need to hash the ``Config`` (which
-    holds a ``list[str] audit_observed_models`` — pydantic auto-``__hash__``
-    tries to hash the raw dict and chokes on the list). ``load_config()``
-    is itself cached, so pulling it inside is free.
+    holds ``list[str]`` fields — pydantic auto-``__hash__`` tries to
+    hash the raw dict and chokes on lists). ``load_config()`` is
+    itself cached, so pulling it inside is free.
     """
     from google.cloud import bigquery, firestore
     from google.cloud import logging as gcp_logging
@@ -53,22 +77,25 @@ def _sources() -> list[EventSource]:
         project=config.gcp_project_id,
         database=config.firestore_database,
     )
+    bq_client = bigquery.Client(project=config.gcp_project_id)
 
-    bq_source = BqEventSource(
-        client=bigquery.Client(project=config.gcp_project_id),
-        checkpoint_store=FirestoreCheckpointStore(
-            client=firestore_client,
-            collection=config.firestore_checkpoint_collection,
-            document=_BQ_CHECKPOINT_DOC,
-        ),
-        config=config,
-        project_id=config.gcp_project_id,
-        dataset_id=config.bq_dataset,
-        region=config.gcp_region,
-        max_rows_per_tick=config.max_rows_per_tick,
-        audit_buffer_seconds=config.audit_buffer_seconds,
-    )
-    sources: list[EventSource] = [bq_source]
+    sources: list[EventSource] = [
+        BqEventSource(
+            client=bq_client,
+            checkpoint_store=FirestoreCheckpointStore(
+                client=firestore_client,
+                collection=config.firestore_checkpoint_collection,
+                document=_bq_checkpoint_doc(region),
+            ),
+            config=config,
+            project_id=config.gcp_project_id,
+            dataset_id=_bq_dataset_id(config.bq_dataset_prefix, region),
+            region=region,
+            max_rows_per_tick=config.max_rows_per_tick,
+            audit_buffer_seconds=config.audit_buffer_seconds,
+        )
+        for region in config.gcp_regions
+    ]
 
     if config.audit_observed_models:
         audit_source = AuditOnlyEventSource(
@@ -83,7 +110,7 @@ def _sources() -> list[EventSource]:
             ),
             config=config,
             project_id=config.gcp_project_id,
-            region=config.gcp_region,
+            regions=config.gcp_regions,
             observed_models=config.audit_observed_models,
             max_entries_per_tick=config.max_rows_per_tick,
         )
