@@ -1,15 +1,22 @@
-"""Audit-log-only event source — Vertex Model Garden non-Google publishers.
+"""Audit-log-only event source — non-Google publishers + errored Google calls.
 
-Complementary to ``BqEventSource``. Whereas BQ payload logging is
-Google-only (setPublisherModelConfig silently no-ops on non-Google
-publishers), Cloud Audit Logs record every ``rawPredict`` /
-``streamRawPredict`` / ``predict`` invocation on every publisher.
-This source polls those entries and emits sparse
+Complementary to ``BqEventSource``. Vertex's payload BQ logging
+(``setPublisherModelConfig``) covers only successful Google-publisher
+invocations — non-Google publishers get no BQ path at all, and
+errored Google calls are dropped from BQ too (response-conditional).
+Cloud Audit Logs record every ``rawPredict`` / ``streamRawPredict`` /
+``predict`` invocation on every publisher regardless of status, so
+this source picks up both gaps and emits sparse
 ``AIInvocationObservedV1`` events: identity + call shape only, no
 payload.
 
-Server-side filter is publisher-level (non-Google in the configured
-region for the relevant methods) plus a coarse ``timestamp >= cp_ts``.
+Server-side filter is publisher-scoped
+(``NOT publishers/google/ OR protoPayload.status.code!=0`` in the
+configured region for the relevant methods) plus a coarse
+``timestamp >= cp_ts``. The non-Google-OR-error clause is what
+prevents double-counting: successful Google calls end up in BQ only;
+errored Google calls end up here only; non-Google calls end up here
+regardless of status.
 Client-side, entries are further narrowed to the customer's
 ``observed_models`` allowlist and the strict compound
 ``(timestamp, id) > (cp.timestamp, cp.id)`` is re-applied in Python.
@@ -79,11 +86,25 @@ def query_audit_only_entries(
         'OR protoPayload.methodName:"streamGenerateContent" '
         'OR protoPayload.methodName:"generateContent"'
     )
+    # Publisher scope:
+    #  - Non-Google always captured — no BQ payload path for those.
+    #  - Google captured only when the call errored — Vertex's payload
+    #    BQ logging is response-conditional, so errored Google calls
+    #    never land in BQ; the audit path is the only way to see them.
+    #    Successful Google calls stay in BQ (captured by ``BqEventSource``)
+    #    and MUST NOT be caught here or we double-count.
+    # ``status.code!=0`` matches the same semantics as
+    # ``AuditEntry.is_error`` (see audit_source.py) — the field is
+    # absent on successful entries and Cloud Logging's ``!=`` on a
+    # missing field evaluates false, so only errored entries match.
+    publisher_scope = (
+        'NOT protoPayload.resourceName:"/publishers/google/" OR protoPayload.status.code!=0'
+    )
     parts = [
         'resource.type="audited_resource"',
         'protoPayload.serviceName="aiplatform.googleapis.com"',
         'protoPayload.resourceName:"/publishers/"',
-        'NOT protoPayload.resourceName:"/publishers/google/"',
+        f"({publisher_scope})",
         f"protoPayload.resourceName:{json.dumps(f'/locations/{region}/')}",
         f"resource.labels.project_id={json.dumps(project_id)}",
         f"({method_clause})",
