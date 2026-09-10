@@ -944,6 +944,8 @@ def test_resolve_identity_length_1_mixed_with_length_2_partial_attribution() -> 
 def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
     """End-to-end: fetch queries payload, queries audit, stamps identity
     on each returned wire event."""
+    from slashid_ai_forwarder_core.events import GCPIdentityDetails
+
     from slashid_vertex_forwarder.event_source import BqEventSource
 
     bq_client = MagicMock()
@@ -968,7 +970,9 @@ def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
     )
     events, _cp = source.fetch()
     assert len(events) == 1
-    chain = events[0].identity_details.credential_chain
+    identity = events[0].identity_details
+    assert isinstance(identity, GCPIdentityDetails)
+    chain = identity.credential_chain
     assert chain is not None
     assert chain[0].principal_email == "alice@example.com"
 

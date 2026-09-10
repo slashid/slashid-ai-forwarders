@@ -295,9 +295,11 @@ def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
     assert env.tokens.output == 0
     # Identity is reconstructed from the audit's authenticationInfo via
     # _credential_chain — direct-user length-1 chain.
-    assert env.identity_details.credential_chain is not None
-    assert len(env.identity_details.credential_chain) == 1
-    assert env.identity_details.credential_chain[0].principal_email == "user@example.com"
+    identity = env.identity_details
+    assert isinstance(identity, GCPIdentityDetails)
+    assert identity.credential_chain is not None
+    assert len(identity.credential_chain) == 1
+    assert identity.credential_chain[0].principal_email == "user@example.com"
 
 
 def test_vertex_audit_only_envelope_drops_when_insert_id_empty() -> None:

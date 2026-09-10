@@ -9,6 +9,7 @@ lifecycle, filter construction, and envelope emission.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -87,6 +88,13 @@ def test_query_audit_only_entries_filter_empty_checkpoint_omits_tiebreak() -> No
     assert "timestamp>" not in filter_
 
 
+@dataclass
+class _FakeLogEntry:
+    insert_id: str
+    timestamp: datetime
+    payload: dict[str, Any]
+
+
 def _fake_log_entry(
     *,
     insert_id: str,
@@ -94,22 +102,19 @@ def _fake_log_entry(
     resource_name: str,
     method_name: str = "google.cloud.aiplatform.v1.PredictionService.RawPredict",
     principal_email: str = "user@example.com",
-) -> Any:
-    class _FakeLogEntry:
-        pass
-
-    entry = _FakeLogEntry()
-    entry.insert_id = insert_id
-    entry.timestamp = timestamp
-    entry.payload = {
-        "resourceName": resource_name,
-        "methodName": method_name,
-        "authenticationInfo": {
-            "principalEmail": principal_email,
-            "principalSubject": f"user:{principal_email}",
+) -> _FakeLogEntry:
+    return _FakeLogEntry(
+        insert_id=insert_id,
+        timestamp=timestamp,
+        payload={
+            "resourceName": resource_name,
+            "methodName": method_name,
+            "authenticationInfo": {
+                "principalEmail": principal_email,
+                "principalSubject": f"user:{principal_email}",
+            },
         },
-    }
-    return entry
+    )
 
 
 class _FakeCheckpointStore:
@@ -173,8 +178,12 @@ def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
     assert events[0].accessed_files is None
     assert events[0].available_tools is None
     # Identity is populated by _credential_chain(audit).
-    assert events[0].identity_details.credential_chain is not None
-    assert len(events[0].identity_details.credential_chain) >= 1
+    from slashid_ai_forwarder_core.events import GCPIdentityDetails
+
+    identity = events[0].identity_details
+    assert isinstance(identity, GCPIdentityDetails)
+    assert identity.credential_chain is not None
+    assert len(identity.credential_chain) >= 1
     assert next_cp == Checkpoint(timestamp=t2, id="b")
 
 
