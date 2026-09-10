@@ -19,6 +19,8 @@ audit-log correlation.
 
 from __future__ import annotations
 
+import re
+
 from slashid_ai_forwarder_core.events import (
     AIInvocationTokens,
     AIModel,
@@ -31,6 +33,29 @@ from .event_source import Entry
 # pattern-match on the exact string. Convention (see events.py:246):
 # ``<vendor>-<vendor_model_family>-<shape>``.
 PARSED_AS = "vertex-gemini-generate"
+
+
+_MODEL_PATH_RE = re.compile(r"(?:.+/)?publishers/([^/]+)/models/(.+)$")
+
+
+def _parse_model_path(path: str) -> tuple[str | None, str | None]:
+    """Extract (publisher, model_name) from a Vertex path.
+
+    Accepts either the short form ``publishers/<pub>/models/<model>``
+    or the long form
+    ``projects/<proj>/locations/<region>/publishers/<pub>/models/<model>``
+    — the leading segment group is optional in the regex. Greedy ``.+``
+    on the model group preserves any embedded slashes (Vertex fine-tuned
+    / deployed variants occasionally carry ``endpoints/<id>``-style
+    suffixes).
+
+    Returns (None, None) on any shape that doesn't match — callers drop
+    the field rather than surface a partial parse.
+    """
+    match = _MODEL_PATH_RE.match(path)
+    if match is None:
+        return None, None
+    return match.group(1) or None, match.group(2) or None
 
 
 def vertex_envelope(entry: Entry) -> EventEnvelope | None:
@@ -52,6 +77,7 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
         cache_write=0,  # Gemini does not expose a cache-write count
         reasoning=int(usage.thoughtsTokenCount or 0),
     )
+    publisher, model_name = _parse_model_path(entry.model_path)
 
     return EventEnvelope(
         request_id=entry.request_id,
@@ -59,24 +85,10 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
         identity_details=entry.identity_details,
         model=AIModel(
             id=entry.model_path,
-            provider=_publisher_from_model_path(entry.model_path),
+            name=model_name,
+            provider=publisher,
             raw_model_id=entry.model_path,
         ),
         tokens=tokens,
         parsed_as=PARSED_AS,
     )
-
-
-def _publisher_from_model_path(model_path: str) -> str | None:
-    """Extract the publisher segment from a Vertex model path.
-
-    Vertex model paths follow ``publishers/<publisher>/models/<model>``.
-    Phase 3.1 only exercises ``publishers/google/…`` (generateContent),
-    but Model Garden hosts anthropic, meta, mistralai, and others via
-    rawPredict — landing in phase 3.3+. Parse now so the provider field
-    stays honest when those normalizers come online.
-    """
-    parts = model_path.split("/")
-    if len(parts) >= 2 and parts[0] == "publishers":
-        return parts[1] or None
-    return None

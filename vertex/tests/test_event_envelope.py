@@ -197,6 +197,42 @@ def test_envelope_reads_pre_attached_identity_details() -> None:
     assert env.identity_details.credential_chain[0].principal_email == "alice@example.com"
 
 
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        (
+            "publishers/anthropic/models/claude-sonnet-4-5",
+            ("anthropic", "claude-sonnet-4-5"),
+        ),
+        (
+            "projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
+            ("anthropic", "claude-sonnet-4-5"),
+        ),
+        (
+            "publishers/google/models/my-tuned/endpoints/abc123",
+            ("google", "my-tuned/endpoints/abc123"),
+        ),
+        ("not-a-path", (None, None)),
+        ("", (None, None)),
+    ],
+)
+def test_parse_model_path(path: str, expected: tuple[str | None, str | None]) -> None:
+    from slashid_vertex_forwarder.event_envelope import _parse_model_path
+
+    assert _parse_model_path(path) == expected
+
+
+def test_vertex_envelope_populates_model_name() -> None:
+    """BQ envelope now emits AIModel.name from the model segment of the
+    publisher path — consistency with the upcoming audit-only envelope."""
+    env = vertex_envelope(_entry(model_path="publishers/google/models/gemini-2.5-flash"))
+    assert env is not None
+    assert env.model.name == "gemini-2.5-flash"
+    assert env.model.provider == "google"
+    assert env.model.id == "publishers/google/models/gemini-2.5-flash"
+    assert env.model.raw_model_id == "publishers/google/models/gemini-2.5-flash"
+
+
 def test_envelope_empty_identity_still_serializes_to_kind_gcp() -> None:
     from datetime import UTC, datetime
 
