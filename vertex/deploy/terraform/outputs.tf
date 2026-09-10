@@ -21,9 +21,9 @@ output "bigquery_table_ids" {
   }
 }
 
-output "firestore_checkpoint_path" {
-  description = "Firestore document holding the polling checkpoint."
-  value       = "${var.firestore_checkpoint_collection}/${var.firestore_checkpoint_document}"
+output "firestore_checkpoint_collection" {
+  description = "Firestore collection under which the per-source checkpoint documents live (``checkpoint`` for BQ, ``checkpoint_audit_only`` for audit-only)."
+  value       = var.firestore_checkpoint_collection
 }
 
 output "push_token_secret_id" {

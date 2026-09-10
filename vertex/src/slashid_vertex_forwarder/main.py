@@ -23,6 +23,13 @@ from .handler import run_tick
 
 log = logging.getLogger(__name__)
 
+# Firestore document names are hardcoded — one per source under the
+# customer-configurable ``firestore_checkpoint_collection``. Watermarks
+# are internal state, not a public API surface; renaming them would
+# be a breaking migration whether they were env-configurable or not.
+_BQ_CHECKPOINT_DOC = "checkpoint"
+_AUDIT_ONLY_CHECKPOINT_DOC = "checkpoint_audit_only"
+
 
 @cache
 def _sources(config: Config) -> list[EventSource]:
@@ -44,7 +51,7 @@ def _sources(config: Config) -> list[EventSource]:
         checkpoint_store=FirestoreCheckpointStore(
             client=firestore_client,
             collection=config.firestore_checkpoint_collection,
-            document=config.firestore_checkpoint_document,
+            document=_BQ_CHECKPOINT_DOC,
         ),
         config=config,
         project_id=config.gcp_project_id,
@@ -63,7 +70,7 @@ def _sources(config: Config) -> list[EventSource]:
             checkpoint_store=FirestoreCheckpointStore(
                 client=firestore_client,
                 collection=config.firestore_checkpoint_collection,
-                document=config.audit_only_checkpoint_document,
+                document=_AUDIT_ONLY_CHECKPOINT_DOC,
             ),
             config=config,
             project_id=config.gcp_project_id,
