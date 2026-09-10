@@ -21,12 +21,14 @@ locals {
 
   # Phase 3.7: default expands to every catalogued model. Google
   # entries drive the BQ payload path (setPublisherModelConfig +
-  # per-model table); non-Google entries drive the audit-log-only
-  # path (AuditOnlyEventSource client-side filter).
+  # per-model table); every entry — Google included — drives the
+  # audit-log-only path too, because errored Google calls are dropped
+  # by response-conditional payload logging and only the audit path
+  # sees them. The audit source's server-side filter
+  # (``non-Google OR protoPayload.status.code!=0``) prevents double-counting.
   effective_observed_models = coalesce(var.observed_models, local.all_models)
 
   google_observed = [for m in local.effective_observed_models : m if startswith(m, "google/")]
-  audit_observed  = [for m in local.effective_observed_models : m if !startswith(m, "google/")]
 
   # Split "publisher/model" entries — Google side drives BQ table
   # naming and setPublisherModelConfig calls; the audit side is

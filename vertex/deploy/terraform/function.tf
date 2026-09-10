@@ -157,7 +157,7 @@ resource "google_cloudfunctions2_function" "forwarder" {
       SLASHID_MAX_CONTENT_SIZE                = tostring(var.max_content_size)
       SLASHID_MAX_ROWS_PER_TICK               = tostring(var.max_rows_per_tick)
       SLASHID_REQUEST_TIMEOUT_SECONDS         = tostring(var.request_timeout_seconds)
-      SLASHID_AUDIT_OBSERVED_MODELS           = jsonencode(local.audit_observed)
+      SLASHID_AUDIT_OBSERVED_MODELS           = jsonencode(local.effective_observed_models)
     }
 
     secret_environment_variables {

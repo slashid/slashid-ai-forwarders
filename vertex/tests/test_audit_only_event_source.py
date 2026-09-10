@@ -63,7 +63,11 @@ def test_query_audit_only_entries_filter_uses_loose_ge_on_timestamp() -> None:
     filter_ = client.calls[0]["filter_"]
     assert 'resource.type="audited_resource"' in filter_
     assert 'protoPayload.serviceName="aiplatform.googleapis.com"' in filter_
+    # Publisher scope: non-Google OR errored (any publisher). The
+    # OR-status-code clause is what captures errored Google calls,
+    # which Vertex's response-conditional BQ payload logging drops.
     assert 'NOT protoPayload.resourceName:"/publishers/google/"' in filter_
+    assert "protoPayload.status.code!=0" in filter_
     assert "/locations/europe-west1/" in filter_
     assert 'timestamp>="2026-09-09T12:00:00+00:00"' in filter_
     # No strict ``>`` on timestamp and no ``insertId`` clause — those
@@ -107,18 +111,22 @@ def _fake_log_entry(
     resource_name: str,
     method_name: str = "google.cloud.aiplatform.v1.PredictionService.RawPredict",
     principal_email: str = "user@example.com",
+    status: dict | None = None,
 ) -> _FakeLogEntry:
+    payload: dict = {
+        "resourceName": resource_name,
+        "methodName": method_name,
+        "authenticationInfo": {
+            "principalEmail": principal_email,
+            "principalSubject": f"user:{principal_email}",
+        },
+    }
+    if status is not None:
+        payload["status"] = status
     return _FakeLogEntry(
         insert_id=insert_id,
         timestamp=timestamp,
-        payload={
-            "resourceName": resource_name,
-            "methodName": method_name,
-            "authenticationInfo": {
-                "principalEmail": principal_email,
-                "principalSubject": f"user:{principal_email}",
-            },
-        },
+        payload=payload,
     )
 
 
@@ -305,6 +313,50 @@ def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
     events, next_cp = source.fetch()
     assert events == [], "watermark echo must not be re-emitted"
     assert next_cp is None, "nothing new past the watermark → don't advance"
+
+
+def test_fetch_captures_errored_google_call_as_audit_event() -> None:
+    """Errored Google calls are dropped by Vertex's response-conditional
+    BQ payload logging (verified empirically on strong-hue-507702-k7:
+    two 400-erroring Gemini calls at 14:48:24 produced 0 BQ rows). The
+    audit path picks them up instead — server-side filter
+    ``NOT publishers/google/ OR protoPayload.status.code!=0`` matches the
+    errored entry, client-side allowlist matches the ``google/`` prefix,
+    ``AuditEntry.is_error`` propagates to the envelope, sparse builder
+    stamps ``stop_reason="error"``.
+    """
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    t1 = datetime(2026, 9, 10, 14, 48, 24, tzinfo=UTC)
+    fake_client = _FakeLoggingClient(
+        [
+            _fake_log_entry(
+                insert_id="err-gem-1",
+                timestamp=t1,
+                resource_name=("projects/p/locations/r/publishers/google/models/gemini-2.5-flash"),
+                method_name="google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+                status={"code": 3, "message": "Unable to submit request…"},
+            ),
+        ]
+    )
+    source = AuditOnlyEventSource(
+        logging_client=fake_client,
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        region="r",
+        # Whitelist now contains Google too — matches Phase 3.8's
+        # simplification (audit_observed == effective_observed_models).
+        observed_models=["google/gemini-2.5-flash", "anthropic/claude-sonnet-4-5"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, next_cp = source.fetch()
+    assert len(events) == 1
+    assert events[0].parsed_as == "vertex-audit"
+    assert events[0].stop_reason == "error"
+    assert events[0].model.provider == "google"
+    assert events[0].model.name == "gemini-2.5-flash"
+    assert next_cp == Checkpoint(timestamp=t1, id="err-gem-1")
 
 
 def test_commit_saves_to_checkpoint_store() -> None:
