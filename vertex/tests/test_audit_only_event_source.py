@@ -14,7 +14,17 @@ from typing import Any
 
 from slashid_ai_forwarder_core.events import GCPIdentityDetails
 
+from slashid_vertex_forwarder.config import Config
 from slashid_vertex_forwarder.event_source import Checkpoint
+
+
+def _config() -> Config:
+    return Config(
+        endpoint="https://api.slashid.com",
+        push_token="t" * 32,
+        gcp_project_id="vertex-test-507702",
+        gcp_region="us-central1",
+    )
 
 
 class _FakeLoggingClient:
@@ -96,3 +106,181 @@ def test_query_audit_only_entries_filter_empty_checkpoint_omits_tiebreak() -> No
     filter_ = client.calls[0]["filter_"]
     assert "insertId>" not in filter_
     assert "timestamp>" not in filter_
+
+
+def _fake_log_entry(
+    *,
+    insert_id: str,
+    timestamp: datetime,
+    resource_name: str,
+    method_name: str = "google.cloud.aiplatform.v1.PredictionService.RawPredict",
+    principal_email: str = "user@example.com",
+) -> Any:
+    class _FakeLogEntry:
+        pass
+
+    entry = _FakeLogEntry()
+    entry.insert_id = insert_id
+    entry.timestamp = timestamp
+    entry.payload = {
+        "resourceName": resource_name,
+        "methodName": method_name,
+        "authenticationInfo": {
+            "principalEmail": principal_email,
+            "principalSubject": f"user:{principal_email}",
+        },
+    }
+    return entry
+
+
+class _FakeCheckpointStore:
+    def __init__(self, initial: Checkpoint | None = None) -> None:
+        self._value = initial if initial is not None else Checkpoint(None, None)
+        self.saves: list[Checkpoint] = []
+
+    def load(self) -> Checkpoint:
+        return self._value
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        self._value = checkpoint
+        self.saves.append(checkpoint)
+
+
+def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    t1 = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    t2 = datetime(2026, 9, 9, 12, 0, 1, tzinfo=UTC)
+    fake_client = _FakeLoggingClient(
+        [
+            _fake_log_entry(
+                insert_id="a",
+                timestamp=t1,
+                resource_name="projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
+            ),
+            _fake_log_entry(
+                insert_id="b",
+                timestamp=t2,
+                resource_name="projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
+            ),
+        ]
+    )
+    source = AuditOnlyEventSource(
+        logging_client=fake_client,
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        region="r",
+        observed_models=["anthropic/claude-sonnet-4-5"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, next_cp = source.fetch()
+    assert len(events) == 2
+    # Verify shape of the AIInvocationObservedV1 events.
+    assert events[0].parsed_as == "vertex-audit"
+    assert events[0].model.provider == "anthropic"
+    assert events[0].model.name == "claude-sonnet-4-5"
+    assert events[0].model.id == "publishers/anthropic/models/claude-sonnet-4-5"
+    assert events[0].tokens.input == 0
+    # Sparse: empty NormalizedInvocation() drops input/used_tools/accessed_files.
+    # ``output`` currently carries a hash of {"stop_reason":"unknown"} because
+    # the shared builder leaves that default in; a follow-up in the shared
+    # builder can strip it. For now the content is stable across every
+    # audit-only event (same hash) and carries no privacy risk.
+    assert events[0].input is None
+    assert events[0].used_tools is None
+    assert events[0].accessed_files is None
+    assert events[0].available_tools is None
+    # Identity is populated by _credential_chain(audit).
+    assert events[0].identity_details.credential_chain is not None
+    assert len(events[0].identity_details.credential_chain) >= 1
+    assert next_cp == Checkpoint(timestamp=t2, id="b")
+
+
+def test_fetch_advances_next_checkpoint_across_filter_drops() -> None:
+    """Entry has publisher-in-list but model-not-in-list: event
+    dropped, next_checkpoint still advances past the raw entry."""
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    t1 = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    fake_client = _FakeLoggingClient(
+        [
+            _fake_log_entry(
+                insert_id="a",
+                timestamp=t1,
+                resource_name="projects/p/locations/r/publishers/anthropic/models/claude-haiku-3-5",
+            ),
+        ]
+    )
+    source = AuditOnlyEventSource(
+        logging_client=fake_client,
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        region="r",
+        observed_models=["anthropic/claude-sonnet-4-5"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, next_cp = source.fetch()
+    assert events == []
+    assert next_cp == Checkpoint(timestamp=t1, id="a")
+
+
+def test_fetch_advances_next_checkpoint_across_parse_failures() -> None:
+    """Entry with malformed resource_name is dropped; checkpoint
+    still advances."""
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    t1 = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    fake_client = _FakeLoggingClient(
+        [
+            _fake_log_entry(insert_id="a", timestamp=t1, resource_name="not-a-path"),
+        ]
+    )
+    source = AuditOnlyEventSource(
+        logging_client=fake_client,
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        region="r",
+        observed_models=["anthropic/claude-sonnet-4-5"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, next_cp = source.fetch()
+    assert events == []
+    assert next_cp == Checkpoint(timestamp=t1, id="a")
+
+
+def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    source = AuditOnlyEventSource(
+        logging_client=_FakeLoggingClient([]),
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        region="r",
+        observed_models=["anthropic/claude-sonnet-4-5"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, next_cp = source.fetch()
+    assert events == []
+    assert next_cp is None
+
+
+def test_commit_saves_to_checkpoint_store() -> None:
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    store = _FakeCheckpointStore()
+    source = AuditOnlyEventSource(
+        logging_client=_FakeLoggingClient([]),
+        checkpoint_store=store,
+        project_id="p",
+        region="r",
+        observed_models=[],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    cp = Checkpoint(timestamp=datetime(2026, 9, 9, tzinfo=UTC), id="x")
+    source.commit(cp)
+    assert store.saves == [cp]
