@@ -21,15 +21,22 @@ import logging
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from slashid_ai_forwarder_core.events import GCPCredential, GCPIdentityDetails
+from slashid_ai_forwarder_core.events import (
+    EventEnvelope,
+    GCPCredential,
+    GCPIdentityDetails,
+)
 from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
 )
 
 from .audit_source import AuditEntry
+
+if TYPE_CHECKING:
+    from .checkpoint_store import CheckpointStore
 
 log = logging.getLogger(__name__)
 
@@ -202,15 +209,32 @@ class Entry:
 
 
 class EventSource(Protocol):
-    """Fetch the next batch of Vertex invocations past ``checkpoint``.
+    """Yield wire-ready envelopes past this source's checkpoint.
 
-    Implementations return an ordered list (ascending by
-    ``(logging_time, request_id)``) — the handler saves the last
-    entry's ``.checkpoint`` after a successful push cycle. Empty list
-    on no new rows.
+    Each implementation owns its own ``CheckpointStore`` via its
+    constructor AND owns its entry parsing + envelope building. The
+    handler treats sources uniformly — it only sees ``EventEnvelope``.
+    Entry types stay private to their source.
+
+    ``fetch()`` loads the checkpoint internally and returns a
+    ``(envelopes, next_checkpoint)`` tuple:
+
+    - ``envelopes`` is the list of ``EventEnvelope`` objects to push
+      to the wire (ordered by the source's underlying
+      ``(timestamp, id)`` ascending order).
+    - ``next_checkpoint`` is the watermark to save after successful
+      push. ``None`` means "no raw records seen this tick" (checkpoint
+      stays put). A non-None value advances past raw records the source
+      saw even when they were dropped during parsing — so a permanent
+      parse failure doesn't stall the pipeline.
+
+    ``commit(checkpoint)`` saves the watermark; called by the handler
+    after successful wire push. Never called when ``next_checkpoint``
+    is ``None``.
     """
 
-    def fetch(self, checkpoint: Checkpoint) -> list[Entry]: ...
+    def fetch(self) -> tuple[list[EventEnvelope], Checkpoint | None]: ...
+    def commit(self, checkpoint: Checkpoint) -> None: ...
 
 
 class BqEventSource:
@@ -230,6 +254,7 @@ class BqEventSource:
         # google.cloud.bigquery.Client — kept untyped so GCP client deps don't
         # bleed into the type-check surface (they're runtime-only).
         client: Any,
+        checkpoint_store: CheckpointStore,
         project_id: str,
         dataset_id: str,
         region: str,
@@ -237,33 +262,66 @@ class BqEventSource:
         audit_buffer_seconds: int = 0,
     ) -> None:
         self._client = client
+        self._checkpoint_store = checkpoint_store
         self._project_id = project_id
         self._dataset_id = dataset_id
         self._region = region
         self._max_rows_per_tick = max_rows_per_tick
         self._audit_buffer_seconds = audit_buffer_seconds
 
-    def fetch(self, checkpoint: Checkpoint) -> list[Entry]:
+    def fetch(self) -> tuple[list[EventEnvelope], Checkpoint | None]:
         """Two-query orchestration: BQ payload → audit-log window →
-        per-row identity stamping. Rows come back with
-        ``identity_details`` populated (or empty if no consensus).
+        per-row identity stamping → envelope construction. Returns
+        (envelopes, next_checkpoint).
+
+        ``next_checkpoint`` reflects the max ``(logging_time, request_id)``
+        across ALL raw BQ rows — including rows that ``_row_to_entry``
+        drops as unparseable — so permanent parse failures do not stall
+        the pipeline. ``None`` on zero raw rows.
 
         Sync end-to-end. Cloud Logging's ``list_entries`` and BigQuery's
         ``job.result()`` both block anyway, so making the source layer
         async would be theatre.
         """
-        query, params = self._build_query(checkpoint)
         from google.cloud import bigquery
 
+        from .event_envelope import vertex_envelope
+
+        checkpoint = self._checkpoint_store.load()
+        query, params = self._build_query(checkpoint)
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = self._client.query(query, job_config=job_config)
+
         payload_rows: list[Entry] = []
+        max_ts: datetime | None = None
+        max_id: str | None = None
+        raw_seen = 0
         for row in job.result():
+            raw_seen += 1
+            # Track max (timestamp, id) across ALL raw rows for
+            # next_checkpoint, even if _row_to_entry drops this one.
+            row_ts = row.get("logging_time")
+            row_id = row.get("request_id")
+            if row_ts is not None and row_id is not None:
+                row_id_str = str(row_id)
+                if max_ts is None or (row_ts, row_id_str) > (
+                    max_ts,
+                    max_id or "",
+                ):
+                    max_ts = row_ts
+                    max_id = row_id_str
+
             entry = _row_to_entry(row, region=self._region)
             if entry is not None:
                 payload_rows.append(entry)
+
+        if raw_seen == 0:
+            return [], None
+
+        next_checkpoint = Checkpoint(timestamp=max_ts, id=max_id)
+
         if not payload_rows:
-            return []
+            return [], next_checkpoint
 
         # Predict each row's audit timestamp first (bias-corrected), then
         # take the tight envelope + ±_WINDOW slack. Matches the per-row
@@ -275,7 +333,14 @@ class BqEventSource:
 
         for row in payload_rows:
             row.identity_details = _resolve_identity(row, audit_entries)
-        return payload_rows
+
+        envelopes = [env for r in payload_rows if (env := vertex_envelope(r)) is not None]
+        return envelopes, next_checkpoint
+
+    def commit(self, checkpoint: Checkpoint) -> None:
+        """Advance the source's checkpoint. Called by the handler after
+        successful wire push."""
+        self._checkpoint_store.save(checkpoint)
 
     def _query_audit(
         self,

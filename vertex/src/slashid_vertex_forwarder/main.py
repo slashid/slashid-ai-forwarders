@@ -32,6 +32,7 @@ def _source(config: Config) -> BqEventSource:
 
     return BqEventSource(
         client=bigquery.Client(project=config.gcp_project_id),
+        checkpoint_store=_checkpoint_store(config),
         project_id=config.gcp_project_id,
         dataset_id=config.bq_dataset,
         region=config.gcp_region,

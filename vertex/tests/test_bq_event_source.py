@@ -52,6 +52,21 @@ class _FakeBqClient:
         return _FakeQueryJob(self._rows)
 
 
+class _FakeCheckpointStore:
+    """In-memory ``CheckpointStore`` double for source-level tests."""
+
+    def __init__(self, initial: Checkpoint | None = None) -> None:
+        self._value: Checkpoint = initial or Checkpoint(None, None)
+        self.saves: list[Checkpoint] = []
+
+    def load(self) -> Checkpoint:
+        return self._value
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        self._value = checkpoint
+        self.saves.append(checkpoint)
+
+
 _POC_MODEL_PATH = (
     "projects/vertex-test-507702/locations/us-central1/publishers/google/models/gemini-2.5-flash"
 )
@@ -116,42 +131,46 @@ def _minimal_row(
     }
 
 
-def _source(*, rows: list[dict[str, Any]]) -> tuple[BqEventSource, _FakeBqClient]:
+def _source(
+    *,
+    rows: list[dict[str, Any]],
+    checkpoint: Checkpoint | None = None,
+) -> tuple[BqEventSource, _FakeBqClient, _FakeCheckpointStore]:
     client = _FakeBqClient(rows)
+    store = _FakeCheckpointStore(initial=checkpoint)
     src = BqEventSource(
         client=client,
+        checkpoint_store=store,
         project_id="vertex-test-507702",
         dataset_id="slashid_vertex_reqresp_logs",
         region="us-central1",
         max_rows_per_tick=1000,
     )
-    return src, client
+    return src, client, store
 
 
-def test_fetch_returns_validated_entries() -> None:
-    src, _ = _source(rows=[_row()])
-    entries = src.fetch(Checkpoint(None, None))
-    assert len(entries) == 1
-    e = entries[0]
-    assert e.request_id == "3292372995731278848"
-    assert e.model_path == "publishers/google/models/gemini-2.5-flash"
-    assert e.region == "us-central1"
-    # Pydantic validation ran — the parts are typed shapes now.
-    assert e.request_body.contents[0].role == "user"
-    assert e.response_body.candidates[0].finishReason == "STOP"
+def test_fetch_returns_envelopes() -> None:
+    src, _, _ = _source(rows=[_row()])
+    envelopes, _cp = src.fetch()
+    assert len(envelopes) == 1
+    env = envelopes[0]
+    assert env.request_id == "3292372995731278848"
+    assert env.model.id == "publishers/google/models/gemini-2.5-flash"
+    # The BQ envelope path echoes the model path on raw_model_id.
+    assert env.model.raw_model_id == "publishers/google/models/gemini-2.5-flash"
 
 
 def test_fetch_reads_wildcard_table_pattern() -> None:
     """One wildcard FROM covers every provisioned per-model table."""
-    src, client = _source(rows=[])
-    src.fetch(Checkpoint(None, None))
+    src, client, _ = _source(rows=[])
+    src.fetch()
     expected = "`vertex-test-507702.slashid_vertex_reqresp_logs.slashid_vertex_reqresp_*`"
     assert expected in client.calls[0].query
 
 
 def test_fetch_no_checkpoint_omits_where_clause() -> None:
-    src, client = _source(rows=[])
-    src.fetch(Checkpoint(None, None))
+    src, client, _ = _source(rows=[])
+    src.fetch()
     q = client.calls[0].query
     assert "WHERE" not in q
     # limit parameter always emitted.
@@ -160,8 +179,11 @@ def test_fetch_no_checkpoint_omits_where_clause() -> None:
 
 
 def test_fetch_with_checkpoint_binds_where_params() -> None:
-    src, client = _source(rows=[])
-    src.fetch(Checkpoint(datetime(2026, 9, 5, tzinfo=UTC), "prev-id"))
+    src, client, _ = _source(
+        rows=[],
+        checkpoint=Checkpoint(datetime(2026, 9, 5, tzinfo=UTC), "prev-id"),
+    )
+    src.fetch()
     q = client.calls[0].query
     # Checkpoint clause is now paren-wrapped so it can AND with the
     # optional audit-buffer cutoff.
@@ -171,8 +193,8 @@ def test_fetch_with_checkpoint_binds_where_params() -> None:
 
 
 def test_fetch_ordering_clause() -> None:
-    src, client = _source(rows=[])
-    src.fetch(Checkpoint(None, None))
+    src, client, _ = _source(rows=[])
+    src.fetch()
     assert "ORDER BY logging_time ASC, CAST(request_id AS STRING) ASC" in client.calls[0].query
 
 
@@ -183,17 +205,17 @@ def test_fetch_accepts_string_json_columns() -> None:
         request_payload=json.dumps(_POC_REQ),
         response_payload=json.dumps(_POC_RESP),
     )
-    src, _ = _source(rows=[row])
-    entries = src.fetch(Checkpoint(None, None))
-    assert len(entries) == 1
+    src, _, _ = _source(rows=[row])
+    envelopes, _cp = src.fetch()
+    assert len(envelopes) == 1
 
 
 def test_fetch_drops_row_with_invalid_payload(caplog: pytest.LogCaptureFixture) -> None:
     row = _row(request_payload={"contents": "not-a-list-broken"})
-    src, _ = _source(rows=[row])
+    src, _, _ = _source(rows=[row])
     with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
-        entries = src.fetch(Checkpoint(None, None))
-    assert entries == []
+        envelopes, _cp = src.fetch()
+    assert envelopes == []
     assert any(
         "schema-invalid payload" in r.getMessage()
         and "request_id=3292372995731278848" in r.getMessage()
@@ -204,10 +226,10 @@ def test_fetch_drops_row_with_invalid_payload(caplog: pytest.LogCaptureFixture) 
 def test_fetch_drops_row_with_missing_fields(caplog: pytest.LogCaptureFixture) -> None:
     row = _row()
     del row["request_id"]  # simulate a schema mismatch
-    src, _ = _source(rows=[row])
+    src, _, _ = _source(rows=[row])
     with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
-        entries = src.fetch(Checkpoint(None, None))
-    assert entries == []
+        envelopes, _cp = src.fetch()
+    assert envelopes == []
     assert any(
         "missing required fields" in r.getMessage() and "request_id" in r.getMessage()
         for r in caplog.records
@@ -219,10 +241,10 @@ def test_fetch_drops_row_with_non_dict_payload(caplog: pytest.LogCaptureFixture)
     lists/numbers/strings — the shape check downstream drops them and
     logs the observed payload types."""
     row = _row(request_payload="42")  # json.loads → int
-    src, _ = _source(rows=[row])
+    src, _, _ = _source(rows=[row])
     with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
-        entries = src.fetch(Checkpoint(None, None))
-    assert entries == []
+        envelopes, _cp = src.fetch()
+    assert envelopes == []
     assert any(
         "non-dict payload" in r.getMessage() and "full_request=int" in r.getMessage()
         for r in caplog.records
@@ -235,14 +257,86 @@ def test_fetch_multiple_rows_preserve_order() -> None:
         _row(request_id=2, logging_time=datetime(2026, 9, 5, 1, 0, 1, tzinfo=UTC)),
         _row(request_id=3, logging_time=datetime(2026, 9, 5, 1, 0, 2, tzinfo=UTC)),
     ]
-    src, _ = _source(rows=rows)
-    entries = src.fetch(Checkpoint(None, None))
-    assert [e.request_id for e in entries] == ["1", "2", "3"]
+    src, _, _ = _source(rows=rows)
+    envelopes, _cp = src.fetch()
+    assert [e.request_id for e in envelopes] == ["1", "2", "3"]
+
+
+def test_fetch_advances_next_checkpoint_to_last_row() -> None:
+    """Happy path: next_checkpoint equals max (logging_time, request_id)
+    across all raw BQ rows."""
+    rows = [
+        _row(request_id=1, logging_time=datetime(2026, 9, 5, 1, 0, 0, tzinfo=UTC)),
+        _row(request_id=2, logging_time=datetime(2026, 9, 5, 1, 0, 1, tzinfo=UTC)),
+        _row(request_id=3, logging_time=datetime(2026, 9, 5, 1, 0, 2, tzinfo=UTC)),
+    ]
+    src, _, _ = _source(rows=rows)
+    _envs, cp = src.fetch()
+    assert cp == Checkpoint(
+        timestamp=datetime(2026, 9, 5, 1, 0, 2, tzinfo=UTC),
+        id="3",
+    )
+
+
+def test_fetch_empty_returns_none_checkpoint() -> None:
+    """Zero raw rows → next_checkpoint is None (handler skips commit)."""
+    src, _, _ = _source(rows=[])
+    envs, cp = src.fetch()
+    assert envs == []
+    assert cp is None
+
+
+def test_fetch_advances_next_checkpoint_across_parse_drops() -> None:
+    """A tick where every BQ row fails _row_to_entry (missing required
+    field) still advances next_checkpoint past the last raw row seen —
+    otherwise the pipeline would loop on the same broken rows forever.
+    """
+    t0 = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    # Missing ``full_request`` / ``full_response`` → _row_to_entry drops
+    # on the ``non-dict payload`` branch (None is not a dict).
+    fake_rows = [
+        {
+            "request_id": 1,
+            "logging_time": t0,
+            "model": "publishers/google/models/gemini-2.5-flash",
+            "api_method": "GenerateContent",
+            "metadata": None,
+            "full_request": None,
+            "full_response": None,
+        },
+        {
+            "request_id": 2,
+            "logging_time": t0,
+            "model": "publishers/google/models/gemini-2.5-flash",
+            "api_method": "GenerateContent",
+            "metadata": None,
+            "full_request": None,
+            "full_response": None,
+        },
+    ]
+    src, _, _ = _source(rows=fake_rows)
+    envelopes, cp = src.fetch()
+    assert envelopes == []
+    assert cp == Checkpoint(timestamp=t0, id="2")
+
+
+def test_commit_saves_checkpoint_to_store() -> None:
+    """commit(cp) delegates to the checkpoint store's save()."""
+    src, _, store = _source(rows=[])
+    cp = Checkpoint(datetime(2026, 9, 9, tzinfo=UTC), "42")
+    src.commit(cp)
+    assert store.saves == [cp]
 
 
 def test_entry_checkpoint_property_reflects_row() -> None:
-    src, _ = _source(rows=[_row(request_id=42)])
-    entry = src.fetch(Checkpoint(None, None))[0]
+    """Even though Entry is source-private now, its checkpoint property
+    still maps ``(logging_time, request_id)`` onto the neutral
+    ``Checkpoint(timestamp, id)`` shape."""
+    from slashid_vertex_forwarder.event_source import _row_to_entry
+
+    row = _row(request_id=42)
+    entry = _row_to_entry(row, region="us-central1")
+    assert entry is not None
     cp = entry.checkpoint
     assert cp.id == "42"
     assert cp.timestamp == datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
@@ -273,13 +367,11 @@ def test_fetch_accepts_stream_generate_content_row() -> None:
             "totalTokenCount": 53,
         },
     }
-    src, _ = _source(rows=[_row(request_payload=stream_req, response_payload=stream_resp)])
-    entries = src.fetch(Checkpoint(None, None))
-    assert len(entries) == 1
-    e = entries[0]
-    assert e.request_body.generationConfig is not None
-    assert e.request_body.generationConfig.maxOutputTokens == 50
-    assert e.response_body.candidates[0].finishReason is None
+    src, _, _ = _source(
+        rows=[_row(request_payload=stream_req, response_payload=stream_resp)]
+    )
+    envelopes, _cp = src.fetch()
+    assert len(envelopes) == 1
 
 
 def test_row_to_entry_extracts_api_method() -> None:
@@ -355,6 +447,7 @@ def test_build_query_applies_buffer_cutoff() -> None:
     """When buffer_seconds > 0, the query includes a WHERE logging_time <= @cutoff clause."""
     source = BqEventSource(
         client=MagicMock(),
+        checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
@@ -372,6 +465,7 @@ def test_build_query_projects_api_method_and_metadata() -> None:
     """SELECT list includes the new columns."""
     source = BqEventSource(
         client=MagicMock(),
+        checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
@@ -822,10 +916,10 @@ def test_resolve_identity_length_1_mixed_with_length_2_partial_attribution() -> 
     assert result.credential_chain[1].oauth_client_id is None
 
 
-def test_fetch_stamps_identity_details_on_entries(monkeypatch) -> None:
+def test_fetch_stamps_identity_details_on_envelopes(monkeypatch) -> None:
     """End-to-end: fetch queries payload, queries audit, stamps identity
-    on each returned Entry. All sync."""
-    from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
+    on each returned envelope. All sync."""
+    from slashid_vertex_forwarder.event_source import BqEventSource
 
     bq_client = MagicMock()
     bq_client.query.return_value.result.return_value = [_minimal_row()]
@@ -839,15 +933,16 @@ def test_fetch_stamps_identity_details_on_entries(monkeypatch) -> None:
 
     source = BqEventSource(
         client=bq_client,
+        checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    entries = source.fetch(Checkpoint(None, None))
-    assert len(entries) == 1
-    chain = entries[0].identity_details.credential_chain
+    envelopes, _cp = source.fetch()
+    assert len(envelopes) == 1
+    chain = envelopes[0].identity_details.credential_chain
     assert chain is not None
     assert chain[0].principal_email == "alice@example.com"
 
@@ -855,7 +950,7 @@ def test_fetch_stamps_identity_details_on_entries(monkeypatch) -> None:
 def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> None:
     """The audit query's ts_range is [min_predicted - _WINDOW, max_predicted
     + _WINDOW] — computed per row."""
-    from slashid_vertex_forwarder.event_source import _WINDOW, BqEventSource, Checkpoint
+    from slashid_vertex_forwarder.event_source import _WINDOW, BqEventSource
 
     bq_client = MagicMock()
     row1 = _minimal_row(
@@ -880,13 +975,14 @@ def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> 
 
     source = BqEventSource(
         client=bq_client,
+        checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    source.fetch(Checkpoint(None, None))
+    source.fetch()
     lo, hi = captured[0]
     assert lo == datetime(2026, 9, 9, 12, 0, 0, 50000, tzinfo=UTC) - _WINDOW
     assert hi == datetime(2026, 9, 9, 12, 0, 5, 50000, tzinfo=UTC) + _WINDOW
@@ -894,7 +990,7 @@ def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> 
 
 def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
     """No BQ rows → no audit query fired."""
-    from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
+    from slashid_vertex_forwarder.event_source import BqEventSource
 
     bq_client = MagicMock()
     bq_client.query.return_value.result.return_value = []
@@ -909,14 +1005,16 @@ def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
 
     source = BqEventSource(
         client=bq_client,
+        checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         dataset_id="d",
         region="us-central1",
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    entries = source.fetch(Checkpoint(None, None))
-    assert entries == []
+    envelopes, cp = source.fetch()
+    assert envelopes == []
+    assert cp is None
     assert called["n"] == 0
 
 
