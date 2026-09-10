@@ -266,11 +266,15 @@ def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
         vertex_audit_only_envelope,
     )
 
+    resource_name = (
+        "projects/p/locations/us-central1"
+        "/publishers/anthropic/models/claude-sonnet-4-5"
+    )
     audit = AuditEntry.model_validate({
         "insertId": "log-xyz",
         "timestamp": datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
         "payload": {
-            "resourceName": "projects/p/locations/us-central1/publishers/anthropic/models/claude-sonnet-4-5",
+            "resourceName": resource_name,
             "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
             "authenticationInfo": {
                 "principalEmail": "user@example.com",
