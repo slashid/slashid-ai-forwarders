@@ -20,6 +20,7 @@ audit-log correlation.
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from slashid_ai_forwarder_core.events import (
     AIInvocationTokens,
@@ -29,10 +30,18 @@ from slashid_ai_forwarder_core.events import (
 
 from .event_source import Entry
 
+if TYPE_CHECKING:
+    from .audit_only_source import AuditOnlyEntry
+
 # Kept as a module-level constant so tests and downstream consumers can
 # pattern-match on the exact string. Convention (see events.py:246):
 # ``<vendor>-<vendor_model_family>-<shape>``.
 PARSED_AS = "vertex-gemini-generate"
+
+# Wire ``parsed_as`` for audit-only events. Convention (see events.py):
+# ``<vendor>-<record-shape>``. Provider + model.name differentiate
+# publishers; no per-publisher parsed_as value.
+PARSED_AS_AUDIT = "vertex-audit"
 
 
 _MODEL_PATH_RE = re.compile(r"(?:.+/)?publishers/([^/]+)/models/(.+)$")
@@ -56,6 +65,42 @@ def _parse_model_path(path: str) -> tuple[str | None, str | None]:
     if match is None:
         return None, None
     return match.group(1) or None, match.group(2) or None
+
+
+def _short_method(method_name: str) -> str:
+    """``google.cloud.aiplatform.v1.PredictionService.RawPredict``
+    → ``rawPredict``. Lowercase-first the tail segment after the final
+    dot. Empty input → empty string."""
+    tail = method_name.rsplit(".", 1)[-1]
+    if not tail:
+        return ""
+    return tail[:1].lower() + tail[1:]
+
+
+def vertex_audit_only_envelope(entry: AuditOnlyEntry) -> EventEnvelope | None:
+    """Build the vendor-neutral ``EventEnvelope`` for one audit-log
+    entry from a non-Google publisher.
+
+    ``request_id`` is the Cloud Logging ``insertId`` — server dedupes
+    on this to make replays safe. Sparse-by-design: tokens default to
+    zero (no token data is present in audit logs), and stop_reason /
+    input / output / used_tools / accessed_files stay null via the
+    shared builder's defaults.
+    """
+    if not entry.insert_id:
+        return None
+    return EventEnvelope(
+        request_id=entry.insert_id,
+        timestamp=entry.timestamp.isoformat(),
+        identity_details=entry.identity_details,
+        model=AIModel(
+            id=entry.model_path,
+            name=entry.model,
+            provider=entry.publisher,
+            raw_model_id=entry.model_path,
+        ),
+        parsed_as=PARSED_AS_AUDIT,
+    )
 
 
 def vertex_envelope(entry: Entry) -> EventEnvelope | None:
