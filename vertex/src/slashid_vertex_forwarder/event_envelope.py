@@ -124,6 +124,7 @@ def vertex_audit_only_envelope(audit: AuditEntry) -> EventEnvelope | None:
         ),
         parsed_as=PARSED_AS_AUDIT,
         is_error=audit.is_error,
+        user_agent=audit.user_agent,
     )
 
 
@@ -161,4 +162,5 @@ def vertex_envelope(entry: Entry) -> EventEnvelope | None:
         ),
         tokens=tokens,
         parsed_as=PARSED_AS_GOOGLE,
+        user_agent=entry.user_agent,
     )

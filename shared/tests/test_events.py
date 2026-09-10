@@ -1288,3 +1288,43 @@ async def test_build_event_from_normalized_is_error_overrides_stop_reason() -> N
     )
     # Fixture normalized has stop_reason="end_turn"; is_error wins.
     assert event.stop_reason == "error"
+
+
+def test_build_sparse_event_passes_user_agent_through() -> None:
+    """``user_agent`` is top-level on the wire event (a property of the
+    request, not the principal) and threads through the sparse builder."""
+    env = _sparse_envelope().model_copy(update={"user_agent": "curl/8.5.0,gzip(gfe)"})
+    event = build_sparse_event(env, config=_config())
+    assert event.user_agent == "curl/8.5.0,gzip(gfe)"
+
+
+def test_build_sparse_event_user_agent_defaults_none() -> None:
+    """Sources that carry no user agent (Bedrock MIL) leave it null."""
+    assert build_sparse_event(_sparse_envelope(), config=_config()).user_agent is None
+
+
+async def test_build_event_from_normalized_passes_user_agent_through() -> None:
+    record = _mil_record()
+    env = _envelope(record).model_copy(update={"user_agent": "google-cloud-sdk/1.2.3"})
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        env,
+        config=_config(),
+    )
+    assert event.user_agent == "google-cloud-sdk/1.2.3"
+
+
+def test_aws_identity_mfa_authenticated_is_tristate_placeholder() -> None:
+    """``mfa_authenticated`` is a placeholder until a MIL x CloudTrail
+    join lands. Tri-state: ``None`` means "not observed", distinct from
+    an observed ``False``. ``exclude_none`` keeps it off the wire while
+    unpopulated."""
+    ident = AWSIdentityDetails(principal_arn="arn:aws:iam::123456789012:user/alice")
+    assert ident.mfa_authenticated is None
+    assert "mfa_authenticated" not in ident.model_dump(mode="json", exclude_none=True)
+
+    observed_false = AWSIdentityDetails(
+        principal_arn="arn:aws:iam::123456789012:user/alice",
+        mfa_authenticated=False,
+    )
+    assert observed_false.model_dump(mode="json", exclude_none=True)["mfa_authenticated"] is False

@@ -543,6 +543,7 @@ def _mk_audit(
     principal_subject: str | None = "user:alice@example.com",
     oauth_client_id: str | None = "32555940559.apps.googleusercontent.com",
     delegation: list[dict[str, str]] | None = None,
+    user_agent: str | None = None,
 ):
     if delegation is None:
         delegation = []
@@ -552,6 +553,7 @@ def _mk_audit(
         timestamp=timestamp,
         resource_name=f"projects/p/locations/{region}/{model}",
         method_name=method,
+        user_agent=user_agent,
         effective_principal_email=principal_email,
         effective_principal_subject=principal_subject,
         effective_oauth_client_id=oauth_client_id,
@@ -1065,3 +1067,58 @@ def test_resolve_identity_audit_entries_out_of_order_still_works() -> None:
     audit_entries = sorted([a1, a2, outside_early, outside_late], key=lambda x: x.timestamp)
     result = _resolve_identity(entry, audit_entries)
     assert result.credential_chain is not None
+
+
+def test_resolve_user_agent_no_candidates_returns_none() -> None:
+    """No matching audit entry in window -> no user agent to attribute."""
+    from slashid_vertex_forwarder.event_source import _resolve_user_agent
+
+    assert _resolve_user_agent(_mk_entry(), []) is None
+
+
+def test_resolve_user_agent_single_candidate() -> None:
+    """One matching audit entry -> its user agent, joined onto the BQ row.
+    BQ payload rows carry no user-agent of their own; it comes entirely
+    from the correlation join."""
+    from slashid_vertex_forwarder.event_source import _predict_audit_ts, _resolve_user_agent
+
+    entry = _mk_entry()
+    audit = _mk_audit(timestamp=_predict_audit_ts(entry), user_agent="curl/8.5.0,gzip(gfe)")
+    assert _resolve_user_agent(entry, [audit]) == "curl/8.5.0,gzip(gfe)"
+
+
+def test_resolve_user_agent_agreeing_candidates() -> None:
+    """Two candidates reporting the same client -> that client."""
+    from slashid_vertex_forwarder.event_source import _predict_audit_ts, _resolve_user_agent
+
+    entry = _mk_entry()
+    predicted = _predict_audit_ts(entry)
+    a1 = _mk_audit(timestamp=predicted - timedelta(milliseconds=10), user_agent="google-cloud-sdk")
+    a2 = _mk_audit(timestamp=predicted + timedelta(milliseconds=10), user_agent="google-cloud-sdk")
+    assert _resolve_user_agent(entry, [a1, a2]) == "google-cloud-sdk"
+
+
+def test_resolve_user_agent_disagreeing_candidates_returns_none() -> None:
+    """Multi-tenant ambiguity: two different callers hit the same model +
+    method inside the correlation window. Rather than attributing one
+    caller's client to the other's invocation, collapse to None — same
+    rule the credential chain uses."""
+    from slashid_vertex_forwarder.event_source import _predict_audit_ts, _resolve_user_agent
+
+    entry = _mk_entry()
+    predicted = _predict_audit_ts(entry)
+    a1 = _mk_audit(timestamp=predicted - timedelta(milliseconds=10), user_agent="curl/8.5.0")
+    a2 = _mk_audit(timestamp=predicted + timedelta(milliseconds=10), user_agent="google-cloud-sdk")
+    assert _resolve_user_agent(entry, [a1, a2]) is None
+
+
+def test_resolve_user_agent_mixed_none_and_populated_returns_none() -> None:
+    """``None`` counts as a value — a candidate with no user agent
+    disagreeing with one that has it is still disagreement."""
+    from slashid_vertex_forwarder.event_source import _predict_audit_ts, _resolve_user_agent
+
+    entry = _mk_entry()
+    predicted = _predict_audit_ts(entry)
+    a1 = _mk_audit(timestamp=predicted - timedelta(milliseconds=10), user_agent="curl/8.5.0")
+    a2 = _mk_audit(timestamp=predicted + timedelta(milliseconds=10), user_agent=None)
+    assert _resolve_user_agent(entry, [a1, a2]) is None

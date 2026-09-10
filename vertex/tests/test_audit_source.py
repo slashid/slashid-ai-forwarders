@@ -236,3 +236,40 @@ def test_audit_entry_is_error_true_when_status_code_nonzero() -> None:
     )
     assert a.status_code == 9
     assert a.is_error is True
+
+
+def test_audit_entry_extracts_caller_supplied_user_agent() -> None:
+    """``requestMetadata.callerSuppliedUserAgent`` is a standard
+    ``google.cloud.audit.AuditLog`` field, present on every Vertex audit
+    entry regardless of method."""
+    a = AuditEntry.model_validate(
+        {
+            "insertId": "ua-1",
+            "timestamp": datetime(2026, 9, 10, 12, 0, 0, tzinfo=UTC),
+            "payload": {
+                "resourceName": "projects/p/locations/r/publishers/google/models/gemini-2.5-flash",
+                "methodName": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+                "requestMetadata": {
+                    "callerIp": "203.0.113.7",
+                    "callerSuppliedUserAgent": "curl/8.5.0,gzip(gfe)",
+                },
+            },
+        }
+    )
+    assert a.user_agent == "curl/8.5.0,gzip(gfe)"
+
+
+def test_audit_entry_user_agent_absent_is_none() -> None:
+    """No ``requestMetadata`` block → ``user_agent`` stays None rather
+    than raising."""
+    a = AuditEntry.model_validate(
+        {
+            "insertId": "ua-2",
+            "timestamp": datetime(2026, 9, 10, 12, 0, 0, tzinfo=UTC),
+            "payload": {
+                "resourceName": "projects/p/locations/r/publishers/google/models/gemini-2.5-flash",
+                "methodName": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+            },
+        }
+    )
+    assert a.user_agent is None

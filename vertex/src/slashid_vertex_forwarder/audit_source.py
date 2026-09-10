@@ -85,6 +85,13 @@ class AuditEntry(BaseModel):
         default_factory=list,
         validation_alias=AliasPath("payload", "authenticationInfo", "serviceAccountDelegationInfo"),
     )
+    # Client that issued the call, as Vertex recorded it. Present on
+    # every Cloud Audit Log entry (standard ``google.cloud.audit.AuditLog``
+    # field, not method-specific) — e.g. ``"curl/8.5.0,gzip(gfe)"``.
+    user_agent: str | None = Field(
+        default=None,
+        validation_alias=AliasPath("payload", "requestMetadata", "callerSuppliedUserAgent"),
+    )
     # gRPC status code on ``protoPayload.status``. Absent (whole
     # ``status`` object empty) on success, so the default of 0 covers
     # both "missing" and "explicitly OK". Non-zero → server-side error.
