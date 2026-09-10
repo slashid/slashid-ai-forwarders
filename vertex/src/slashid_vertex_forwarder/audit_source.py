@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pydantic import AliasPath, BaseModel, ConfigDict, Field
+from slashid_ai_forwarder_core.events import GCPCredential
 
 if TYPE_CHECKING:
     from google.cloud.logging import Client as LoggingClient
@@ -146,3 +147,33 @@ def query_audit_entries(
             order_by="timestamp asc",
         )
     ]
+
+
+def _credential_chain(a: AuditEntry) -> list[GCPCredential]:
+    """Reconstruct the full credential chain from one audit entry:
+    delegation hops (root at [0]) + effective principal (at [-1]).
+
+    ``oauth_client_id`` from ``authenticationInfo.oauthInfo`` describes
+    the token that authenticated THIS request — that's the effective
+    credential (chain[-1]). For non-impersonated calls chain[0] ==
+    chain[-1] so both interpretations coincide; for impersonated calls
+    the value uniquely identifies the effective SA's OAuth flow (a
+    numeric ID for SA-issued tokens, or the CLI's registered client ID
+    for direct user calls). The audit log does not preserve the
+    ROOT's OAuth flow across impersonation hops, so ``chain[0]``
+    remains oauth-less."""
+    chain = [
+        GCPCredential(
+            principal_email=hop.first_party_email,
+            principal_subject=hop.principal_subject,
+        )
+        for hop in a.delegation_chain
+    ]
+    chain.append(
+        GCPCredential(
+            principal_email=a.effective_principal_email,
+            principal_subject=a.effective_principal_subject,
+            oauth_client_id=a.effective_oauth_client_id,
+        )
+    )
+    return chain

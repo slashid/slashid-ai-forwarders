@@ -579,7 +579,7 @@ def test_consensus_disagrees_returns_none() -> None:
 def test_credential_chain_length_1_from_direct_user() -> None:
     """Direct user call: chain=[effective], oauth lands on the single entry
     (which is both root and effective)."""
-    from slashid_vertex_forwarder.event_source import _credential_chain
+    from slashid_vertex_forwarder.audit_source import _credential_chain
 
     a = _mk_audit(timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC))
     chain = _credential_chain(a)
@@ -595,7 +595,7 @@ def test_credential_chain_length_2_from_impersonation_1_hop() -> None:
     — that's the effective credential's OAuth flow, on chain[-1]. The
     root's OAuth flow is not preserved in the audit log across
     impersonation hops."""
-    from slashid_vertex_forwarder.event_source import _credential_chain
+    from slashid_vertex_forwarder.audit_source import _credential_chain
 
     a = _mk_audit(
         timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
@@ -616,7 +616,7 @@ def test_credential_chain_length_2_from_impersonation_1_hop() -> None:
 
 
 def test_credential_chain_length_3_from_2_hop_impersonation() -> None:
-    from slashid_vertex_forwarder.event_source import _credential_chain
+    from slashid_vertex_forwarder.audit_source import _credential_chain
 
     a = _mk_audit(
         timestamp=datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
@@ -645,7 +645,7 @@ def test_credential_chain_attaches_oauth_only_to_effective() -> None:
     impersonation chains, oauth lands on chain[-1] only; chain[0]
     stays oauth-less because the audit log doesn't preserve the root's
     OAuth flow across impersonation hops."""
-    from slashid_vertex_forwarder.event_source import _credential_chain
+    from slashid_vertex_forwarder.audit_source import _credential_chain
 
     # Direct call: chain[-1] == chain[0] carries oauth.
     a_direct = _mk_audit(

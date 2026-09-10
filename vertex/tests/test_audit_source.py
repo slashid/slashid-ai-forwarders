@@ -155,3 +155,34 @@ def test_query_audit_entries_builds_filter_and_calls_client() -> None:
     assert 'protoPayload.resourceName:"/locations/us-central1/"' in filter_str
     assert kwargs["order_by"] == "timestamp asc"
     assert kwargs["resource_names"] == ["projects/p"]
+
+
+def test_credential_chain_single_credential_from_direct_user() -> None:
+    """Direct user (no impersonation) → single credential in chain.
+
+    Co-located here in ``test_audit_source`` after ``_credential_chain``
+    moved out of ``event_source.py``; the exhaustive
+    length-2/length-3/oauth-handling coverage lives in
+    ``test_bq_event_source`` alongside ``_consensus_chain``.
+    """
+    from slashid_vertex_forwarder.audit_source import AuditEntry, _credential_chain
+
+    audit = AuditEntry.model_validate(
+        {
+            "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+            "payload": {
+                "authenticationInfo": {
+                    "principalEmail": "user@example.com",
+                    "principalSubject": "user:user@example.com",
+                    "oauthInfo": {
+                        "oauthClientId": "764086051850-abc.apps.googleusercontent.com"
+                    },
+                },
+            },
+        }
+    )
+    chain = _credential_chain(audit)
+    assert len(chain) == 1
+    assert chain[0].principal_email == "user@example.com"
+    assert chain[0].principal_subject == "user:user@example.com"
+    assert chain[0].oauth_client_id == "764086051850-abc.apps.googleusercontent.com"
