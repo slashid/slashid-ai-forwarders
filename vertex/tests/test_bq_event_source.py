@@ -165,9 +165,9 @@ def test_fetch_with_checkpoint_binds_where_params() -> None:
     q = client.calls[0].query
     # Checkpoint clause is now paren-wrapped so it can AND with the
     # optional audit-buffer cutoff.
-    assert "WHERE (logging_time > @last_time" in q
+    assert "WHERE (logging_time > @cp_ts" in q
     param_names = {p.name for p in client.calls[0].parameters}
-    assert param_names == {"limit", "last_time", "last_req"}
+    assert param_names == {"limit", "cp_ts", "cp_id"}
 
 
 def test_fetch_ordering_clause() -> None:
@@ -244,8 +244,8 @@ def test_entry_checkpoint_property_reflects_row() -> None:
     src, _ = _source(rows=[_row(request_id=42)])
     entry = src.fetch(Checkpoint(None, None))[0]
     cp = entry.checkpoint
-    assert cp.last_request_id == "42"
-    assert cp.last_logging_time == datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
+    assert cp.id == "42"
+    assert cp.timestamp == datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
 
 
 def test_fetch_accepts_stream_generate_content_row() -> None:

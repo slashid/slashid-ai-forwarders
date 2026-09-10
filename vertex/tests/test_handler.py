@@ -135,8 +135,8 @@ def test_run_tick_passes_current_checkpoint_to_source(
 ) -> None:
     """The source must receive the loaded checkpoint (not a fresh empty one)."""
     starting = Checkpoint(
-        last_logging_time=datetime(2026, 9, 1, tzinfo=UTC),
-        last_request_id="prev",
+        timestamp=datetime(2026, 9, 1, tzinfo=UTC),
+        id="prev",
     )
     source = _FakeSource([])
     store = _FakeStore(initial=starting)

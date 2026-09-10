@@ -10,10 +10,9 @@ The abstraction (``EventSource`` protocol + ``Entry`` dataclass) keeps
 the handler loop source-agnostic — a later phase can swap in a joined
 BQ view or a Pub/Sub push subscription behind the same interface.
 
-Checkpoint format: ``(last_logging_time, last_request_id)``. The BQ
-query filters ``logging_time > last_logging_time`` OR (equal AND
-``request_id > last_request_id``). Boundary collisions are safe — the
-server dedupes on ``request_id``.
+Checkpoint format: ``(timestamp, id)``. The BQ query filters
+``logging_time > timestamp`` OR (equal AND ``request_id > id``).
+Boundary collisions are safe — the server dedupes on ``request_id``.
 """
 
 from __future__ import annotations
@@ -147,15 +146,15 @@ def _resolve_identity(row: Entry, audit_entries: list[AuditEntry]) -> GCPIdentit
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """The polling watermark — ``(logging_time, request_id)`` of the
-    last processed row across every logged model.
+    """The polling watermark — ``(timestamp, id)`` of the last processed
+    entry. Universal across event sources.
 
-    ``last_logging_time = None`` means "no rows seen yet"; fetch pulls
-    every row up to the batch bound.
+    ``timestamp = None`` means "no entries seen yet"; the source fetches
+    every entry up to its batch bound.
     """
 
-    last_logging_time: datetime | None
-    last_request_id: str | None
+    timestamp: datetime | None
+    id: str | None
 
 
 @dataclass
@@ -197,8 +196,8 @@ class Entry:
     def checkpoint(self) -> Checkpoint:
         """Checkpoint pointing at this entry — save after successful push."""
         return Checkpoint(
-            last_logging_time=self.logging_time,
-            last_request_id=self.request_id,
+            timestamp=self.logging_time,
+            id=self.request_id,
         )
 
 
@@ -332,17 +331,17 @@ class BqEventSource:
             bigquery.ScalarQueryParameter("limit", "INT64", self._max_rows_per_tick),
         ]
         where_clauses: list[str] = []
-        if checkpoint.last_logging_time is not None and checkpoint.last_request_id is not None:
+        if checkpoint.timestamp is not None and checkpoint.id is not None:
             where_clauses.append(
-                "(logging_time > @last_time "
-                "OR (logging_time = @last_time AND CAST(request_id AS STRING) > @last_req))"
+                "(logging_time > @cp_ts "
+                "OR (logging_time = @cp_ts AND CAST(request_id AS STRING) > @cp_id))"
             )
             params.extend(
                 [
                     bigquery.ScalarQueryParameter(
-                        "last_time", "TIMESTAMP", checkpoint.last_logging_time
+                        "cp_ts", "TIMESTAMP", checkpoint.timestamp
                     ),
-                    bigquery.ScalarQueryParameter("last_req", "STRING", checkpoint.last_request_id),
+                    bigquery.ScalarQueryParameter("cp_id", "STRING", checkpoint.id),
                 ]
             )
         if self._audit_buffer_seconds > 0:
