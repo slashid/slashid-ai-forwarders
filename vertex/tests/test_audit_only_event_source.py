@@ -359,6 +359,53 @@ def test_fetch_captures_errored_google_call_as_audit_event() -> None:
     assert next_cp == Checkpoint(timestamp=t1, id="err-gem-1")
 
 
+def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> None:
+    """Vertex Anthropic ``rawPredict`` audit entries carry
+    ``@YYYYMMDD`` version suffixes on the resource_name:
+    ``.../publishers/anthropic/models/claude-sonnet-4-5@20250929``.
+    The catalog / ``observed_models`` entries are bare
+    (``anthropic/claude-sonnet-4-5``). Match must succeed on the bare
+    form and the wire event must carry the version separately.
+
+    Reproduces final-QA smoke miss on strong-hue-507702-k7 where NG1
+    (anthropic rawPredict 400 at 15:19:54) was dropped by the
+    allowlist because the parser returned ``claude-sonnet-4-5@20250929``
+    while the allowlist held ``claude-sonnet-4-5`` bare.
+    """
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    t1 = datetime(2026, 9, 10, 15, 19, 54, tzinfo=UTC)
+    fake_client = _FakeLoggingClient(
+        [
+            _fake_log_entry(
+                insert_id="ng1-err",
+                timestamp=t1,
+                resource_name=(
+                    "projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5@20250929"
+                ),
+                status={"code": 9, "message": "not servable in region"},
+            ),
+        ]
+    )
+    source = AuditOnlyEventSource(
+        logging_client=fake_client,
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        region="r",
+        observed_models=["anthropic/claude-sonnet-4-5"],  # bare — as the catalog ships
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, _ = source.fetch()
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.model.provider == "anthropic"
+    assert ev.model.name == "claude-sonnet-4-5"
+    assert ev.model.version == "20250929"
+    assert ev.model.id == "publishers/anthropic/models/claude-sonnet-4-5@20250929"
+    assert ev.stop_reason == "error"
+
+
 def test_commit_saves_to_checkpoint_store() -> None:
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 
