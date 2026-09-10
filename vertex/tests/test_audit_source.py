@@ -192,9 +192,7 @@ def test_credential_chain_single_credential_from_direct_user() -> None:
                 "authenticationInfo": {
                     "principalEmail": "user@example.com",
                     "principalSubject": "user:user@example.com",
-                    "oauthInfo": {
-                        "oauthClientId": "764086051850-abc.apps.googleusercontent.com"
-                    },
+                    "oauthInfo": {"oauthClientId": "764086051850-abc.apps.googleusercontent.com"},
                 },
             },
         }

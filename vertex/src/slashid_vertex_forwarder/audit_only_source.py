@@ -75,10 +75,7 @@ def query_audit_only_entries(
     if checkpoint.timestamp is not None and checkpoint.id is not None:
         cp_ts = json.dumps(checkpoint.timestamp.isoformat())
         cp_id = json.dumps(checkpoint.id)
-        parts.append(
-            f"(timestamp>{cp_ts} "
-            f"OR (timestamp={cp_ts} AND insertId>{cp_id}))"
-        )
+        parts.append(f"(timestamp>{cp_ts} OR (timestamp={cp_ts} AND insertId>{cp_id}))")
     filter_ = " AND ".join(parts)
     return [
         AuditEntry.from_log_entry(e)
@@ -187,9 +184,7 @@ class AuditOnlyEventSource:
         successful wire push."""
         self._checkpoint_store.save(checkpoint)
 
-    async def _build_events(
-        self, envelopes: list[EventEnvelope]
-    ) -> list[AIInvocationObservedV1]:
+    async def _build_events(self, envelopes: list[EventEnvelope]) -> list[AIInvocationObservedV1]:
         """Turn a list of envelopes into final wire events.
 
         Audit-only events carry no invocation shape — the canonical

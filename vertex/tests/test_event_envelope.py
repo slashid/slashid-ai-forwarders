@@ -266,22 +266,21 @@ def test_vertex_audit_only_envelope_populates_sparse_wire_shape() -> None:
         vertex_audit_only_envelope,
     )
 
-    resource_name = (
-        "projects/p/locations/us-central1"
-        "/publishers/anthropic/models/claude-sonnet-4-5"
-    )
-    audit = AuditEntry.model_validate({
-        "insertId": "log-xyz",
-        "timestamp": datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
-        "payload": {
-            "resourceName": resource_name,
-            "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
-            "authenticationInfo": {
-                "principalEmail": "user@example.com",
-                "oauthInfo": {"oauthClientId": "abc"},
+    resource_name = "projects/p/locations/us-central1/publishers/anthropic/models/claude-sonnet-4-5"
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "log-xyz",
+            "timestamp": datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC),
+            "payload": {
+                "resourceName": resource_name,
+                "methodName": "google.cloud.aiplatform.v1.PredictionService.RawPredict",
+                "authenticationInfo": {
+                    "principalEmail": "user@example.com",
+                    "oauthInfo": {"oauthClientId": "abc"},
+                },
             },
-        },
-    })
+        }
+    )
     env = vertex_audit_only_envelope(audit)
     assert env is not None
     assert env.request_id == "log-xyz"
@@ -305,13 +304,15 @@ def test_vertex_audit_only_envelope_drops_when_insert_id_empty() -> None:
     from slashid_vertex_forwarder.audit_source import AuditEntry
     from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
 
-    audit = AuditEntry.model_validate({
-        "insertId": "",
-        "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
-        "payload": {
-            "resourceName": "projects/p/locations/r/publishers/anthropic/models/x",
-        },
-    })
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "",
+            "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+            "payload": {
+                "resourceName": "projects/p/locations/r/publishers/anthropic/models/x",
+            },
+        }
+    )
     assert vertex_audit_only_envelope(audit) is None
 
 
@@ -319,11 +320,13 @@ def test_vertex_audit_only_envelope_drops_when_resource_name_unparseable() -> No
     from slashid_vertex_forwarder.audit_source import AuditEntry
     from slashid_vertex_forwarder.event_envelope import vertex_audit_only_envelope
 
-    audit = AuditEntry.model_validate({
-        "insertId": "log-xyz",
-        "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
-        "payload": {"resourceName": "not-a-vertex-path"},
-    })
+    audit = AuditEntry.model_validate(
+        {
+            "insertId": "log-xyz",
+            "timestamp": datetime(2026, 9, 9, tzinfo=UTC),
+            "payload": {"resourceName": "not-a-vertex-path"},
+        }
+    )
     assert vertex_audit_only_envelope(audit) is None
 
 

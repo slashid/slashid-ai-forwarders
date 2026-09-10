@@ -392,9 +392,7 @@ def test_fetch_accepts_stream_generate_content_row() -> None:
             "totalTokenCount": 53,
         },
     }
-    src, _, _ = _source(
-        rows=[_row(request_payload=stream_req, response_payload=stream_resp)]
-    )
+    src, _, _ = _source(rows=[_row(request_payload=stream_req, response_payload=stream_resp)])
     envelopes, _cp = src.fetch()
     assert len(envelopes) == 1
 

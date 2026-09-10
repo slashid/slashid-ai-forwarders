@@ -49,9 +49,7 @@ def _log_event(event: AIInvocationObservedV1) -> None:
     log.info("event: %s", json.dumps(redacted, separators=(",", ":")))
 
 
-async def _push_events(
-    events: Sequence[AIInvocationObservedV1], config: Config
-) -> int:
+async def _push_events(events: Sequence[AIInvocationObservedV1], config: Config) -> int:
     """Push already-built wire events to the SlashID sink.
 
     Sources deliver fully-formed ``AIInvocationObservedV1`` objects —

@@ -65,7 +65,8 @@ def _sources(config: Config) -> list[EventSource]:
     if config.audit_observed_models:
         audit_source = AuditOnlyEventSource(
             logging_client=gcp_logging.Client(
-                project=config.gcp_project_id, _use_grpc=False,
+                project=config.gcp_project_id,
+                _use_grpc=False,
             ),
             checkpoint_store=FirestoreCheckpointStore(
                 client=firestore_client,

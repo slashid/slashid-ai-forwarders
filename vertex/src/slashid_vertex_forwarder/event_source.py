@@ -381,9 +381,7 @@ class BqEventSource:
             )
             params.extend(
                 [
-                    bigquery.ScalarQueryParameter(
-                        "cp_ts", "TIMESTAMP", checkpoint.timestamp
-                    ),
+                    bigquery.ScalarQueryParameter("cp_ts", "TIMESTAMP", checkpoint.timestamp),
                     bigquery.ScalarQueryParameter("cp_id", "STRING", checkpoint.id),
                 ]
             )
