@@ -59,3 +59,22 @@ def test_endpoint_trailing_slash_stripped(monkeypatch: pytest.MonkeyPatch) -> No
     _env(monkeypatch, SLASHID_ENDPOINT="http://test/")
     cfg = Config()
     assert cfg.endpoint == "http://test"
+
+
+def test_config_audit_observed_models_default_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    cfg = Config()
+    assert cfg.audit_observed_models == []
+    assert cfg.audit_only_checkpoint_document == "checkpoint_audit_only"
+
+
+def test_config_audit_observed_models_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(
+        monkeypatch,
+        SLASHID_AUDIT_OBSERVED_MODELS='["anthropic/claude-sonnet-4-5","meta/llama-3.3-70b-instruct-maas"]',
+    )
+    cfg = Config()
+    assert cfg.audit_observed_models == [
+        "anthropic/claude-sonnet-4-5",
+        "meta/llama-3.3-70b-instruct-maas",
+    ]

@@ -37,6 +37,14 @@ class Config(BaseConfig):
     # to land before we join. Default 30s covers p99+ of audit lag.
     # See identity-correlation phase design doc.
     audit_buffer_seconds: int = 30
+    # Non-Google publisher/model pairs to observe via audit logs.
+    # Empty list disables AuditOnlyEventSource at wiring time.
+    audit_observed_models: list[str] = Field(default_factory=list)
+    # Firestore document for the audit-only source's checkpoint.
+    # Must differ from ``firestore_checkpoint_document`` (BQ side).
+    audit_only_checkpoint_document: str = Field(
+        default="checkpoint_audit_only", min_length=1,
+    )
 
 
 @cache
