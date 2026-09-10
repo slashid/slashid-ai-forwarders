@@ -27,6 +27,7 @@ def _audit_log_entry(
     principal_subject: str | None = "user:alice@example.com",
     oauth_client_id: str | None = "32555940559.apps.googleusercontent.com",
     delegation: list[dict] | None = None,
+    status: dict | None = None,
 ):
     payload: dict = {
         "resourceName": resource_name,
@@ -42,6 +43,8 @@ def _audit_log_entry(
         ai["oauthInfo"] = {"oauthClientId": oauth_client_id}
     if delegation is not None:
         ai["serviceAccountDelegationInfo"] = delegation
+    if status is not None:
+        payload["status"] = status
 
     entry = MagicMock()
     entry.insert_id = ""
@@ -202,3 +205,34 @@ def test_credential_chain_single_credential_from_direct_user() -> None:
     assert chain[0].principal_email == "user@example.com"
     assert chain[0].principal_subject == "user:user@example.com"
     assert chain[0].oauth_client_id == "764086051850-abc.apps.googleusercontent.com"
+
+
+def test_audit_entry_is_error_defaults_false_when_status_absent() -> None:
+    """Successful audit entries have ``status: {}`` (or omit ``status``
+    entirely). ``is_error`` must be False in both cases.
+    """
+    ts = datetime(2026, 9, 10, 12, 0, 0, tzinfo=UTC)
+    a = AuditEntry.from_log_entry(_audit_log_entry(timestamp=ts, status=None))
+    assert a.status_code == 0
+    assert a.is_error is False
+
+    a2 = AuditEntry.from_log_entry(_audit_log_entry(timestamp=ts, status={}))
+    assert a2.status_code == 0
+    assert a2.is_error is False
+
+
+def test_audit_entry_is_error_true_when_status_code_nonzero() -> None:
+    """Errored audit entry from strong-hue-507702-k7 smoke: OpenAI
+    ``gpt-oss-120b-maas`` called via ``:rawPredict`` returned gRPC
+    status code 9 (FAILED_PRECONDITION) with message "OpenMaaS model
+    is not allowed to be called from this method."
+    """
+    ts = datetime(2026, 9, 10, 12, 0, 0, tzinfo=UTC)
+    a = AuditEntry.from_log_entry(
+        _audit_log_entry(
+            timestamp=ts,
+            status={"code": 9, "message": "OpenMaaS model is not allowed…"},
+        )
+    )
+    assert a.status_code == 9
+    assert a.is_error is True

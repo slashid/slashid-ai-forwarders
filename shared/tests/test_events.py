@@ -26,6 +26,7 @@ from slashid_ai_forwarder_core.events import (
     GCPIdentityDetails,
     _strip_empty_top,
     build_event_from_normalized,
+    build_sparse_event,
     parse_tool_name,
     redact_for_logging,
 )
@@ -1231,3 +1232,59 @@ async def test_gcp_identity_details_discriminated_union_still_works() -> None:
     )
     assert isinstance(ev.identity_details, GCPIdentityDetails)
     assert ev.identity_details.credential_chain is None
+
+
+def _sparse_envelope(*, is_error: bool = False) -> EventEnvelope:
+    """Minimal envelope for the sparse-builder / is_error tests below."""
+    return EventEnvelope(
+        request_id="r1",
+        timestamp="2026-09-10T12:00:00+00:00",
+        identity_details=GCPIdentityDetails(),
+        model=AIModel(
+            id="publishers/openai/models/gpt-oss-120b-maas",
+            raw_model_id="publishers/openai/models/gpt-oss-120b-maas",
+        ),
+        parsed_as="vertex-audit",
+        is_error=is_error,
+    )
+
+
+def test_build_sparse_event_all_conversation_fields_none() -> None:
+    """``build_sparse_event`` carries envelope fields through and leaves
+    every conversation-shaped field ``None`` — no ``NormalizedInvocation``
+    involved, no post-hoc nulling."""
+    event = build_sparse_event(_sparse_envelope(), config=_config())
+    assert event.request_id == "r1"
+    assert event.parsed_as == "vertex-audit"
+    assert event.stop_reason is None
+    assert event.input is None
+    assert event.output is None
+    assert event.used_tools is None
+    assert event.available_tools is None
+    assert event.available_tool_servers is None
+    assert event.accessed_files is None
+
+
+def test_build_sparse_event_is_error_sets_stop_reason_error() -> None:
+    """Envelope-level error signal → wire ``stop_reason="error"``."""
+    event = build_sparse_event(_sparse_envelope(is_error=True), config=_config())
+    assert event.stop_reason == "error"
+    # Other semantic fields still None.
+    assert event.input is None
+    assert event.output is None
+
+
+async def test_build_event_from_normalized_is_error_overrides_stop_reason() -> None:
+    """Even with a normalized invocation that carries a non-error
+    ``stop_reason``, an errored envelope forces ``stop_reason="error"``.
+    An errored request has no legit ``end_turn`` etc."""
+    record = _mil_record()
+    envelope = _envelope(record)
+    envelope_error = envelope.model_copy(update={"is_error": True})
+    event = await build_event_from_normalized(
+        await converse_dict_to_normalized(record, config=_config()),
+        envelope_error,
+        config=_config(),
+    )
+    # Fixture normalized has stop_reason="end_turn"; is_error wins.
+    assert event.stop_reason == "error"
