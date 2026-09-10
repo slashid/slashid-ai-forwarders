@@ -1,9 +1,9 @@
 """End-to-end tests for ``handler.run_tick`` — polling loop composition.
 
-Mocks the ``EventSource`` + ``CheckpointStore`` boundaries and captures
-``push_invocations`` calls via monkeypatch (same pattern bedrock uses).
-The pipeline in between (normalize → finalize → build event → push) is
-real; that's the whole point of testing at this layer.
+Mocks the ``EventSource`` boundary and captures ``push_invocations``
+calls via monkeypatch (same pattern bedrock uses). Sources own their
+own checkpoint stores now; the fake source below carries a ``commits``
+list to observe checkpoint saves.
 """
 
 from __future__ import annotations
@@ -12,15 +12,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from slashid_ai_forwarder_core.normalize.gemini.schema import (
-    GeminiRequestBody,
-    GeminiResponse,
+from slashid_ai_forwarder_core.events import (
+    AIInvocationTokens,
+    AIModel,
+    EventEnvelope,
+    GCPIdentityDetails,
 )
 
 from slashid_vertex_forwarder import handler
-from slashid_vertex_forwarder.checkpoint_store import Checkpoint
 from slashid_vertex_forwarder.config import Config
-from slashid_vertex_forwarder.event_source import Entry
+from slashid_vertex_forwarder.event_source import Checkpoint
 
 
 def _config() -> Config:
@@ -32,55 +33,61 @@ def _config() -> Config:
     )
 
 
-def _entry(*, request_id: str = "42") -> Entry:
-    return Entry(
+def _envelope(
+    *,
+    request_id: str = "42",
+    timestamp: datetime | None = None,
+    model_id: str = "publishers/google/models/gemini-2.5-flash",
+    parsed_as: str = "vertex-gemini-generate",
+    input_tokens: int = 5,
+    output_tokens: int = 2,
+) -> EventEnvelope:
+    """Build a minimal ``EventEnvelope`` the way a source would."""
+    ts = timestamp or datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
+    return EventEnvelope(
         request_id=request_id,
-        logging_time=datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC),
-        model_path="publishers/google/models/gemini-2.5-flash",
-        region="us-central1",
-        request_body=GeminiRequestBody.model_validate(
-            {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}
+        timestamp=ts.isoformat(),
+        identity_details=GCPIdentityDetails(),
+        model=AIModel(
+            id=model_id,
+            name="gemini-2.5-flash",
+            provider="google",
+            raw_model_id=model_id,
         ),
-        response_body=GeminiResponse.model_validate(
-            {
-                "candidates": [
-                    {
-                        "content": {"role": "model", "parts": [{"text": "ack"}]},
-                        "finishReason": "STOP",
-                    }
-                ],
-                "usageMetadata": {
-                    "promptTokenCount": 5,
-                    "candidatesTokenCount": 2,
-                    "totalTokenCount": 7,
-                },
-            }
-        ),
-        api_method="GenerateContent",
+        tokens=AIInvocationTokens(input=input_tokens, output=output_tokens),
+        parsed_as=parsed_as,
     )
 
 
 class _FakeSource:
-    def __init__(self, entries: list[Entry]) -> None:
-        self._entries = entries
-        self.fetched_with: list[Checkpoint] = []
+    """Envelope-returning source double.
 
-    def fetch(self, checkpoint: Checkpoint) -> list[Entry]:
-        self.fetched_with.append(checkpoint)
-        return self._entries
+    Captures ``commit`` calls into ``commits`` so tests can assert on
+    checkpoint advancement without a separate ``CheckpointStore`` mock —
+    sources own their store in the new topology.
+    """
 
+    def __init__(
+        self,
+        envelopes: list[EventEnvelope],
+        next_checkpoint: Checkpoint | None,
+        *,
+        raise_on_fetch: Exception | None = None,
+    ) -> None:
+        self._envelopes = envelopes
+        self._next_checkpoint = next_checkpoint
+        self._raise = raise_on_fetch
+        self.commits: list[Checkpoint] = []
+        self.fetch_count = 0
 
-class _FakeStore:
-    def __init__(self, initial: Checkpoint | None = None) -> None:
-        self._current = initial or Checkpoint(None, None)
-        self.saves: list[Checkpoint] = []
+    def fetch(self) -> tuple[list[EventEnvelope], Checkpoint | None]:
+        self.fetch_count += 1
+        if self._raise is not None:
+            raise self._raise
+        return list(self._envelopes), self._next_checkpoint
 
-    def load(self) -> Checkpoint:
-        return self._current
-
-    def save(self, checkpoint: Checkpoint) -> None:
-        self.saves.append(checkpoint)
-        self._current = checkpoint
+    def commit(self, checkpoint: Checkpoint) -> None:
+        self.commits.append(checkpoint)
 
 
 def _install_fake_push(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -94,105 +101,145 @@ def _install_fake_push(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return captured
 
 
-def test_run_tick_pushes_events_and_advances_checkpoint(
+def test_run_tick_pushes_events_and_commits_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    entry = _entry(request_id="42")
-    source = _FakeSource([entry])
-    store = _FakeStore()
+    env = _envelope(request_id="42")
+    cp = Checkpoint(datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC), "42")
+    source = _FakeSource([env], cp)
     captured = _install_fake_push(monkeypatch)
 
-    result = handler.run_tick(source=source, checkpoint_store=store, config=_config())
+    result = handler.run_tick(sources=[source], config=_config())
 
-    assert result == {"events_pushed": 1, "rows_seen": 1}
+    assert result == {"events_pushed": 1, "envelopes_seen": 1}
     assert len(captured["events"]) == 1
     ev = captured["events"][0]
     assert ev.request_id == "42"
     assert ev.parsed_as == "vertex-gemini-generate"
-    # Wire identity_details is the empty GCP shape (v1 punts on correlation).
     assert ev.identity_details.kind == "gcp"
-    # Checkpoint advanced to the last entry.
-    assert store.saves == [entry.checkpoint]
+    assert source.commits == [cp]
 
 
-def test_run_tick_empty_batch_does_not_save_checkpoint(
+def test_run_tick_no_envelopes_no_checkpoint_skips_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No new rows → no checkpoint save, no push."""
-    source = _FakeSource([])
-    store = _FakeStore()
+    """No raw records seen → next_checkpoint is None → no commit."""
+    source = _FakeSource([], None)
     captured = _install_fake_push(monkeypatch)
 
-    result = handler.run_tick(source=source, checkpoint_store=store, config=_config())
+    result = handler.run_tick(sources=[source], config=_config())
 
-    assert result == {"events_pushed": 0, "rows_seen": 0}
+    assert result == {"events_pushed": 0, "envelopes_seen": 0}
     assert captured["events"] == []
-    assert store.saves == []
+    assert source.commits == []
 
 
-def test_run_tick_passes_current_checkpoint_to_source(
+def test_run_tick_commits_when_envelopes_empty_but_checkpoint_advances(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The source must receive the loaded checkpoint (not a fresh empty one)."""
-    starting = Checkpoint(
-        timestamp=datetime(2026, 9, 1, tzinfo=UTC),
-        id="prev",
-    )
-    source = _FakeSource([])
-    store = _FakeStore(initial=starting)
+    """Parse-failure case: fetch returns ([], Checkpoint(t, id)). commit
+    should still be called so the pipeline doesn't loop on broken rows."""
+    cp = Checkpoint(datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC), "raw-only-id")
+    source = _FakeSource([], cp)
     _install_fake_push(monkeypatch)
 
-    handler.run_tick(source=source, checkpoint_store=store, config=_config())
+    handler.run_tick(sources=[source], config=_config())
 
-    assert source.fetched_with == [starting]
+    assert source.commits == [cp]
 
 
-def test_run_tick_batch_advances_to_last_entry_checkpoint(
+def test_run_tick_batch_commits_last_checkpoint_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Multi-row batch: checkpoint jumps to the last row's watermark, not
-    per-row — one save at the end of the batch."""
-    entries = [_entry(request_id="1"), _entry(request_id="2"), _entry(request_id="3")]
-    source = _FakeSource(entries)
-    store = _FakeStore()
+    """Source hands over a batch of envelopes + one final next_checkpoint —
+    handler commits exactly once at that value."""
+    envs = [_envelope(request_id=str(i)) for i in (1, 2, 3)]
+    cp = Checkpoint(datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC), "3")
+    source = _FakeSource(envs, cp)
     captured = _install_fake_push(monkeypatch)
 
-    handler.run_tick(source=source, checkpoint_store=store, config=_config())
+    handler.run_tick(sources=[source], config=_config())
 
     assert len(captured["events"]) == 3
-    assert store.saves == [entries[-1].checkpoint]
+    assert source.commits == [cp]
 
 
-def test_run_tick_skips_checkpoint_save_on_push_failure(
+def test_run_tick_skips_commit_on_push_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If ``push_invocations`` raises, run_tick propagates (Cloud Function
-    returns error) and checkpoint stays at the pre-tick value — next tick
-    reprocesses (server dedupes on request_id)."""
-    entry = _entry(request_id="42")
-    source = _FakeSource([entry])
-    store = _FakeStore()
+    """When push raises, the per-source try/except catches it and
+    ``commit`` is not called — the source's checkpoint stays put and
+    next tick reprocesses (server dedupes on request_id)."""
+    env = _envelope(request_id="42")
+    cp = Checkpoint(datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC), "42")
+    source = _FakeSource([env], cp)
 
     async def _raising_push(*_a: Any, **_kw: Any) -> int:
         raise RuntimeError("upstream 500")
 
     monkeypatch.setattr(handler, "push_invocations", _raising_push)
 
-    with pytest.raises(RuntimeError, match="upstream 500"):
-        handler.run_tick(source=source, checkpoint_store=store, config=_config())
+    # Handler catches per-source — no exception propagates.
+    handler.run_tick(sources=[source], config=_config())
 
-    assert store.saves == []
+    assert source.commits == []
 
 
-def test_run_tick_populates_wire_tokens_from_usage_metadata(
+def test_run_tick_populates_wire_tokens_from_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _FakeSource([_entry()])
-    store = _FakeStore()
+    env = _envelope(input_tokens=5, output_tokens=2)
+    cp = Checkpoint(datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC), "42")
+    source = _FakeSource([env], cp)
     captured = _install_fake_push(monkeypatch)
 
-    handler.run_tick(source=source, checkpoint_store=store, config=_config())
+    handler.run_tick(sources=[source], config=_config())
 
     ev = captured["events"][0]
     assert ev.tokens.input == 5
     assert ev.tokens.output == 2
+
+
+def test_run_tick_dispatches_multiple_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two sources, each with its own envelopes + checkpoint. Handler
+    fetches both, pushes each batch, and commits each source's next
+    checkpoint exactly once."""
+    env_a = _envelope(request_id="a1")
+    env_b1 = _envelope(request_id="b1")
+    env_b2 = _envelope(request_id="b2")
+    cp_a = Checkpoint(datetime(2026, 9, 5, 12, 0, 0, tzinfo=UTC), "a1")
+    cp_b = Checkpoint(datetime(2026, 9, 5, 12, 0, 5, tzinfo=UTC), "b2")
+    src_a = _FakeSource([env_a], cp_a)
+    src_b = _FakeSource([env_b1, env_b2], cp_b)
+    captured = _install_fake_push(monkeypatch)
+
+    result = handler.run_tick(sources=[src_a, src_b], config=_config())
+
+    assert result == {"events_pushed": 3, "envelopes_seen": 3}
+    assert len(captured["events"]) == 3
+    assert src_a.commits == [cp_a]
+    assert src_b.commits == [cp_b]
+    assert src_a.fetch_count == 1
+    assert src_b.fetch_count == 1
+
+
+def test_run_tick_isolates_source_failures(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Source A raises inside fetch; source B's fetch/push/commit still
+    runs. Error is logged; run_tick returns success-side counters only."""
+    env_b = _envelope(request_id="b1")
+    cp_b = Checkpoint(datetime(2026, 9, 5, 12, 0, 5, tzinfo=UTC), "b1")
+    src_a = _FakeSource([], None, raise_on_fetch=RuntimeError("boom"))
+    src_b = _FakeSource([env_b], cp_b)
+    _install_fake_push(monkeypatch)
+
+    with caplog.at_level("ERROR"):
+        result = handler.run_tick(sources=[src_a, src_b], config=_config())
+
+    assert result == {"events_pushed": 1, "envelopes_seen": 1}
+    assert src_a.commits == []
+    assert src_b.commits == [cp_b]
+    assert any("_FakeSource failed this tick" in r.message for r in caplog.records)
