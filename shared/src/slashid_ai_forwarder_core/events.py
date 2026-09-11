@@ -176,6 +176,15 @@ class AWSIdentityDetails(_WireModel):
     kind: Literal["aws"] = "aws"
     principal_arn: str
     access_key_id: str | None = None
+    # Placeholder — not populated by any forwarder yet. Bedrock's Model
+    # Invocation Logging carries only ``arn`` / ``resolved_arn`` /
+    # ``accessKeyId``; the MFA flag lives in CloudTrail
+    # (``userIdentity.sessionContext.attributes.mfaAuthenticated``, a
+    # *string* ``"true"``/``"false"`` on the wire there). Populating it
+    # needs a MIL x CloudTrail join — the AWS analogue of the Vertex
+    # BQ x Cloud-Audit-Log correlation. Tri-state on purpose: ``None``
+    # means "not observed", not "no MFA".
+    mfa_authenticated: bool | None = None
 
 
 class GCPCredential(_WireModel):
@@ -282,6 +291,12 @@ class AIInvocationObservedV1(_WireModel):
     available_tools: list[AITool] | None = None
     used_tools: list[AIToolUse] | None = None
     stop_reason: AIStopReason | None = None
+    # Client that issued the call (Vertex: audit-log
+    # ``requestMetadata.callerSuppliedUserAgent``). ``None`` when the
+    # source doesn't carry it — Bedrock's MIL records have no
+    # user-agent field, so it stays null there until a CloudTrail join
+    # lands.
+    user_agent: str | None = None
     conversation_id: str | None = None
     input: AIInvocationContent | None = None
     output: AIInvocationContent | None = None
@@ -313,6 +328,11 @@ class EventEnvelope(_WireModel):
     model: AIModel
     tokens: AIInvocationTokens = Field(default_factory=AIInvocationTokens)
     parsed_as: str
+    # Client that issued the call, as the vendor recorded it. Top-level
+    # rather than under ``identity_details`` because it describes the
+    # request, not the principal — and it's cross-cloud, whereas the
+    # identity shapes are vendor-specific.
+    user_agent: str | None = None
     # True when the vendor recorded a server-side error for the request
     # (non-zero gRPC status on Cloud Audit Logs, non-2xx HTTP status on
     # BQ payload rows, ``error`` set on Bedrock/Converse). When True the
@@ -525,6 +545,7 @@ async def build_event_from_normalized(
         model=envelope.model,
         tokens=envelope.tokens,
         parsed_as=envelope.parsed_as,
+        user_agent=envelope.user_agent,
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
@@ -573,5 +594,6 @@ def build_sparse_event(
         model=envelope.model,
         tokens=envelope.tokens,
         parsed_as=envelope.parsed_as,
+        user_agent=envelope.user_agent,
         stop_reason="error" if envelope.is_error else None,
     )

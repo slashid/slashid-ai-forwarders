@@ -448,3 +448,30 @@ def test_commit_saves_to_checkpoint_store() -> None:
     cp = Checkpoint(timestamp=datetime(2026, 9, 9, tzinfo=UTC), id="x")
     source.commit(cp)
     assert store.saves == [cp]
+
+
+def test_fetch_propagates_user_agent_to_wire_event() -> None:
+    """Audit-only path reads ``callerSuppliedUserAgent`` straight off the
+    entry — no correlation join needed, the audit entry IS the source."""
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    t1 = datetime(2026, 9, 10, 12, 0, 0, tzinfo=UTC)
+    entry = _fake_log_entry(
+        insert_id="ua-wire",
+        timestamp=t1,
+        resource_name="projects/p/locations/r/publishers/anthropic/models/claude-sonnet-4-5",
+    )
+    entry.payload["requestMetadata"] = {"callerSuppliedUserAgent": "google-cloud-sdk/1.2.3"}
+
+    source = AuditOnlyEventSource(
+        logging_client=_FakeLoggingClient([entry]),
+        checkpoint_store=_FakeCheckpointStore(),
+        project_id="p",
+        regions=["r"],
+        observed_models=["anthropic/claude-sonnet-4-5"],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    events, _ = source.fetch()
+    assert len(events) == 1
+    assert events[0].user_agent == "google-cloud-sdk/1.2.3"

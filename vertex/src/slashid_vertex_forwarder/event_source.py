@@ -105,22 +105,41 @@ def _consensus_chain(
     return result
 
 
-def _resolve_identity(row: Entry, audit_entries: list[AuditEntry]) -> GCPIdentityDetails:
-    """``audit_entries`` MUST be sorted ascending by timestamp — the
+def _audit_candidates(row: Entry, audit_entries: list[AuditEntry]) -> list[AuditEntry]:
+    """Audit entries that could correspond to ``row``.
+
+    ``audit_entries`` MUST be sorted ascending by timestamp — the
     caller queries the log API with ``order_by="timestamp asc"``. We
-    bisect the sorted list to slice the time window in O(log N)."""
+    bisect the sorted list to slice the time window in O(log N), then
+    narrow by method + model path."""
     predicted = _predict_audit_ts(row)
     i = bisect_left(audit_entries, predicted - _WINDOW, key=lambda a: a.timestamp)
     j = bisect_right(audit_entries, predicted + _WINDOW, key=lambda a: a.timestamp)
 
     method_suffix = row.api_method
     resource_suffix = f"/locations/{row.region}/{row.model_path}"
-    candidates = [
+    return [
         a
         for a in audit_entries[i:j]
         if a.method_name.endswith("." + method_suffix) and a.resource_name.endswith(resource_suffix)
     ]
-    return GCPIdentityDetails(credential_chain=_consensus_chain(candidates))
+
+
+def _resolve_identity(row: Entry, audit_entries: list[AuditEntry]) -> GCPIdentityDetails:
+    """Per-field consensus identity across every matching audit entry."""
+    return GCPIdentityDetails(
+        credential_chain=_consensus_chain(_audit_candidates(row, audit_entries))
+    )
+
+
+def _resolve_user_agent(row: Entry, audit_entries: list[AuditEntry]) -> str | None:
+    """The user agent every matching audit entry agrees on.
+
+    Same consensus rule as the credential chain: on multi-tenant
+    ambiguity (two callers hitting the same model + method inside the
+    correlation window) disagreement collapses to ``None`` rather than
+    attributing one caller's client to another's invocation."""
+    return _consensus({a.user_agent for a in _audit_candidates(row, audit_entries)})
 
 
 @dataclass(frozen=True)
@@ -170,6 +189,9 @@ class Entry:
     # (``.endswith(".")`` heuristic) so we don't let it default.
     request_latency_ms: float | None = None
     identity_details: GCPIdentityDetails = field(default_factory=GCPIdentityDetails)
+    # Stamped by the same audit-log join that resolves identity — BQ
+    # payload rows carry no user-agent of their own.
+    user_agent: str | None = None
 
     @property
     def checkpoint(self) -> Checkpoint:
@@ -311,6 +333,7 @@ class BqEventSource:
 
         for row in payload_rows:
             row.identity_details = _resolve_identity(row, audit_entries)
+            row.user_agent = _resolve_user_agent(row, audit_entries)
 
         events = asyncio.run(_gemini_pipeline(payload_rows, self._config))
         return events, next_checkpoint
