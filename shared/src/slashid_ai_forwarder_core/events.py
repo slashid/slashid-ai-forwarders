@@ -190,11 +190,12 @@ class AWSIdentityDetails(_WireModel):
 class GCPCredential(_WireModel):
     """One credential in ``GCPIdentityDetails.credential_chain``.
 
-    Represents either the original credential ([0]) or an impersonation
-    hop leading to the effective principal ([-1]). ``oauth_client_id``
-    is populated only at index 0 when the root credential was
-    OAuth-obtained; impersonated credentials are minted via
-    ``iam.generateAccessToken`` and have no OAuth client.
+    The chain runs root ([0]) → effective principal ([-1]), with any
+    impersonation hops in between. ``oauth_client_id`` is populated on
+    the effective credential ([-1]): the gcloud/ADC client ID for a
+    direct call, the service account's numeric ``uniqueId`` for an
+    impersonated one. Root and intermediate hops are oauth-less — the
+    audit log doesn't preserve the root's OAuth flow across a hop.
     """
 
     principal_email: str | None = None
