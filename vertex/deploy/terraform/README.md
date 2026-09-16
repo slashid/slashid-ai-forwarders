@@ -25,13 +25,13 @@ dataset all live in the one region:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.5"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.6"
 
   project_id         = "customer-project-123456"
   regions            = ["us-central1"]
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-  release_version    = "vertex-v0.1.5"
+  release_version    = "vertex-v0.1.6"
 }
 ```
 
@@ -41,7 +41,7 @@ The CF itself, Firestore, and Cloud Scheduler deploy to `regions[0]`:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.5"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.6"
 
   project_id      = "customer-project-123456"
   regions         = ["us-central1", "europe-west1", "asia-northeast1"]
