@@ -37,7 +37,8 @@ gotchas to plan around. Extend as new ones are discovered.
   forwarder buffer + 60s BQ streaming buffer). Lower the buffer to
   trade identity coverage for lower latency.
 - **Multi-tenant ambiguity yields partial identity.** When two
-  distinct callers hit the same Gemini model + method within ~200ms,
+  distinct callers hit the same Gemini model + method within the
+  correlation window (200-300ms depending on the bucket),
   per-field per-position consensus emits only the fields where every
   candidate agrees. Same user via two OAuth clients →
   `credential_chain[0].principal_email` still emitted, `oauth_client_id`
