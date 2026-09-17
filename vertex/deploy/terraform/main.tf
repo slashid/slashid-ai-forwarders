@@ -31,10 +31,24 @@ locals {
   google_observed = [for m in local.effective_observed_models : m if startswith(m, "google/")]
 
   # The Cloud Function, Firestore, Scheduler, and release bucket all
-  # deploy to the FIRST region in ``var.regions`` — a single physical
-  # home. Vertex regions observed are the full list; deployment region
-  # is a separate concern (where the CF lives, not what it queries).
-  deployment_region = var.regions[0]
+  # deploy to the first NON-GLOBAL region in ``var.regions`` — a single
+  # physical home. ``global`` is a Vertex routing target, not a place
+  # that can host them. Vertex regions observed are the full list;
+  # deployment region is a separate concern (where the CF lives, not
+  # what it queries).
+  deployment_region = [for r in var.regions : r if r != "global"][0]
+
+  # ``global`` has no location of its own, so its dataset lives with the
+  # deployment. Regional entries stay pinned to their own region — a
+  # customer observing ``europe-west1`` has prompt and response bodies
+  # resting there, and consolidating would silently relocate them.
+  dataset_location = { for r in var.regions : r => r == "global" ? local.deployment_region : r }
+
+  # The global endpoint is the unprefixed host; there is no
+  # ``global-aiplatform.googleapis.com``.
+  vertex_host = {
+    for r in var.regions : r => r == "global" ? "aiplatform.googleapis.com" : "${r}-aiplatform.googleapis.com"
+  }
 
   # BQ dataset IDs can't contain ``-``; the CF applies the same
   # transform when deriving dataset names from ``config.gcp_regions``.

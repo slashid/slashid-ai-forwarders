@@ -18,7 +18,7 @@
 resource "google_bigquery_dataset" "reqresp_logs" {
   for_each                   = local.regional_datasets
   dataset_id                 = each.value
-  location                   = each.key
+  location                   = local.dataset_location[each.key]
   delete_contents_on_destroy = false
   description                = "SlashID Vertex forwarder — per-model Vertex request-response logging tables (region ${each.key})."
 
@@ -123,7 +123,7 @@ resource "null_resource" "publisher_model_logging" {
         -H "Authorization: Bearer $(gcloud auth print-access-token)" \
         -H "Content-Type: application/json" \
         --data "$${BODY}" \
-        "https://${each.value.region}-aiplatform.googleapis.com/v1beta1/projects/${var.project_id}/locations/${each.value.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig"
+        "https://${local.vertex_host[each.value.region]}/v1beta1/projects/${var.project_id}/locations/${each.value.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig"
     EOT
   }
 
@@ -132,11 +132,21 @@ resource "null_resource" "publisher_model_logging" {
     interpreter = ["bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
+      # Destroy provisioners can't read locals, only self.triggers, and
+      # adding a ``host`` key would change the triggers map for every
+      # instance — forcing replacement of all (region x model)
+      # null_resources, each one disabling then re-enabling logging.
+      REGION="${self.triggers.region}"
+      if [ "$REGION" = "global" ]; then
+        HOST="aiplatform.googleapis.com"
+      else
+        HOST="$REGION-aiplatform.googleapis.com"
+      fi
       curl -sS --fail-with-body -X POST \
         -H "Authorization: Bearer $(gcloud auth print-access-token)" \
         -H "Content-Type: application/json" \
         --data '{"publisherModelConfig":{"loggingConfig":{"enabled":false,"samplingRate":0}}}' \
-        "https://${self.triggers.region}-aiplatform.googleapis.com/v1beta1/projects/${self.triggers.project}/locations/${self.triggers.region}/publishers/${self.triggers.publisher}/models/${self.triggers.model_id}:setPublisherModelConfig" \
+        "https://$HOST/v1beta1/projects/${self.triggers.project}/locations/$REGION/publishers/${self.triggers.publisher}/models/${self.triggers.model_id}:setPublisherModelConfig" \
       || true
     EOT
   }
