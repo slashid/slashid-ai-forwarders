@@ -1084,7 +1084,8 @@ def test_resolve_user_agent_single_candidate() -> None:
 
     entry = _mk_entry()
     audit = _mk_audit(timestamp=_predict_audit_ts(entry), user_agent="curl/8.5.0,gzip(gfe)")
-    assert _resolve_user_agent(entry, [audit]) == "curl/8.5.0,gzip(gfe)"
+    # GFE marker already stripped by AuditEntry's validator.
+    assert _resolve_user_agent(entry, [audit]) == "curl/8.5.0"
 
 
 def test_resolve_user_agent_agreeing_candidates() -> None:
