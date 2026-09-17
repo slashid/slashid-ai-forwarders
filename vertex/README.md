@@ -44,6 +44,16 @@ gotchas to plan around. Extend as new ones are discovered.
   drops. Two distinct users → identity drops entirely
   (`credential_chain = None`). Rare for single-tenant projects;
   possible in high-QPS multi-tenant deployments.
+- **`locations/global` has no data residency.** Observing `global`
+  (opt-in via the `regions` Terraform variable) captures Console and
+  Vertex AI Studio traffic, but Google routes each request to whichever
+  region has capacity and never discloses which. The payload lands in
+  the BigQuery dataset you chose; where it was *processed* is not
+  knowable. BigQuery also has no `global` location, so that dataset is
+  created in the deployment region rather than alongside the
+  inference — and because dataset location is immutable, reordering
+  `regions` so the deployment region changes destroys and recreates it,
+  losing unprocessed rows.
 - **Per-model logging enrollment.** `setPublisherModelConfig` is scoped
   to one publisher model at a time — no project-wide "log every Vertex
   call" toggle. New models require adding to `observed_models` in the

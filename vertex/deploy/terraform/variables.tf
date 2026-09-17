@@ -14,18 +14,40 @@ variable "regions" {
     single Cloud Function covers them all.
 
     The Cloud Function itself, Firestore database, and Cloud Scheduler
-    all deploy to the FIRST region in the list — that's their
-    physical home. Their regional location doesn't restrict which
+    all deploy to the first NON-GLOBAL region in the list — that's
+    their physical home. Their regional location doesn't restrict which
     Vertex regions are observed; every entry in ``regions`` contributes
     a BigQuery dataset and its own ``setPublisherModelConfig`` call.
 
-    Required — the forwarder needs at least one region.
+    ``global`` is accepted as an entry and observes Vertex's global
+    endpoint, which Cloud Console and Vertex AI Studio target — the
+    clearest "human at the keyboard" traffic, and otherwise invisible.
+    It is opt-in: a deployment that doesn't list it doesn't observe it.
+    Two consequences to accept before adding it:
+
+      - Google routes global requests to whichever region has capacity
+        and never discloses which. There is no data-residency
+        guarantee. A deployment with residency constraints should not
+        be using the global endpoint at all.
+      - BigQuery has no ``global`` location, so global's dataset is
+        created in the deployment region. Reordering ``regions`` such
+        that the deployment region changes would move it, and dataset
+        location is immutable — Terraform would destroy and recreate
+        it, losing any unprocessed rows.
+
+    Required — the forwarder needs at least one region, at least one of
+    which must not be ``global``.
   EOT
   type        = list(string)
 
   validation {
     condition     = length(var.regions) > 0
     error_message = "regions must contain at least one entry."
+  }
+
+  validation {
+    condition     = length([for r in var.regions : r if r != "global"]) > 0
+    error_message = "regions must contain at least one non-global entry: the Cloud Function, Firestore and Scheduler need a region to live in."
   }
 }
 
