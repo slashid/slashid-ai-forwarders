@@ -565,28 +565,45 @@ def _mk_audit(
 
 
 def test_predict_audit_ts_applies_bias_and_latency() -> None:
-    """predicted = logging_time - latency + BIAS(50ms)."""
-    from slashid_vertex_forwarder.event_source import _predict_audit_ts
+    """predicted = logging_time - latency + the bucket's bias."""
+    from slashid_vertex_forwarder.event_source import _REGIONAL, _predict_audit_ts
 
     entry = _mk_entry(
         logging_time=datetime(2026, 9, 9, 12, 0, 3, 0, tzinfo=UTC),
         request_latency_ms=2000.0,
     )
     predicted = _predict_audit_ts(entry)
-    # 12:00:03 - 2s + 50ms = 12:00:01.050
-    assert predicted == datetime(2026, 9, 9, 12, 0, 1, 50000, tzinfo=UTC)
+    assert predicted == datetime(2026, 9, 9, 12, 0, 1, tzinfo=UTC) + _REGIONAL[0]
 
 
 def test_predict_audit_ts_no_latency_defaults_to_bias_only() -> None:
-    """When latency is None, only the +50ms bias is applied."""
-    from slashid_vertex_forwarder.event_source import _predict_audit_ts
+    """When latency is None, only the bias is applied."""
+    from slashid_vertex_forwarder.event_source import _REGIONAL, _predict_audit_ts
 
     entry = _mk_entry(
         logging_time=datetime(2026, 9, 9, 12, 0, 3, 0, tzinfo=UTC),
         request_latency_ms=None,
     )
     predicted = _predict_audit_ts(entry)
-    assert predicted == datetime(2026, 9, 9, 12, 0, 3, 50000, tzinfo=UTC)
+    assert predicted == datetime(2026, 9, 9, 12, 0, 3, tzinfo=UTC) + _REGIONAL[0]
+
+
+def test_correlation_buckets_by_location_and_method() -> None:
+    """Global splits unary from streaming; regional does not."""
+    from slashid_vertex_forwarder.event_source import (
+        _GLOBAL_STREAM,
+        _GLOBAL_UNARY,
+        _REGIONAL,
+        _correlation,
+    )
+
+    def bucket(region: str, api_method: str):
+        return _correlation(_mk_entry(region=region, api_method=api_method))
+
+    assert bucket("us-central1", "GenerateContent") == _REGIONAL
+    assert bucket("us-central1", "StreamGenerateContent") == _REGIONAL
+    assert bucket("global", "GenerateContent") == _GLOBAL_UNARY
+    assert bucket("global", "StreamGenerateContent") == _GLOBAL_STREAM
 
 
 def test_consensus_agrees_returns_value() -> None:
@@ -980,9 +997,11 @@ def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
 
 
 def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> None:
-    """The audit query's ts_range is [min_predicted - _WINDOW, max_predicted
-    + _WINDOW] — computed per row."""
-    from slashid_vertex_forwarder.event_source import _WINDOW, BqEventSource
+    """The audit query's ts_range is the envelope of each row's own
+    predicted timestamp ± that row's window — computed per row."""
+    from slashid_vertex_forwarder.event_source import _REGIONAL, BqEventSource
+
+    bias, window = _REGIONAL
 
     bq_client = MagicMock()
     row1 = _minimal_row(
@@ -1017,8 +1036,8 @@ def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> 
     )
     source.fetch()
     lo, hi = captured[0]
-    assert lo == datetime(2026, 9, 9, 12, 0, 0, 50000, tzinfo=UTC) - _WINDOW
-    assert hi == datetime(2026, 9, 9, 12, 0, 5, 50000, tzinfo=UTC) + _WINDOW
+    assert lo == datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC) + bias - window
+    assert hi == datetime(2026, 9, 9, 12, 0, 5, tzinfo=UTC) + bias + window
 
 
 def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:

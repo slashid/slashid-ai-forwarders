@@ -45,16 +45,36 @@ log = logging.getLogger(__name__)
 
 # --- Identity-correlation join (see identity-correlation design doc) --------
 
-_WINDOW = timedelta(milliseconds=200)
-_BIAS = timedelta(milliseconds=50)  # audit is ~50ms LATER than predicted
+# Correlation offsets, measured over 530 tagged calls on 2026-09-17.
+# The audit entry consistently PRECEDES ``logging_time - latency``, so the
+# bias pulls the prediction forward onto it. Only two factors move the
+# offset: global vs regional routing, and unary vs streaming. Dataset
+# storage region, payload size and model tier were all measured and do
+# not. Windows carry ~100ms of extra slack because the offset drifts
+# across the day by about that much; see ~/vertex-corr-bench.
+_REGIONAL = (timedelta(milliseconds=130), timedelta(milliseconds=200))
+_GLOBAL_STREAM = (timedelta(milliseconds=175), timedelta(milliseconds=250))
+_GLOBAL_UNARY = (timedelta(milliseconds=445), timedelta(milliseconds=300))
+
+
+def _correlation(row: Entry) -> tuple[timedelta, timedelta]:
+    """``(bias, window)`` for ``row``'s bucket.
+
+    Regional traffic uses one pair for both methods — the two differ by
+    less than their own spread. Global does not: a non-streaming global
+    call sits ~270ms further out than a streaming one, enough that a
+    shared bias misses every time."""
+    if row.region != "global":
+        return _REGIONAL
+    return _GLOBAL_STREAM if row.api_method.startswith("Stream") else _GLOBAL_UNARY
 
 
 def _predict_audit_ts(row: Entry) -> datetime:
     """Predicted audit-log timestamp for a BQ payload row: rolls back
-    from ``logging_time`` by ``request_latency_ms`` and adds the fixed
-    +50ms clock/write-skew bias observed in the benchmark."""
+    from ``logging_time`` by ``request_latency_ms`` and applies the
+    bucket's bias."""
     latency = timedelta(milliseconds=row.request_latency_ms or 0)
-    return row.logging_time - latency + _BIAS
+    return row.logging_time - latency + _correlation(row)[0]
 
 
 def _consensus(vals: set[str | None]) -> str | None:
@@ -113,8 +133,9 @@ def _audit_candidates(row: Entry, audit_entries: list[AuditEntry]) -> list[Audit
     bisect the sorted list to slice the time window in O(log N), then
     narrow by method + model path."""
     predicted = _predict_audit_ts(row)
-    i = bisect_left(audit_entries, predicted - _WINDOW, key=lambda a: a.timestamp)
-    j = bisect_right(audit_entries, predicted + _WINDOW, key=lambda a: a.timestamp)
+    window = _correlation(row)[1]
+    i = bisect_left(audit_entries, predicted - window, key=lambda a: a.timestamp)
+    j = bisect_right(audit_entries, predicted + window, key=lambda a: a.timestamp)
 
     method_suffix = row.api_method
     resource_suffix = f"/locations/{row.region}/{row.model_path}"
@@ -324,11 +345,11 @@ class BqEventSource:
             return [], next_checkpoint
 
         # Predict each row's audit timestamp first (bias-corrected), then
-        # take the tight envelope + ±_WINDOW slack. Matches the per-row
+        # take the envelope of each row's own window. Matches the per-row
         # window exactly — everything the filter lets through is a
         # potential candidate for at least one row.
-        predicted = [_predict_audit_ts(r) for r in payload_rows]
-        ts_range = (min(predicted) - _WINDOW, max(predicted) + _WINDOW)
+        spans = [(_predict_audit_ts(r), _correlation(r)[1]) for r in payload_rows]
+        ts_range = (min(p - w for p, w in spans), max(p + w for p, w in spans))
         audit_entries = self._query_audit(ts_range)
 
         for row in payload_rows:
