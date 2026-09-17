@@ -17,15 +17,31 @@ everything else on the LogEntry stays untouched. Delegation info
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from pydantic import AliasPath, BaseModel, ConfigDict, Field
+from pydantic import AliasPath, BaseModel, ConfigDict, Field, field_validator
 from slashid_ai_forwarder_core.events import GCPCredential
 
 if TYPE_CHECKING:
     from google.cloud.logging import Client as LoggingClient
     from google.cloud.logging import LogEntry
+
+
+# Google Front End appends a marker to every caller-supplied
+# User-Agent, once per GFE hop (console traffic shows two). Verified
+# empirically:
+#   - The token is constant, not a negotiated encoding: every
+#     ``Accept-Encoding`` we tried (gzip / br / deflate / identity /
+#     multi-value / header omitted) still yields ``gzip(gfe)``. Hence
+#     the loose ``[\w.-]+`` rather than a ``gzip`` literal — a future
+#     variant is absorbed. No real client puts ``(gfe)`` in its UA.
+#   - The leading comma is a separator, not part of the marker: a
+#     request sending NO User-Agent logs a bare ``gzip(gfe)``. Hence
+#     ``,?`` — without it that case survives the strip and we'd publish
+#     GFE noise as the client's identity.
+_GFE_UA_SUFFIX = re.compile(r"(?:,?[\w.-]+\(gfe\))+$")
 
 
 class DelegationHop(BaseModel):
@@ -92,6 +108,16 @@ class AuditEntry(BaseModel):
         default=None,
         validation_alias=AliasPath("payload", "requestMetadata", "callerSuppliedUserAgent"),
     )
+
+    @field_validator("user_agent", mode="after")
+    @classmethod
+    def _strip_gfe_suffix(cls, v: str | None) -> str | None:
+        """Drop the Google Front End marker so consumers see the client's
+        own User-Agent. Returns None if nothing survives the strip."""
+        if v is None:
+            return None
+        return _GFE_UA_SUFFIX.sub("", v).strip() or None
+
     # gRPC status code on ``protoPayload.status``. Absent (whole
     # ``status`` object empty) on success, so the default of 0 covers
     # both "missing" and "explicitly OK". Non-zero → server-side error.

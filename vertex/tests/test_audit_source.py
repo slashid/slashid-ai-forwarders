@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+import pytest
+
 from slashid_vertex_forwarder.audit_source import (
     AuditEntry,
     query_audit_entries,
@@ -241,7 +243,7 @@ def test_audit_entry_is_error_true_when_status_code_nonzero() -> None:
 def test_audit_entry_extracts_caller_supplied_user_agent() -> None:
     """``requestMetadata.callerSuppliedUserAgent`` is a standard
     ``google.cloud.audit.AuditLog`` field, present on every Vertex audit
-    entry regardless of method."""
+    entry regardless of method. The GFE marker is stripped at ingest."""
     a = AuditEntry.model_validate(
         {
             "insertId": "ua-1",
@@ -256,7 +258,7 @@ def test_audit_entry_extracts_caller_supplied_user_agent() -> None:
             },
         }
     )
-    assert a.user_agent == "curl/8.5.0,gzip(gfe)"
+    assert a.user_agent == "curl/8.5.0"
 
 
 def test_audit_entry_user_agent_absent_is_none() -> None:
@@ -273,3 +275,50 @@ def test_audit_entry_user_agent_absent_is_none() -> None:
         }
     )
     assert a.user_agent is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # Single GFE hop — the common case (376/391 observed entries).
+        ("curl/8.5.0,gzip(gfe)", "curl/8.5.0"),
+        # Two hops — what console/Studio traffic shows (15/391).
+        (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/152.0.0.0 Safari/537.36,gzip(gfe),gzip(gfe)",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/152.0.0.0 Safari/537.36",
+        ),
+        # Hypothetical future variant — the token is matched loosely.
+        ("some-client/2.0,br(gfe)", "some-client/2.0"),
+        ("some-client/2.0,zstd(gfe),gzip(gfe)", "some-client/2.0"),
+        # No suffix at all — untouched.
+        ("plain-client/1.0", "plain-client/1.0"),
+        # Parenthesised client UA must survive; only the (gfe) tail goes.
+        ("Python-urllib/3.12,gzip(gfe)", "Python-urllib/3.12"),
+        # A request sending NO User-Agent logs a bare marker with no
+        # leading comma — observed live. Must still strip to None, or
+        # we publish GFE noise as the client's identity.
+        ("gzip(gfe)", None),
+        # Same, but with the separator present.
+        (",gzip(gfe)", None),
+        # Bare marker, repeated.
+        ("gzip(gfe),gzip(gfe)", None),
+        (None, None),
+    ],
+)
+def test_audit_entry_strips_gfe_user_agent_suffix(raw: str | None, expected: str | None) -> None:
+    """Google Front End appends a constant marker per hop. Verified
+    empirically that the token does not track Accept-Encoding —
+    ``identity`` and an absent header both still yield ``gzip(gfe)`` —
+    so it carries no information and is stripped at ingest."""
+    payload: dict = {
+        "resourceName": "projects/p/locations/r/publishers/google/models/gemini-2.5-flash",
+        "methodName": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+    }
+    if raw is not None:
+        payload["requestMetadata"] = {"callerSuppliedUserAgent": raw}
+    a = AuditEntry.model_validate(
+        {"insertId": "ua", "timestamp": datetime(2026, 9, 17, tzinfo=UTC), "payload": payload}
+    )
+    assert a.user_agent == expected
