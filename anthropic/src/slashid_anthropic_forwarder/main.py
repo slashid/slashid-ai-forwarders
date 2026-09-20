@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import sys
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -77,5 +79,14 @@ def create_app(config: Config, *, capture: Capture | None = None) -> FastAPI:
 
 
 def app() -> FastAPI:
-    """uvicorn factory: ``uvicorn slashid_anthropic_forwarder.main:app --factory``."""
+    """uvicorn factory: ``uvicorn slashid_anthropic_forwarder.main:app --factory``.
+
+    uvicorn configures only its own loggers, so without a root handler our
+    INFO lines fall to Python's last-resort handler and are dropped.
+    """
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        stream=sys.stderr,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
     return create_app(load_config())
