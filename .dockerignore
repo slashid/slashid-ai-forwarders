@@ -1,0 +1,11 @@
+.venv
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.ty_cache
+.git
+docs
+**/tests
+**/deploy
+*.zip
