@@ -1,0 +1,99 @@
+{
+  "type": "prompt",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "session_id": "00000009-0000-4000-8000-000000000000",
+  "request_id": "msg_011CfFbW2MJw8MZkyun5x54z",
+  "model": "claude-opus-5",
+  "actor": {
+    "type": "user",
+    "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+    "email_address": "alice@example.com"
+  },
+  "source": {
+    "application": "claude-code"
+  },
+  "metadata": {},
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<system-reminder>\ninjected client context, 533 chars in the original\n</system-reminder>"
+        },
+        {
+          "type": "text",
+          "text": "<system-reminder>\ninjected client context, 591 chars in the original\n</system-reminder>"
+        },
+        {
+          "type": "text",
+          "text": "Use the echo tool from the demo MCP server to echo the word marigold, then reply with only what the tool returned."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll load the echo tool's schema first."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_013a8rkKEU8XmKMJNmwAkcXn",
+          "tool_name": "ToolSearch",
+          "input": {
+            "query": "select:mcp__demo__echo",
+            "max_results": "1"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_013a8rkKEU8XmKMJNmwAkcXn",
+          "tool_name": "ToolSearch",
+          "content": "[non-text content]",
+          "is_error": false
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Tool loaded."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01YPqDRNnctTJwvCvzBR7GEs",
+          "tool_name": "mcp__demo__echo",
+          "input": {
+            "text": "marigold"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01YPqDRNnctTJwvCvzBR7GEs",
+          "tool_name": "mcp__demo__echo",
+          "content": "{\"result\":\"echo: marigold\"}",
+          "is_error": false
+        }
+      ]
+    }
+  ]
+}
