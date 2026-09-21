@@ -127,3 +127,43 @@ def test_extract_stream_usage(
     expected: AnthropicUsage,
 ) -> None:
     assert extract_stream_usage(body) == expected
+
+
+async def test_hook_spelled_tool_use_survives_request_translation() -> None:
+    """Regression: a hook-spelled tool_use used to validate as
+    AnthropicUnknownBlock and get dropped silently by
+    ``_translate_request_content`` — every hook tool call went missing."""
+    from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
+        message_to_normalized_invocation,
+    )
+    from slashid_ai_forwarder_core.normalize.anthropic.schema import (
+        AnthropicMessage,
+        AnthropicRequestBody,
+    )
+
+    request = AnthropicRequestBody.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_01Dqhr",
+                            "tool_name": "Read",
+                            "input": {"file_path": "/home/alice/proj/notes.txt"},
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    response = AnthropicMessage.model_validate(
+        {"type": "message", "role": "assistant", "content": [], "stop_reason": "end_turn"}
+    )
+    normalized = await message_to_normalized_invocation(request, response, config=_config())
+    blocks = normalized.input.messages[0].content
+    assert [b.kind for b in blocks] == ["tool_use"]
+    assert blocks[0].tool_name == "Read"
+    assert blocks[0].tool_use_id == "toolu_01Dqhr"
+    assert blocks[0].tool_input == {"file_path": "/home/alice/proj/notes.txt"}

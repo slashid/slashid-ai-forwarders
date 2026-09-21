@@ -387,3 +387,24 @@ def test_anthropic_request_body_tools_declared() -> None:
     )
     assert body.tools is not None
     assert body.tools[0].name == "read_file"
+
+
+def test_tool_use_block_accepts_hook_spelling_of_name() -> None:
+    """The Inference hooks frame spells the tool name ``tool_name``; the
+    Messages API spells it ``name``. One field, two wire keys."""
+    block = AnthropicToolUseBlock.model_validate(
+        {"type": "tool_use", "id": "toolu_1", "tool_name": "Read", "input": {"file_path": "a"}}
+    )
+    assert block.name == "Read"
+    assert AnthropicToolUseBlock(type="tool_use", id="toolu_2", name="Bash").name == "Bash"
+
+
+def test_request_union_picks_tool_use_for_hook_spelling() -> None:
+    """Without the alias the block misses ``AnthropicToolUseBlock`` and the
+    bare smart-union hands it to ``AnthropicUnknownBlock`` instead."""
+    from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestMessage
+
+    msg = AnthropicRequestMessage.model_validate(
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t", "tool_name": "Read"}]}
+    )
+    assert isinstance(msg.content[0], AnthropicToolUseBlock)

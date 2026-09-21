@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import AliasChoices, Field, JsonValue
 from pydantic.json_schema import JsonSchemaValue
 
 from .._base import _LenientModel
@@ -35,7 +35,11 @@ class AnthropicTextBlock(_LenientModel):
 class AnthropicToolUseBlock(_LenientModel):
     type: Literal["tool_use"]
     id: str
-    name: str
+    # The Messages API spells it ``name``; the Inference hooks frame
+    # ``tool_name``. Without both spellings the block misses this class,
+    # smart-unions to AnthropicUnknownBlock and is dropped by
+    # ``_translate_request_content``.
+    name: str = Field(validation_alias=AliasChoices("name", "tool_name"))
     input: JsonValue = None  # absent on stream start, filled by input_json_delta
 
 
