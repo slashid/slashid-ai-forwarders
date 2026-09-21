@@ -14,9 +14,9 @@ from functools import cache
 
 import functions_framework
 from cloudevents.http import CloudEvent
+from slashid_ai_forwarder_core.checkpoint import FirestoreCheckpointStore
 
 from .audit_only_source import AuditOnlyEventSource
-from .checkpoint_store import FirestoreCheckpointStore
 from .config import load_config
 from .event_source import BqEventSource, EventSource
 from .handler import run_tick

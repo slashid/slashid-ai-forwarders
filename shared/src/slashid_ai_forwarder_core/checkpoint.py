@@ -1,17 +1,37 @@
-"""Polling-checkpoint persistence — protocol + Firestore-backed impl.
+"""Polling-checkpoint persistence — the watermark, its port, its adapter.
 
-Firestore Native mode is a singleton database per GCP project (until
-multi-database GA); the Terraform module provisions it conditionally
-via ``var.create_firestore_database``. This store writes one document
-holding the ``(timestamp, id)`` watermark.
+Shared because three feeds in ``anthropic/`` need exactly what ``vertex/``
+already had. The type and its store live in one module so that neither
+imports the other: they used to sit either side of a cycle, with the
+dataclass in ``event_source.py`` and the protocol importing it back under
+``TYPE_CHECKING``.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from .event_source import Checkpoint
+
+@dataclass(frozen=True)
+class Checkpoint:
+    """The polling watermark — ``(timestamp, id)`` of the last processed
+    entry. Universal across event sources.
+
+    ``timestamp = None`` means "no entries seen yet". What a source does
+    with that is the source's decision, and the two in this repo differ:
+    Vertex fetches every entry up to its batch bound, while the Anthropic
+    compliance readers start at ``now - POLL_LAG`` instead, because a
+    backfill there would re-emit the whole retention window.
+
+    Always a timestamp, **never a feed's page token**: those are
+    documented as format-unstable, and they paginate within one tick and
+    are then discarded.
+    """
+
+    timestamp: datetime | None
+    id: str | None
 
 
 class CheckpointStore(Protocol):
@@ -27,7 +47,12 @@ class CheckpointStore(Protocol):
 
 
 class FirestoreCheckpointStore:
-    """Firestore-backed ``CheckpointStore`` — one document per forwarder."""
+    """Firestore-backed ``CheckpointStore`` — one document per forwarder.
+
+    Firestore Native mode is a singleton database per GCP project (until
+    multi-database GA); ``vertex/``'s Terraform module provisions it
+    conditionally via ``var.create_firestore_database``.
+    """
 
     def __init__(
         self,
