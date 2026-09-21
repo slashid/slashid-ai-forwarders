@@ -66,7 +66,7 @@ from ..pending import push_if_ready
 from ..record import COMPLIANCE, FILE_DIGESTS, PARSED_AS_COMPLIANCE, Append, event_fields
 from ..store import PendingStore, Seen
 from .attachments import files_from_listing, listed_files
-from .checkpoint import CHATS, SESSIONS, Cursors
+from .checkpoint import Cursors
 from .client import (
     ComplianceClient,
     chat_session_id,
@@ -204,7 +204,7 @@ async def read_responses(
     lag = timedelta(seconds=config.poll_lag_seconds)
 
     drain = await client.drain_local_sessions(
-        since=cursors.window_start(SESSIONS, now=now), limit=config.max_sessions_per_tick
+        since=cursors.sessions.window_start(now=now), limit=config.max_sessions_per_tick
     )
     for session in drain.sessions:
         if session.get("organization_uuid") != config.organization_uuid:
@@ -227,9 +227,9 @@ async def read_responses(
         )
     # Only a finished drain may move a window bound whose listing is
     # newest-first: the tail a cap leaves is the oldest.
-    cursors.advance(SESSIONS, timestamp=now - lag, drained=drain.complete)
+    cursors.sessions.advance(timestamp=now - lag, drained=drain.complete)
 
-    async for listed in client.iter_chats(since=cursors.window_start(CHATS, now=now)):
+    async for listed in client.iter_chats(since=cursors.chats.window_start(now=now)):
         if listed.get("organization_uuid") != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
@@ -258,7 +258,7 @@ async def read_responses(
                 counters.soft_enriched += 1
             else:
                 counters.soft_abstained += 1
-    cursors.advance(CHATS, timestamp=now - lag, drained=True)
+    cursors.chats.advance(timestamp=now - lag, drained=True)
     return counters
 
 

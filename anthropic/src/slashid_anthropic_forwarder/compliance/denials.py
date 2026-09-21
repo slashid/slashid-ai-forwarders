@@ -41,7 +41,7 @@ from ..record import (
     open_fields,
 )
 from ..store import PendingStore, Seen
-from .checkpoint import ACTIVITIES, Cursors
+from .checkpoint import Cursors
 from .client import DENIED_ACTIVITY, ComplianceClient, created_at
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def read_denials(
     now: datetime,
 ) -> DenialCounters:
     """One pass over the activity feed from the saved watermark."""
-    start = cursors.window_start(ACTIVITIES, now=now)
+    start = cursors.activities.window_start(now=now)
     counters = DenialCounters()
     newest = start
     last_id: str | None = None
@@ -97,7 +97,7 @@ async def read_denials(
             models=models,
             counters=counters,
         )
-    cursors.advance(ACTIVITIES, timestamp=newest, id=last_id, drained=True)
+    cursors.activities.advance(timestamp=newest, id=last_id, drained=True)
     counters.newest = newest
     return counters
 

@@ -21,7 +21,7 @@ import httpx
 
 from ..config import Config
 from ..store import PendingStore
-from .checkpoint import FEEDS, Cursors
+from .checkpoint import ACTIVITIES, CHATS, SESSIONS, Cursors, FeedCursor
 from .client import ComplianceClient
 from .denials import read_denials
 from .responses import read_responses
@@ -34,22 +34,24 @@ def build_cursors(config: Config) -> Cursors:
 
     Synchronous, because the promoted ``CheckpointStore`` is: six
     single-document reads and writes per tick, on a route with no latency
-    budget. ``asyncio.to_thread`` around the two ``Cursors`` methods is
+    budget. ``asyncio.to_thread`` around the two ``FeedCursor`` methods is
     the escape hatch if that ever stops being true.
     """
     from google.cloud import firestore
     from slashid_ai_forwarder_core.checkpoint import FirestoreCheckpointStore
 
     client = firestore.Client(project=config.gcp_project_id, database=config.firestore_database)
-    return Cursors(
-        {
-            feed: FirestoreCheckpointStore(
+
+    def cursor(feed: str) -> FeedCursor:
+        return FeedCursor(
+            FirestoreCheckpointStore(
                 client=client, collection=config.checkpoint_collection, document=feed
-            )
-            for feed in FEEDS
-        },
-        poll_lag_seconds=config.poll_lag_seconds,
-    )
+            ),
+            name=feed,
+            poll_lag_seconds=config.poll_lag_seconds,
+        )
+
+    return Cursors(activities=cursor(ACTIVITIES), chats=cursor(CHATS), sessions=cursor(SESSIONS))
 
 
 async def run_readers(

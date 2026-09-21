@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from slashid_anthropic_forwarder.address import deny_address
-from slashid_anthropic_forwarder.compliance.checkpoint import ACTIVITIES, Cursors
+from slashid_anthropic_forwarder.compliance.checkpoint import Cursors, FeedCursor
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
 from slashid_anthropic_forwarder.compliance.denials import DenialCounters, read_denials
 from slashid_anthropic_forwarder.record import DENIAL_ACTIVITY
@@ -34,7 +34,12 @@ def a_reader() -> tuple[ComplianceClient, Cursors]:
     client, _ = transport()
     return (
         ComplianceClient(client, api_key="k"),
-        Cursors({ACTIVITIES: FakeCheckpoints()}, poll_lag_seconds=LAG),
+        Cursors(
+            **{
+                f: FeedCursor(FakeCheckpoints(), name=f, poll_lag_seconds=LAG)
+                for f in ("activities", "chats", "sessions")
+            }
+        ),
     )
 
 

@@ -8,7 +8,7 @@ from typing import Any
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 from slashid_anthropic_forwarder.address import joinable_address
-from slashid_anthropic_forwarder.compliance.checkpoint import CHATS, SESSIONS, Cursors
+from slashid_anthropic_forwarder.compliance.checkpoint import Cursors, FeedCursor
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
 from slashid_anthropic_forwarder.compliance.responses import (
     ResponseCounters,
@@ -45,10 +45,15 @@ def addresses(n: int) -> list[str]:
     ]
 
 
+def _cursors(**stores: object) -> Cursors:
+    """Cursors for a test: every feed gets a fake unless one is named."""
+    made = {f: stores.get(f, FakeCheckpoints()) for f in ("activities", "chats", "sessions")}
+    return Cursors(**{f: FeedCursor(s, name=f, poll_lag_seconds=LAG) for f, s in made.items()})
+
+
 def a_reader() -> tuple[ComplianceClient, Cursors]:
     client, _ = transport()
-    stores = {SESSIONS: FakeCheckpoints(), CHATS: FakeCheckpoints()}
-    return ComplianceClient(client, api_key="k"), Cursors(stores, poll_lag_seconds=LAG)
+    return ComplianceClient(client, api_key="k"), _cursors()
 
 
 async def run(
@@ -198,7 +203,7 @@ def test_an_inline_tool_result_never_reaches_the_response_union() -> None:
 
 async def test_a_truncated_drain_leaves_the_sessions_watermark_alone() -> None:
     sessions, chats = FakeCheckpoints(), FakeCheckpoints()
-    cursors = Cursors({SESSIONS: sessions, CHATS: chats}, poll_lag_seconds=LAG)
+    cursors = _cursors(sessions=sessions, chats=chats)
     await run(a_store(), Sink(), cursors, max_sessions_per_tick=1)
     assert sessions.saves == []
     # The ordered feed is unaffected: it resumes from its own watermark.
