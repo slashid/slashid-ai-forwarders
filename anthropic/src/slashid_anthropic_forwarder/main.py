@@ -25,6 +25,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from .compliance.readers import run_readers
 from .config import Config, load_config
 from .hook.capture import Capture, GcsCapture
 from .hook.checks import ALLOW, Decision
@@ -256,12 +257,21 @@ def create_app(
             # fire picks the same work up from the store.
             log.info("tick %s skipped: another holds the lease", owner)
             return JSONResponse({"flushed": 0, "skipped": True})
+        counters: dict[str, int] = {}
         try:
+            # Readers first: a `complete` here can make a record ready,
+            # and it should go out on this tick rather than the next.
+            try:
+                counters = await run_readers(store=store, config=config, http=http())
+            except Exception:
+                # Never a failed tick. The scheduler would retry it,
+                # re-running a reader that already moved its watermark.
+                log.exception("tick: the reader pass failed; flushing anyway")
             flushed = await flush_due(store, config=config, client=http())
         finally:
             if lease is not None:
                 await lease.release(owner=owner)
-        return JSONResponse({"flushed": flushed})
+        return JSONResponse({"flushed": flushed, **counters})
 
     @app.post("/{path:path}")
     async def hook(request: Request, background: BackgroundTasks) -> Response:

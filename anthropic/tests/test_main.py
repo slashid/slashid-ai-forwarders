@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
@@ -323,3 +324,37 @@ async def test_a_delivery_posted_to_slash_tick_is_still_a_delivery(sign: Signer)
         r = await c.post("/tick", content=body, headers=sign(body, "msg_1"))
     assert r.json() == {"action": "allow"}
     assert addresses(store) != set()
+
+
+async def test_tick_runs_the_readers_before_the_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    order: list[str] = []
+
+    async def fake_readers(**kwargs: Any) -> dict[str, int]:
+        order.append("readers")
+        return {"responses_emitted": 2}
+
+    async def fake_flush(*args: Any, **kwargs: Any) -> int:
+        order.append("flush")
+        return 1
+
+    monkeypatch.setattr(main, "run_readers", fake_readers)
+    monkeypatch.setattr(main, "flush_due", fake_flush)
+    async with _client(_config(), store=a_store()) as c:
+        response = await c.post("/tick", headers=SCHEDULER)
+    assert order == ["readers", "flush"]
+    assert response.json() == {"flushed": 1, "responses_emitted": 2}
+
+
+async def test_a_reader_failure_does_not_fail_the_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def boom(**kwargs: Any) -> dict[str, int]:
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(main, "run_readers", boom)
+    async with _client(_config(), store=a_store()) as c:
+        response = await c.post("/tick", headers=SCHEDULER)
+    # A reader failure is noise on one tick: the next cron fire picks up
+    # from the same watermark. (Cloud Scheduler is configured with no
+    # retries, so nothing re-runs this tick — the flush behind it still
+    # ran, which is the part that matters.)
+    assert response.status_code == 200
+    assert response.json()["flushed"] == 0
