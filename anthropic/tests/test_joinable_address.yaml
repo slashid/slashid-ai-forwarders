@@ -1,0 +1,42 @@
+# No assistant run at all — the frame is a first turn.
+id: first_turn_has_no_run_to_address
+fixture: frame_first_turn
+expected: null
+---
+id: an_attachment_only_frame_has_no_run_either
+fixture: frame_attachment
+expected: null
+---
+# The run answered in text. Joinable is about tool calls, not about content:
+# this one is the hook's alone, under a hook: address.
+id: a_text_only_run_is_unjoinable
+fixture: frame_after_shadow_deny
+expected: null
+---
+id: the_single_tool_call_is_the_address
+fixture: frame_tool_result
+expected: toolu_01Dqhr2d1w2UCUqbXhCSGutC
+---
+# Two tool_use blocks in one message: block order decides, and it is stable
+# across both surfaces because both carry the run's blocks in order.
+id: two_parallel_calls_take_the_first
+fixture: frame_multi_tool
+expected: toolu_01DqPgvQiPYuWCXJfKFEhojJ
+---
+id: a_failed_tool_call_still_addresses_the_run
+fixture: frame_tool_error
+expected: toolu_01GSt4gp6UqW6a5RsxRvyn8d
+---
+id: an_mcp_tool_call_addresses_like_any_other
+fixture: frame_mcp_tool
+expected: toolu_01YPqDRNnctTJwvCvzBR7GEs
+---
+# Two sessions' worth of frames share this session_id; the addresses do not
+# collide, because neither is a function of the session.
+id: the_subagent_parents_task_call
+fixture: frame_subagent_parent
+expected: toolu_01WjE9YXynBLJThi28oCWQLr
+---
+id: the_subagent_childs_own_call
+fixture: frame_subagent_child
+expected: toolu_01UbdhcQRwkxR8JFoAGZi2i9
