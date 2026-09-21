@@ -2936,7 +2936,7 @@ git commit -m "feat(anthropic): verdict composition with fail mode and shadow mo
 
 ## Chunk 5: Addresses, the record, and the pending store
 
-Three modules at the package root — above `hook/` and `compliance/`, because both packages call all three. `address.py` answers "what is this invocation called?", and the design's measurement is the whole reason it has three answers rather than one: a digest over the transcript prefix produced **200 keys on the frame side, 302 on the reader side and zero in common**, so the only key both sources can compute is a model-minted `tool_use.id`. A run without one gets a hook-local address that no reader may ever emit under, and every frame additionally files a `tail:` record keyed on a digest of its whole transcript — hook-local too, and therefore allowed to use the encoding the cross-source key cannot. `record.py` holds the partial event as a serialized mapping plus the control envelope around it, and owns the 1 MiB bound. `store.py` is the port: six operations, a Firestore adapter behind them, and `claim` — the compare-and-set that decides which of a completing writer and the deadline sweep gets to push. Nothing here reads `Config` and nothing here pushes; wiring the store into the app and the tick is the next chunk's job.
+Three modules at the package root — above `hook/` and `compliance/`, because both packages call all three. `address.py` answers "what is this invocation called?", and the design's measurement is the whole reason it has three answers rather than one: a digest over the transcript prefix produced **200 keys on the frame side, 302 on the reader side and zero in common**, so the only key both sources can compute is a model-minted `tool_use.id`. A run without one gets a hook-local address that no reader may ever emit under, and every frame additionally files a `tail:` record keyed on a digest of its whole transcript — hook-local too, and therefore allowed to use the encoding the cross-source key cannot. A fourth space, `deny:`, exists for the same reason the third does and belongs to Reader A: it arrives with that reader in Chunk 6, and this chunk builds the three the hook needs. `record.py` holds the partial event as a serialized mapping plus the control envelope around it, and owns the 1 MiB bound. `store.py` is the port: six operations, a Firestore adapter behind them, and `claim` — the compare-and-set that decides which of a completing writer and the deadline sweep gets to push. Nothing here reads `Config` and nothing here pushes; wiring the store into the app and the tick is the next chunk's job.
 
 **On the emulator.** The design says "against a fake and, when credentials allow, the Firestore emulator". Checked: `gcloud beta emulators firestore` exists as a command but `gcloud components list` reports **Cloud Firestore Emulator as `Not Installed`**, the per-subproject CI command is a bare `uv run pytest` with no emulator bootstrap, and the one sibling that already faced this choice — `vertex/tests/test_firestore_checkpoint.py:3-5` — records it explicitly ("Firestore emulator is available but overkill"). So: **a fake client**, in the same shape as vertex's, extended with what this store actually uses — `create`, `set(merge=True)` deep merge, `ArrayUnion`/`ArrayRemove` transforms, `update` under a `last_update_time` precondition, and a query with two filters, an order and a limit. Two things a fake cannot prove and that no test here should pretend to: that the real backend rejects a stale `last_update_time` (it raises `FailedPrecondition`; the fake mimics it), and that the composite index `due` needs exists. Both belong to the live run in the deploy chunk, and the store's docstring names the index so the Terraform has something to copy.
 
@@ -3117,7 +3117,7 @@ expected: toolu_01UbdhcQRwkxR8JFoAGZi2i9
 - [ ] **Step 3: Implement** `src/slashid_anthropic_forwarder/address.py`:
 
 ```python
-"""Addresses — the three keys a pending record can be filed under.
+"""Addresses — the keys a pending record can be filed under.
 
 Only a model-minted ``tool_use.id`` agrees across the two sources, and
 that was measured rather than reasoned: over one session present in both
@@ -3131,8 +3131,9 @@ began, sub-agent turns the frame never shows), so no function of the
 message sequence can survive the crossing. An opaque token the model
 minted once can, and does.
 
-So there are three keys, and which one a record gets decides who may
-write it:
+So there are four address spaces, and which one a record gets decides
+who may write it. Three of them are here; the fourth belongs to Reader A
+and lands with it:
 
 - ``joinable_address`` — both sources compute it; either may open the
   record and the other may complete it.
@@ -3143,31 +3144,21 @@ write it:
 - ``tail_address`` — the hook alone, for the fresh round a frame carries
   that no successor may ever report. Hook-local, so it may use an
   encoding the cross-source key cannot.
+- ``deny_address`` — **not here**: Reader A's, added in the chunk that
+  builds it. It is a fourth space rather than a second use of ``hook:``
+  because one frame can carry an unjoinable previous run *and* an
+  honoured deny on its fresh round, and one key for both would merge two
+  unrelated invocations into one record.
 """
 
 from __future__ import annotations
 
-import hashlib
-import unicodedata
 from collections.abc import Sequence
 
 from slashid_ai_forwarder_core.normalize.anthropic.schema import (
-    AnthropicAttachmentBlock,
     AnthropicRequestMessage,
-    AnthropicTextBlock,
-    AnthropicToolResultBlock,
     AnthropicToolUseBlock,
 )
-
-# How much of a text block contributes to a tail digest. A Claude Code
-# transcript reaches 1.86 MB and a frame arrives every round, so the digest
-# has to be cheap; a 256-character prefix per block, together with the block
-# count, the roles and every tool id, was exact over the measured corpus —
-# 239 distinct keys from 284 deliveries, zero false merges, zero false
-# splits against the toolu_ ids as ground truth.
-TEXT_PREFIX_CHARS = 256
-
-_TAIL_VERSION = b"tail/1"
 
 
 def joinable_address(run: Sequence[AnthropicRequestMessage]) -> str | None:
@@ -3196,6 +3187,8 @@ def hook_address(webhook_id: str) -> str:
     """
     return f"hook:{webhook_id}"
 ```
+
+Import exactly this much and no more. Task 5.3 brings `hashlib`, `unicodedata` and three further block types in *with* the code that uses them, so the `--fix` in the next step has nothing to strip — an unused import written one task early is deleted silently, and `ruff check --fix` exits 0 while doing it.
 
 - [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_address.py -v && uv run ty check`. Expected: `13 passed` (9 yaml cases, 4 plain), ruff and ty clean.
 
@@ -3346,7 +3339,33 @@ predecessor_messages: 4
 
 - [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_address.py -v`. Expected: collection ERROR, `ImportError: cannot import name '_canonical_bytes' from 'slashid_anthropic_forwarder.address'`.
 
-- [ ] **Step 3: Implement** — append to `address.py`:
+- [ ] **Step 3: Implement** — first widen the module's imports to what the tail digest needs, replacing the block Task 5.2 wrote:
+
+```python
+import hashlib
+import unicodedata
+from collections.abc import Sequence
+
+from slashid_ai_forwarder_core.normalize.anthropic.schema import (
+    AnthropicAttachmentBlock,
+    AnthropicRequestMessage,
+    AnthropicTextBlock,
+    AnthropicToolResultBlock,
+    AnthropicToolUseBlock,
+)
+
+# How much of a text block contributes to a tail digest. A Claude Code
+# transcript reaches 1.86 MB and a frame arrives every round, so the digest
+# has to be cheap; a 256-character prefix per block, together with the block
+# count, the roles and every tool id, was exact over the measured corpus —
+# 239 distinct keys from 284 deliveries, zero false merges, zero false
+# splits against the toolu_ ids as ground truth.
+TEXT_PREFIX_CHARS = 256
+
+_TAIL_VERSION = b"tail/1"
+```
+
+then append:
 
 ```python
 def tail_address(transcript: Sequence[AnthropicRequestMessage], session_id: str | None) -> str:
@@ -3420,8 +3439,6 @@ def _block_fields(block: object) -> list[bytes] | None:
         return [b"a", _prefix(block.file_name), _prefix(block.text)]
     return None
 ```
-
-and add `unicodedata` to the module's imports.
 
 - [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_address.py -v && uv run ty check`. Expected: `22 passed` (13 from Task 5.2, 6 plain and 3 yaml cases here). If the byte-literal test fails, read the diff before touching the literal: the literal is the golden value, and the four-byte lengths make the offending field obvious.
 
@@ -3607,7 +3624,7 @@ def test_oversized_events_are_elided_in_size_order(
     fields = event_fields(event)
     body = fields["event"]
     assert fields.get("elided", False) is elided
-    assert len(json.dumps(body, separators=(",", ":")).encode()) <= MAX_EVENT_BYTES
+    assert json_size(body) <= MAX_EVENT_BYTES
     kept = [
         name
         for name, text in (
@@ -3621,6 +3638,29 @@ def test_oversized_events_are_elided_in_size_order(
     # Whatever was dropped, the hashes that identify the content survive.
     assert body["input"]["content_hashes"] == {"sha256": "a" * 64}
     assert body["input"]["byte_length"] == input_chars
+
+
+def test_a_record_with_no_raw_text_left_to_drop_still_fits() -> None:
+    """The last resort, which no amount of raw text can reach: bulk that is
+    not text at all. `_bound` promises it never fails, and a guarantee with
+    no test is how a background write starts throwing at 3 a.m."""
+    event = an_event(
+        accessed_files=[
+            {"name": f"/home/alice/proj/file_{i}.txt", "content_hashes": {"sha256": f"{i:064d}"}}
+            for i in range(12_000)
+        ]
+    )
+    fields = event_fields(event)
+    assert fields["elided"] is True
+    assert "accessed_files" not in fields["event"]
+    assert json_size(fields["event"]) <= MAX_EVENT_BYTES
+```
+
+with one helper beside the imports, used by both tests:
+
+```python
+def json_size(body: dict[str, object]) -> int:
+    return len(json.dumps(body, separators=(",", ":")).encode())
 ```
 
 with `tests/test_elision.yaml`:
@@ -3644,9 +3684,12 @@ file_chars: 500
 elided: true
 surviving: [output, file]
 ---
+# The steps run in size order and stop at the first fit, so the output is
+# only reached when the input alone was not enough — which needs an output
+# that still breaks the bound on its own.
 id: a_large_answer_too_and_the_output_follows
-input_chars: 700000
-output_chars: 700000
+input_chars: 1200000
+output_chars: 1200000
 file_chars: 500
 elided: true
 surviving: [file]
@@ -3654,9 +3697,9 @@ surviving: [file]
 # Three oversized fields: everything raw goes and the event is still a
 # writable record of the invocation, hashes intact.
 id: everything_raw_goes_before_the_write_fails
-input_chars: 600000
-output_chars: 600000
-file_chars: 600000
+input_chars: 1200000
+output_chars: 1200000
+file_chars: 1200000
 elided: true
 surviving: []
 ```
@@ -3939,11 +3982,19 @@ them wrong would hide a bug rather than surface one:
   and a document without the field does NOT match it.
 - ``update`` raises ``NotFound`` on a missing document and
   ``FailedPrecondition`` when the ``last_update_time`` no longer matches.
+
+``on_get`` is the one thing here the real client has no analogue for: a
+callback fired after a snapshot is taken, so a single-threaded test can
+slip a competing writer in between a read and the compare-and-set that
+follows it. Without it the CAS is unreachable from a sequential test —
+the lease guard answers first — and the precondition above would be
+mimicked but never exercised.
 """
 
 from __future__ import annotations
 
 import copy
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
@@ -3968,9 +4019,16 @@ class FakeDocumentReference:
 
     async def get(self) -> FakeSnapshot:
         held = self._client.docs.get(self._path)
-        if held is None:
-            return FakeSnapshot(self.id, None, None)
-        return FakeSnapshot(self.id, held[0], held[1])
+        snapshot = (
+            FakeSnapshot(self.id, None, None)
+            if held is None
+            else FakeSnapshot(self.id, held[0], held[1])
+        )
+        if self._client.on_get is not None:
+            # Taken already, so a writer that runs now leaves this caller
+            # holding a stale one — which is the race `claim` has to lose.
+            await self._client.on_get(self._path)
+        return snapshot
 
     async def create(self, data: dict[str, Any]) -> None:
         if self._path in self._client.docs:
@@ -4075,6 +4133,8 @@ class FakeFirestore:
 
     def __init__(self) -> None:
         self.docs: dict[str, tuple[dict[str, Any], int]] = {}
+        # Set by a test to interleave a competing writer; see the docstring.
+        self.on_get: Callable[[str], Awaitable[None]] | None = None
         self._clock = 0
 
     def write(self, path: str, data: dict[str, Any]) -> None:
@@ -4085,7 +4145,40 @@ class FakeFirestore:
         return FakeCollectionReference(self, name)
 ```
 
-- [ ] **Step 2: Write the failing tests** — `tests/test_store.py`:
+- [ ] **Step 2: Smoke the fake before anything depends on it** — a syntax error or a wrong transform surfaces here as two printed lines, not later as a collection error inside a long test module:
+
+```bash
+cd anthropic && uv run python - <<'PY'
+import asyncio
+
+from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.transforms import ArrayUnion
+
+from tests.fake_firestore import FakeFirestore
+
+
+async def main() -> None:
+    client = FakeFirestore()
+    doc = client.collection("c").document("a")
+    await doc.create({"webhook_ids": ["one"], "n": None})
+    stale = await doc.get()
+    await doc.set({"webhook_ids": ArrayUnion(["two"])}, merge=True)
+    assert (await doc.get()).to_dict()["webhook_ids"] == ["one", "two"]
+    try:
+        await doc.update({"x": 1}, option=client.write_option(last_update_time=stale.update_time))
+    except Exception as exc:
+        print("precondition rejected:", type(exc).__name__)
+    query = client.collection("c").where(filter=FieldFilter("n", "==", None))
+    print("query:", [s.id async for s in query.stream()])
+
+
+asyncio.run(main())
+PY
+```
+
+Expected: `precondition rejected: FailedPrecondition`, then `query: ['a']`. The second line is the `IS_NULL` behaviour: the document matched because it carries `n: None` explicitly, and one lacking the field would not have.
+
+- [ ] **Step 3: Write the tests `upsert` alone has to pass** — `tests/test_store.py`:
 
 ```python
 """FirestorePendingStore — the write path: upsert, complete, seen."""
@@ -4166,104 +4259,11 @@ async def test_a_second_delivery_merges_and_never_moves_the_deadline() -> None:
     # Append, not replace: Reader A matches a denial against any of them.
     assert stored["webhook_ids"] == ["msg_a", "msg_b"]
     assert stored["event"]["model"] == {"id": "claude-opus-5"}
-
-
-async def test_upsert_is_a_no_op_on_a_tombstoned_address() -> None:
-    store, client = a_store()
-    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
-    await store.retire(ADDRESS, "pushed", now=NOW)
-    outcome = await store.upsert(ADDRESS, {"event": an_event(model={"id": "x"})}, (), now=NOW)
-    assert not outcome.stored and not outcome.ready
-    assert "model" not in client.docs["anthropic_pending/" + ADDRESS][0]["event"]
-
-
-async def test_complete_never_creates() -> None:
-    """A record that does not exist was never opened by a frame; inventing
-    one here would resurrect an invocation that was already pushed."""
-    store, client = a_store()
-    outcome = await store.complete(ADDRESS, {"event": an_event()}, ())
-    assert not outcome.stored
-    assert client.docs == {}
-
-
-async def test_complete_is_a_no_op_on_a_tombstoned_address() -> None:
-    store, _ = a_store()
-    await store.upsert(ADDRESS, {"event": an_event()}, (FILE_DIGESTS,), now=NOW)
-    await store.retire(ADDRESS, "pushed", now=NOW)
-    assert not (await store.complete(ADDRESS, {"event": {}}, (FILE_DIGESTS,))).stored
-
-
-async def test_complete_merges_into_the_event_without_replacing_it() -> None:
-    store, client = a_store()
-    await store.upsert(ADDRESS, {"event": an_event(input={"byte_length": 9})}, (), now=NOW)
-    await store.complete(ADDRESS, {"event": {"output": {"byte_length": 4}}}, ())
-    event = client.docs["anthropic_pending/" + ADDRESS][0]["event"]
-    assert event["input"] == {"byte_length": 9} and event["output"] == {"byte_length": 4}
-
-
-async def test_two_completers_both_land() -> None:
-    """Different fields, neither lost — the merge is per field, not per
-    document."""
-    store, client = a_store()
-    opened = {"event": an_event(), "contributed": Append((HOOK,))}
-    await store.upsert(ADDRESS, opened, (FILE_DIGESTS,), now=NOW)
-    first = await store.complete(ADDRESS, {"event": {"output": {"byte_length": 4}}}, ())
-    second = await store.complete(
-        ADDRESS,
-        {
-            "event": {"accessed_files": [{"name": "maria.txt"}]},
-            "contributed": Append(("compliance",)),
-        },
-        (FILE_DIGESTS,),
-    )
-    assert not first.ready and second.ready
-    event = client.docs["anthropic_pending/" + ADDRESS][0]["event"]
-    assert event["output"] == {"byte_length": 4}
-    assert event["accessed_files"] == [{"name": "maria.txt"}]
-    assert client.docs["anthropic_pending/" + ADDRESS][0]["contributed"] == [HOOK, "compliance"]
-
-
-async def test_a_visit_that_finds_nothing_still_settles_the_record() -> None:
-    """Digests are outstanding until a reader visits, not until it finds
-    files; otherwise a listing that never materializes waits out the full
-    deadline for nothing."""
-    store, _ = a_store()
-    await store.upsert(ADDRESS, {"event": an_event()}, (FILE_DIGESTS,), now=NOW)
-    assert (await store.complete(ADDRESS, {}, (FILE_DIGESTS,))).ready
-
-
-async def test_seen_has_three_states() -> None:
-    """Absent is what lets a reader emit standalone."""
-    store, _ = a_store()
-    assert await store.seen(ADDRESS) is Seen.ABSENT
-    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
-    assert await store.seen(ADDRESS) is Seen.LIVE
-    await store.retire(ADDRESS, "pushed", now=NOW)
-    assert await store.seen(ADDRESS) is Seen.TOMBSTONED
-
-
-async def test_an_oversized_event_is_bounded_before_it_reaches_the_store() -> None:
-    """The adapter writes what it is handed; `record.event_fields` is what
-    keeps the write under the limit. Asserted here so the division of labour
-    is pinned by a test and not only by a docstring."""
-    event = AIInvocationObservedV1(
-        request_id=ADDRESS,
-        timestamp="2026-09-20T23:08:20+00:00",
-        identity_details=AnthropicIdentityDetails(user_id="user_01"),
-        model=AIModel(id="claude-opus-5"),
-        parsed_as="anthropic-inference-hook",
-        input=AIInvocationContent(redacted_text="x" * 2_000_000, byte_length=2_000_000),
-    )
-    store, client = a_store()
-    await store.upsert(ADDRESS, event_fields(event), (), now=NOW)
-    record: PendingRecord = (await store.due(NOW + timedelta(hours=2), 10))[0]
-    assert record.elided
-    assert len(str(client.docs["anthropic_pending/" + ADDRESS][0]["event"])) < MAX_EVENT_BYTES
 ```
 
-- [ ] **Step 3: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_store.py -v`. Expected: collection ERROR, `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.store'`.
+- [ ] **Step 4: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_store.py -v`. Expected: collection ERROR, `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.store'`.
 
-- [ ] **Step 4: Implement** `src/slashid_anthropic_forwarder/store.py` — the protocol, the outcome types, and the write half of the adapter:
+- [ ] **Step 5: Implement** `src/slashid_anthropic_forwarder/store.py` — the protocol, the outcome types and `upsert`:
 
 ```python
 """The pending store: a port with six operations, and its Firestore adapter.
@@ -4274,9 +4274,10 @@ of the two gets to push is settled by ``claim``.
 
 Everything backend-specific stays in the adapter: the document id (the
 address — Firestore ids may not contain ``/``, which no address does),
-the array transforms, the TTL policy keyed off ``tombstoned_at`` and
-never applied to a live record, the named database, and the composite
-index behind ``due`` (``tombstoned_at`` ASC, ``next_attempt_at`` ASC).
+the array transforms, the TTL policy — which keys on
+``tombstone_expires_at``, a field only a tombstone carries — the named
+database, and the composite index behind ``due`` (``tombstoned_at`` ASC,
+``next_attempt_at`` ASC).
 Another cloud reimplements six methods and nothing above this line
 changes.
 """
@@ -4289,11 +4290,10 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
-from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
-from google.cloud.firestore_v1.base_query import FieldFilter
-from google.cloud.firestore_v1.transforms import ArrayRemove, ArrayUnion
+from google.api_core.exceptions import AlreadyExists
+from google.cloud.firestore_v1.transforms import ArrayUnion
 
-from .record import Append, PendingRecord, from_document
+from .record import Append, PendingRecord
 
 
 class Seen(StrEnum):
@@ -4418,7 +4418,6 @@ class FirestorePendingStore:
         try:
             await self._ref(address).create(
                 {
-                    **_plain(fields),
                     "deadline": deadline,
                     # Equal on creation; the lease and the backoff move only
                     # this one, so the deadline the record was born with
@@ -4431,7 +4430,11 @@ class FirestorePendingStore:
                     # Written explicitly: an IS_NULL filter does not match a
                     # document that lacks the field, and `due` needs it to.
                     "tombstoned_at": None,
-                    "elided": False,
+                    # Last, so the caller's fields win: ``event_fields`` sets
+                    # ``elided`` only when it actually dropped text, and a
+                    # literal after the spread would overwrite it on every
+                    # create — which is every frame-built record.
+                    **_plain(fields),
                 }
             )
             return Outcome(stored=True, ready=not expectations, created=True)
@@ -4448,6 +4451,129 @@ class FirestorePendingStore:
         after = (await self._ref(address).get()).to_dict() or {}
         return Outcome(stored=True, ready=not after.get("awaiting"))
 
+
+def _transforms(fields: dict[str, Any]) -> dict[str, Any]:
+    """Translate the record module's backend-neutral ``Append`` markers into
+    Firestore array transforms."""
+    return {
+        key: ArrayUnion(list(value.values)) if isinstance(value, Append) else value
+        for key, value in fields.items()
+    }
+
+
+def _plain(fields: dict[str, Any]) -> dict[str, Any]:
+    """The same fields for a ``create``, where a transform is pointless (and
+    an ``ArrayUnion`` against a field that does not exist yet is a write the
+    backend has to resolve for nothing)."""
+    return {
+        key: list(value.values) if isinstance(value, Append) else value
+        for key, value in fields.items()
+    }
+```
+
+- [ ] **Step 6: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_store.py -v`. Expected: `3 passed`. The protocol declares six methods and the adapter has one; nothing asserts conformance yet, so `ty` stays quiet until Task 5.6 adds the annotation that checks it.
+
+- [ ] **Step 7: Write the rest of the write-path tests** — append to `tests/test_store.py`:
+
+```python
+async def test_upsert_is_a_no_op_on_a_tombstoned_address() -> None:
+    store, client = a_store()
+    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
+    await store.retire(ADDRESS, "pushed", now=NOW)
+    outcome = await store.upsert(ADDRESS, {"event": an_event(model={"id": "x"})}, (), now=NOW)
+    assert not outcome.stored and not outcome.ready
+    assert "model" not in client.docs["anthropic_pending/" + ADDRESS][0]["event"]
+
+
+async def test_complete_never_creates() -> None:
+    """A record that does not exist was never opened by a frame; inventing
+    one here would resurrect an invocation that was already pushed."""
+    store, client = a_store()
+    outcome = await store.complete(ADDRESS, {"event": an_event()}, ())
+    assert not outcome.stored
+    assert client.docs == {}
+
+
+async def test_complete_is_a_no_op_on_a_tombstoned_address() -> None:
+    store, _ = a_store()
+    await store.upsert(ADDRESS, {"event": an_event()}, (FILE_DIGESTS,), now=NOW)
+    await store.retire(ADDRESS, "pushed", now=NOW)
+    assert not (await store.complete(ADDRESS, {"event": {}}, (FILE_DIGESTS,))).stored
+
+
+async def test_complete_merges_into_the_event_without_replacing_it() -> None:
+    store, client = a_store()
+    await store.upsert(ADDRESS, {"event": an_event(input={"byte_length": 9})}, (), now=NOW)
+    await store.complete(ADDRESS, {"event": {"output": {"byte_length": 4}}}, ())
+    event = client.docs["anthropic_pending/" + ADDRESS][0]["event"]
+    assert event["input"] == {"byte_length": 9} and event["output"] == {"byte_length": 4}
+
+
+async def test_two_completers_both_land() -> None:
+    """Different fields, neither lost — the merge is per field, not per
+    document."""
+    store, client = a_store()
+    opened = {"event": an_event(), "contributed": Append((HOOK,))}
+    await store.upsert(ADDRESS, opened, (FILE_DIGESTS,), now=NOW)
+    first = await store.complete(ADDRESS, {"event": {"output": {"byte_length": 4}}}, ())
+    second = await store.complete(
+        ADDRESS,
+        {
+            "event": {"accessed_files": [{"name": "maria.txt"}]},
+            "contributed": Append(("compliance",)),
+        },
+        (FILE_DIGESTS,),
+    )
+    assert not first.ready and second.ready
+    event = client.docs["anthropic_pending/" + ADDRESS][0]["event"]
+    assert event["output"] == {"byte_length": 4}
+    assert event["accessed_files"] == [{"name": "maria.txt"}]
+    assert client.docs["anthropic_pending/" + ADDRESS][0]["contributed"] == [HOOK, "compliance"]
+
+
+async def test_a_visit_that_finds_nothing_still_settles_the_record() -> None:
+    """Digests are outstanding until a reader visits, not until it finds
+    files; otherwise a listing that never materializes waits out the full
+    deadline for nothing."""
+    store, _ = a_store()
+    await store.upsert(ADDRESS, {"event": an_event()}, (FILE_DIGESTS,), now=NOW)
+    assert (await store.complete(ADDRESS, {}, (FILE_DIGESTS,))).ready
+
+
+async def test_seen_has_three_states() -> None:
+    """Absent is what lets a reader emit standalone."""
+    store, _ = a_store()
+    assert await store.seen(ADDRESS) is Seen.ABSENT
+    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
+    assert await store.seen(ADDRESS) is Seen.LIVE
+    await store.retire(ADDRESS, "pushed", now=NOW)
+    assert await store.seen(ADDRESS) is Seen.TOMBSTONED
+
+
+async def test_an_oversized_event_is_bounded_before_it_reaches_the_store() -> None:
+    """The adapter writes what it is handed; `record.event_fields` is what
+    keeps the write under the limit. Asserted here so the division of labour
+    is pinned by a test and not only by a docstring."""
+    event = AIInvocationObservedV1(
+        request_id=ADDRESS,
+        timestamp="2026-09-20T23:08:20+00:00",
+        identity_details=AnthropicIdentityDetails(user_id="user_01"),
+        model=AIModel(id="claude-opus-5"),
+        parsed_as="anthropic-inference-hook",
+        input=AIInvocationContent(redacted_text="x" * 2_000_000, byte_length=2_000_000),
+    )
+    store, client = a_store()
+    await store.upsert(ADDRESS, event_fields(event), (), now=NOW)
+    record: PendingRecord = (await store.due(NOW + timedelta(hours=2), 10))[0]
+    assert record.elided
+    assert len(str(client.docs["anthropic_pending/" + ADDRESS][0]["event"])) < MAX_EVENT_BYTES
+```
+
+- [ ] **Step 8: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_store.py -v`. Expected: `8 failed, 3 passed` — `AttributeError: … has no attribute 'complete'` on most of them, and `'retire'` or `'due'` on the four Task 5.6 finishes.
+
+- [ ] **Step 9: Implement `complete` and `seen`** — widen the transforms import to `from google.cloud.firestore_v1.transforms import ArrayRemove, ArrayUnion` (Step 5 imported only what it used, so `--fix` had nothing to strip), then add both methods to `FirestorePendingStore`, after `upsert` and before the module-level helpers:
+
+```python
     async def complete(
         self,
         address: str,
@@ -4477,32 +4603,11 @@ class FirestorePendingStore:
         if (snapshot.to_dict() or {}).get("tombstoned_at") is not None:
             return Seen.TOMBSTONED
         return Seen.LIVE
-
-
-def _transforms(fields: dict[str, Any]) -> dict[str, Any]:
-    """Translate the record module's backend-neutral ``Append`` markers into
-    Firestore array transforms."""
-    return {
-        key: ArrayUnion(list(value.values)) if isinstance(value, Append) else value
-        for key, value in fields.items()
-    }
-
-
-def _plain(fields: dict[str, Any]) -> dict[str, Any]:
-    """The same fields for a ``create``, where a transform is pointless (and
-    an ``ArrayUnion`` against a field that does not exist yet is a write the
-    backend has to resolve for nothing)."""
-    return {
-        key: list(value.values) if isinstance(value, Append) else value
-        for key, value in fields.items()
-    }
 ```
 
-`retire` and `due` land in the next task; the two tests above that call them fail until then, so run the file with `-k "not tombstoned and not seen and not oversized"` in Step 5 and the whole file in Task 5.6.
+- [ ] **Step 10: Run to verify the write path passes** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_store.py -v -k "not tombstoned and not three_states and not oversized"`. Expected: `7 passed, 4 deselected` — the four that need `retire` or `due` are deselected until the next task implements them.
 
-- [ ] **Step 5: Run to verify the write path passes** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_store.py -v -k "not tombstoned and not seen and not oversized"`. Expected: `7 passed, 4 deselected` — the four that need `retire` and `due` are deselected until the next task implements them.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add anthropic/src/slashid_anthropic_forwarder/store.py anthropic/tests/fake_firestore.py \
@@ -4522,14 +4627,35 @@ git commit -m "feat(anthropic): pending-store protocol and its firestore write p
 
 And `due` **pushes rather than deletes**: two classes of invocation have no compliance counterpart at all (zero-data-retention organizations, and the sub-conversations that share a `session_id`), so a deleted record there is a lost event.
 
+`retire` also writes the field the TTL policy keys on, and it is not `tombstoned_at`. Firestore deletes a document once the timestamp in the nominated field is **in the past**, so a policy pointed at the instant of tombstoning asks for every tombstone to be collected the moment it is written — and the tombstone is the only thing suppressing a late reader's duplicate for the next two hours. The expiry instant goes in its own field, which a live record never carries, so the policy cannot reach one that is still failing to push.
+
 **Files:**
 - Modify: `anthropic/src/slashid_anthropic_forwarder/store.py` (append to the adapter)
 - Test: `anthropic/tests/test_store.py` (append)
 
-- [ ] **Step 1: Write the failing tests** — extend the import to `from slashid_anthropic_forwarder.store import FirestorePendingStore, PendingStore, Retirement, Seen` and append:
+- [ ] **Step 1: Write the failing tests** — extend the import to `from slashid_anthropic_forwarder.store import FirestorePendingStore, PendingStore, Retirement, Seen`, widen the `a_store` helper so it forwards the store's two durations:
+
+```python
+def a_store(
+    *, join_wait: timedelta = JOIN_WAIT, tombstone_ttl: timedelta = timedelta(hours=2)
+) -> tuple[FirestorePendingStore, FakeFirestore]:
+    client = FakeFirestore()
+    return (
+        FirestorePendingStore(
+            client=client,
+            collection="anthropic_pending",
+            join_wait=join_wait,
+            tombstone_ttl=tombstone_ttl,
+        ),
+        client,
+    )
+```
+
+and append:
 
 ```python
 LEASE = timedelta(minutes=5)
+TOMBSTONE_TTL = timedelta(hours=2)
 PAST_DEADLINE = NOW + JOIN_WAIT + timedelta(minutes=1)
 
 
@@ -4554,7 +4680,9 @@ async def test_exactly_one_of_two_claims_wins() -> None:
 
 async def test_a_completer_that_merges_before_the_sweep_claims_wins_the_digests() -> None:
     """The race the wait exists for: whoever claims pushes, and what they
-    push includes everything merged up to that instant."""
+    push includes everything merged up to that instant. Note the clock —
+    the sweep is locked out for the length of the lease, not forever, and
+    what keeps it out afterwards is the tombstone the completer left."""
     store, _ = a_store()
     await store.upsert(ADDRESS, {"event": an_event()}, (FILE_DIGESTS,), now=NOW)
     outcome = await store.complete(
@@ -4563,10 +4691,11 @@ async def test_a_completer_that_merges_before_the_sweep_claims_wins_the_digests(
     )
     assert outcome.ready
     completer = await store.claim(ADDRESS, LEASE, owner="completer", now=NOW)
-    sweep = await store.claim(ADDRESS, LEASE, owner="sweep", now=PAST_DEADLINE)
-    assert sweep is None
     assert completer is not None
     assert completer.event["accessed_files"][0]["content_hashes"] == {"md5": "d4 1d"}
+    assert await store.claim(ADDRESS, LEASE, owner="sweep", now=NOW + LEASE / 2) is None
+    await store.retire(ADDRESS, Retirement.PUSHED, now=NOW + timedelta(minutes=2))
+    assert await store.claim(ADDRESS, LEASE, owner="sweep", now=PAST_DEADLINE) is None
 
 
 async def test_a_completion_after_the_claim_still_lands_but_misses_that_push() -> None:
@@ -4578,6 +4707,26 @@ async def test_a_completion_after_the_claim_still_lands_but_misses_that_push() -
     await store.complete(ADDRESS, {"event": {"accessed_files": [{"name": "late.txt"}]}}, ())
     assert claimed is not None and "accessed_files" not in claimed.event
     assert "accessed_files" in client.docs["anthropic_pending/" + ADDRESS][0]["event"]
+
+
+async def test_a_claim_that_read_a_stale_snapshot_is_refused_by_the_precondition() -> None:
+    """The lease guard is not the arbiter — the compare-and-set is.
+
+    Both pushers read before either writes, so both see no lease and both
+    reach the ``update``; only ``last_update_time`` separates them. Every
+    other test here returns at the guard three lines earlier, which would
+    leave the branch that actually prevents a double push uncovered. The
+    interleave is what the fake's ``on_get`` hook exists for."""
+    store, client = a_store()
+    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
+
+    async def rival_claims_first(_path: str) -> None:
+        client.on_get = None  # one shot; the rival's own read must not recurse
+        assert await store.claim(ADDRESS, LEASE, owner="rival", now=PAST_DEADLINE) is not None
+
+    client.on_get = rival_claims_first
+    assert await store.claim(ADDRESS, LEASE, owner="loser", now=PAST_DEADLINE) is None
+    assert client.docs["anthropic_pending/" + ADDRESS][0]["claim_owner"] == "rival"
 
 
 async def test_an_expired_lease_can_be_claimed_again() -> None:
@@ -4637,18 +4786,48 @@ async def test_a_failed_push_releases_the_lease_and_due_returns_it_again() -> No
 
 async def test_retire_superseded_tombstones_without_pushing() -> None:
     """How a successor frame discards the tail record it reconstructed."""
-    store, _ = a_store()
+    store, client = a_store(tombstone_ttl=TOMBSTONE_TTL)
     tail = "tail:" + "0" * 64
     await store.upsert(tail, {"event": an_event()}, (), now=NOW)
     await store.retire(tail, Retirement.SUPERSEDED, now=NOW)
     assert await store.seen(tail) is Seen.TOMBSTONED
     assert await store.due(PAST_DEADLINE, 10) == []
+    # Same clock as a pushed one: a discarded tail suppresses nothing, but
+    # letting it expire on a different schedule is one more thing to reason
+    # about for no gain.
+    stored = client.docs["anthropic_pending/" + tail][0]
+    assert stored["tombstone_expires_at"] == NOW + TOMBSTONE_TTL
 
 
 async def test_retire_is_harmless_on_an_address_that_is_gone() -> None:
     store, _ = a_store()
     await store.retire(ADDRESS, Retirement.FAILED, now=NOW)
     assert await store.seen(ADDRESS) is Seen.ABSENT
+
+
+async def test_a_tombstone_carries_the_instant_the_ttl_policy_deletes_it() -> None:
+    """Firestore deletes a document once the nominated field is in the
+    past, so the field holds the expiry, not the moment of tombstoning —
+    keying the policy on ``tombstoned_at`` would ask for every tombstone to
+    be collected the moment it is written, and the suppression it exists
+    for would last only as long as the deletion lag."""
+    store, client = a_store(tombstone_ttl=TOMBSTONE_TTL)
+    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
+    await store.retire(ADDRESS, Retirement.PUSHED, now=NOW)
+    stored = client.docs["anthropic_pending/" + ADDRESS][0]
+    assert stored["tombstoned_at"] == NOW
+    assert stored["tombstone_expires_at"] == NOW + TOMBSTONE_TTL
+
+
+async def test_a_live_record_is_invisible_to_the_ttl_policy() -> None:
+    """A record that has been failing to push for two hours must not be
+    deleted out from under the sweep — which is precisely the loss the
+    store exists to prevent."""
+    store, client = a_store(tombstone_ttl=TOMBSTONE_TTL)
+    await store.upsert(ADDRESS, {"event": an_event()}, (), now=NOW)
+    await store.claim(ADDRESS, LEASE, owner="sweep", now=PAST_DEADLINE)
+    await store.retire(ADDRESS, Retirement.FAILED, now=PAST_DEADLINE)
+    assert "tombstone_expires_at" not in client.docs["anthropic_pending/" + ADDRESS][0]
 
 
 def test_the_adapter_satisfies_the_port() -> None:
@@ -4659,9 +4838,31 @@ def test_the_adapter_satisfies_the_port() -> None:
     assert port is not None
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_store.py -v -k "claim or due or retire"`. Expected: `11 failed`, each with `AttributeError: 'FirestorePendingStore' object has no attribute 'claim'` (or `'due'`, or `'retire'`). `uv run ty check` fails too, on the protocol-conformance annotation — three methods are declared on the port and missing from the adapter.
+- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_store.py -v`. Expected: `26 failed` — the widened `a_store` is shared, so every test in the file now stops at `TypeError: FirestorePendingStore.__init__() got an unexpected keyword argument 'tombstone_ttl'`. That the whole file goes red here is the point of taking the constructor change in the same step as the tests that need it: after Step 3 the count goes straight back up rather than leaving a half-widened helper behind. `uv run ty check` fails too, on the protocol-conformance annotation — three methods are declared on the port and missing from the adapter.
 
-- [ ] **Step 3: Implement** — append to `FirestorePendingStore`, after `complete` and before `seen`:
+- [ ] **Step 3: Implement** — first widen the imports with the four names only this half uses (Task 5.5 left them out so its `ruff check --fix` had nothing to strip):
+
+```python
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
+from google.cloud.firestore_v1.base_query import FieldFilter
+
+from .record import Append, PendingRecord, from_document
+```
+
+then add the constructor's second duration beside `join_wait`:
+
+```python
+        # How long a tombstone suppresses a late reader's duplicate. It must
+        # exceed JOIN_WAIT + POLL_LAG + one tick; the startup assertion that
+        # enforces the inequality lands with the tick cadence in the deploy
+        # chunk, and the default matches SLASHID_TOMBSTONE_TTL_SECONDS.
+        tombstone_ttl: timedelta = timedelta(hours=2),
+```
+```python
+        self._tombstone_ttl = tombstone_ttl
+```
+
+and append the three methods to `FirestorePendingStore`, after `complete` and before `seen`:
 
 ```python
     async def claim(
@@ -4744,10 +4945,20 @@ def test_the_adapter_satisfies_the_port() -> None:
         if Retirement(outcome) is not Retirement.FAILED:
             # Push, then retire: a crash between them re-pushes an event the
             # terminal dedups, where the reverse order loses it outright.
-            # The TTL policy keys off this field and never touches a live
-            # record.
+            #
+            # ``tombstone_expires_at`` is what the TTL policy keys on, and it
+            # holds the expiry instant rather than the moment of tombstoning:
+            # Firestore deletes once the nominated field is in the past, so a
+            # policy pointed at ``tombstoned_at`` would collect every
+            # tombstone as it was written. No live record carries the field,
+            # so the policy cannot reach one.
             await self._ref(address).set(
-                {"tombstoned_at": now, "claim_owner": None, "claim_expires_at": None},
+                {
+                    "tombstoned_at": now,
+                    "tombstone_expires_at": now + self._tombstone_ttl,
+                    "claim_owner": None,
+                    "claim_expires_at": None,
+                },
                 merge=True,
             )
             return
@@ -4768,9 +4979,9 @@ def test_the_adapter_satisfies_the_port() -> None:
 
 Note `retire(PUSHED)` uses `set(merge=True)` rather than `update`: a tombstone must land even if the record was never created, which is how Reader B's standalone emission leaves a suppressing sentinel for an address it only ever pushed through.
 
-- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_store.py -v && uv run ty check`. Expected: `23 passed` (11 from Task 5.5, 12 here). If `test_due_returns_oldest_first_and_honours_its_bound` returns nothing, the cause is the `IS_NULL` behaviour in the fake's `_matches`, not the query.
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_store.py -v && uv run ty check`. Expected: `26 passed` (11 from Task 5.5, 15 here). If `test_due_returns_oldest_first_and_honours_its_bound` returns nothing, the cause is the `IS_NULL` behaviour in the fake's `_matches`, not the query.
 
-- [ ] **Step 5: Run the whole subproject** — `cd anthropic && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run ty check`. Expected: the chunk adds 58 tests (22 in `test_address.py`, 13 in `test_record.py`, 23 in `test_store.py`) to whatever Chunks 1–4 left passing; ruff and ty clean.
+- [ ] **Step 5: Run the whole subproject** — `cd anthropic && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run ty check`. Expected: the chunk adds 61 tests (22 in `test_address.py`, 13 in `test_record.py`, 26 in `test_store.py`) to whatever Chunks 1–4 left passing; ruff and ty clean.
 
 - [ ] **Step 6: Commit**
 
@@ -6036,93 +6247,82 @@ git commit -m "feat(anthropic): wire the verdict, the pending write and a tick r
 
 ## Chunk 7: The compliance readers
 
-The pull half of the component: four modules under `anthropic/src/slashid_anthropic_forwarder/compliance/` plus the configuration and the checkpoint type they need. `client.py` talks to the three feeds — activities, chats, local sessions — which **do not share a query vocabulary**; that was measured against the live API and encoding it correctly is the whole point of the module, because the one way to get it wrong (resuming the activity feed without `order=asc`) fails silently and looks healthy. `checkpoint.py` keeps three independent cursors over the `Checkpoint(timestamp, id)` type this chunk promotes out of `vertex/` into `shared/`. `denials.py` is Reader A: it polls `inference_hooks_request_denied`, filters out its own `compliance_api_accessed` noise, and joins on the activity's `request_id`, which is the `webhook-id` itself, under a `deny:` address of its own. `responses.py` is Reader B and `attachments.py` is its enrichment tier: one invocation per newly-produced assistant turn — identified by the `model` marker, which only 4 of 433 assistant messages in the largest measured session carried — and it may only touch a **joinable** run, one containing a `tool_use` id, because that is the only key the two sources agree on. Everything here runs against recorded fixtures, so Task 7.2 records them first.
+The pull half of the component. Four modules under `anthropic/src/slashid_anthropic_forwarder/compliance/`, plus the reader knobs, the checkpoint type promoted out of `vertex/`, one small addition to `record.py`, and the wiring that puts all of it on `POST /tick`. `client.py` talks to the three feeds — activities, chats, local sessions — which **do not share a query vocabulary**; encoding that correctly is the point of the module, because the one way to get it wrong (resuming the activity feed without `order=asc`) fails silently and looks healthy. `checkpoint.py` keeps three independent cursors. `denials.py` is Reader A: it polls `inference_hooks_request_denied`, filters the rest of the feed out, and looks its record up by `deny_address(activity["request_id"])`, because that `request_id` **is** the `webhook-id` Chunk 6 filed the denial under. `responses.py` is Reader B and `attachments.py` is its enrichment tier.
 
-This chunk consumes two things the earlier chunks build. From `store.py`: `PendingStore` with `seen`, `upsert`, `complete`, and `Seen.LIVE` / `Seen.TOMBSTONED` / `Seen.ABSENT` as the three-state answer of `seen`. From `content_address.py`: `invocation_address(run)`, which returns the run's first `tool_use.id` or an `inv:`-prefixed digest — the prefix is how a reader tells a joinable run from one it must leave alone. Both readers take a `settle` callback (claim, push, retire) rather than pushing themselves, so the ownership rules stay testable without a store implementation; the tick wires it to `pending.py`.
+**Everything here is built on Chunks 5 and 6, and uses their names rather than inventing parallel ones.**
 
-**One precondition on `pending.py`, stated rather than assumed.** Reader B cannot hand a completing `accessed_files` list to the store: it does not hold the frame's untruncated `tool_result` entries, and a merged list field replaces rather than unions. So it delivers its entries under `file_digests` — the same name the record's `awaiting` set uses — and the swap happens at push time. The alternative, a reader that sends a list the assembler can merge blindly, is not available for that reason, so this is the named-precondition option and it is made concrete rather than left as prose: **`pending.py` must call `apply_file_digests(fields)` — defined and tested in Task 7.7 — exactly once, on the stored mapping it is about to validate into `AIInvocationObservedV1`, immediately before that validation.** One import, one line, one call site, and Task 7.7 ships the function with the tests that pin its behaviour, so the other chunk has nothing to invent.
+| From | Used for |
+| --- | --- |
+| `address.joinable_address(run) -> str \| None` | the only key both sources compute. **`None` is the unjoinable signal** — there is no reader-side digest fallback, because a transcript-prefix digest is exactly the key the 200/302/**zero**-overlap measurement killed |
+| `address.deny_address(webhook_id)` | Reader A's lookup. One definition, imported, never re-derived |
+| `record.event_fields(event)` / `record.open_fields(...)` | the document shape. The event is nested under `"event"`, which is where `from_document` reads it and where the 1 MiB bound is applied |
+| `record.COMPLIANCE`, `record.Append` | `contributed`, without which `to_event` labels every reader event `anthropic-inference-hook` and an enriched record never becomes `anthropic-joined` |
+| `record.FILE_DIGESTS` | the one expectation a record can hold, and the key the digests arrive under |
+| `store.PendingStore`, `Seen`, `Outcome` | `seen` first, then `upsert` or `complete` |
+| `pending.push_if_ready(address, outcome, ...)` | claim, push, retire — the same arbitration the frame path uses. A standalone emission is an `upsert` that leaves the record ready, so this pushes it and the `retire(PUSHED)` inside leaves the tombstone that stops the next tick re-emitting it |
 
-### Task 7.1: compliance configuration, and the capability rule
+**Two walks, not one.** The two conversation feeds are different shapes, and one function cannot read both:
+
+| | local session | chat |
+| --- | --- | --- |
+| produced turn | assistant message carrying `model`, with no `provenance` | every assistant message; the transcript is the canonical store, not a replay |
+| `model` | on the message | on the **chat object** — no message carries one |
+| `provenance` | `{"type": …}` or absent | never present |
+| tool results | in the next **user** message, as the frame shows them | **inside the assistant message**, beside the `tool_use` that asked |
+
+The last row is the trap. `AnthropicMessage` is the response-side union and does not admit `tool_result`, so handing a chat assistant message's blocks to it straight raises a `ValidationError` — inside a tick, that takes down every reader behind it. The chat walk filters the answer to response-side blocks; the transcript half is unaffected, since `AnthropicRequestMessage` admits `tool_result` in either role.
+
+**The fixtures already exist and are committed**, recorded from the live tenant by `anthropic/scripts/record_compliance_fixtures.py` and guarded by `anthropic/tests/test_fixtures_scrubbed.py`, which re-checks every byte including what hides inside base64. They are the corpus every test below runs on, and they pin one more thing: `tests/fixtures/paired/` holds the frames captured **alongside** those transcripts, so the claim that a run's address is byte-identical across the two sources is measured here rather than asserted.
+
+---
+
+### Task 7.1: the reader knobs
 
 **Files:**
 - Modify: `anthropic/src/slashid_anthropic_forwarder/config.py`
 - Test: `anthropic/tests/test_config.py`
 
-The design's configuration table adds six compliance knobs, and it names a conflict with the code on the branch: `_check_signing` demands a signing secret unconditionally, which makes a compliance-only deployment impossible to start. The rule becomes "at least one credential, and the signing secret only when the hook is in use".
+Task 6.1 already added `compliance_key` and `compliance_enabled` — the `awaiting` seeding rule needed them on the request path. This adds the five knobs the readers themselves read, plus the checkpoint collection, and nothing else: the capability rule (`hook_enabled`, at least one credential) stays in Task 8.2 where the design's two conflicts are settled together.
 
-- [ ] **Step 1: Write the failing tests** — append to `anthropic/tests/test_config.py`:
+**Overlap to settle when Chunk 8 is written:** Task 8.1 lists twelve fields, and six of them land here — `organization_uuid`, `poll_lag_seconds`, `max_sessions_per_tick`, `attachment_hashing`, `max_attachment_fetch_bytes`, `checkpoint_collection`. Task 8.1 keeps `tick_interval_seconds`, the `gcp_project_id`-is-required change and the `mode="before"` validator that turns `""` into `None` — and that validator must still name `compliance_key` and `organization_uuid`, which is why it stays there rather than moving here: Terraform sets every variable it manages, and `SLASHID_COMPLIANCE_KEY=""` would otherwise switch the readers on with an empty key.
+
+- [ ] **Step 1: Write the failing tests** — append to `tests/test_config.py`, using that module's own `_config` builder:
 
 ```python
-COMPLIANCE = {
-    "SLASHID_COMPLIANCE_KEY": "sk-ant-api01-fixture",
-    "SLASHID_ORGANIZATION_UUID": "11111111-1111-1111-1111-111111111111",
-}
-
-
-def test_compliance_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch)
-    cfg = Config()
-    assert cfg.compliance_key is None
-    assert cfg.compliance_enabled is False
-    assert cfg.hook_enabled is True
-    assert cfg.poll_lag_seconds == 120
-    assert cfg.max_sessions_per_tick == 200
-    assert cfg.attachment_hashing == "md5"
-    assert cfg.max_attachment_fetch_bytes == 10 * 1024 * 1024
-
-
-def test_compliance_only_needs_no_signing_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The whole point of the capability split: the readers host nothing and
-    # configure nothing in claude.ai, so there is no secret to invent.
-    _env(monkeypatch, **COMPLIANCE)
-    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    cfg = Config()
-    assert cfg.compliance_enabled is True
-    assert cfg.hook_enabled is False
-
-
-def test_neither_credential_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch)
-    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    with pytest.raises(ValidationError):
-        Config()
-
-
-def test_compliance_key_requires_the_organization_uuid(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The key reads every linked organization; the hook binding is per
-    # organization. Without the filter the readers would emit another
-    # tenant's traffic under this connection.
-    _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-fixture")
-    with pytest.raises(ValidationError):
-        Config()
+def test_the_reader_knobs_have_the_designed_defaults() -> None:
+    config = _config()
+    assert config.organization_uuid is None
+    assert config.poll_lag_seconds == 120
+    assert config.max_sessions_per_tick == 200
+    assert config.attachment_hashing == "md5"
+    assert config.max_attachment_fetch_bytes == 10 * 1024 * 1024
+    assert config.checkpoint_collection == "anthropic_checkpoints"
 
 
 def test_attachment_hashing_must_be_md5_or_full(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch, **COMPLIANCE, SLASHID_ATTACHMENT_HASHING="sha256")
+    _env(monkeypatch, SLASHID_ATTACHMENT_HASHING="sha256")
     with pytest.raises(ValidationError):
         Config()
 ```
 
-- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_config.py -v`. Expected: `AttributeError: 'Config' object has no attribute 'compliance_key'` on the first four, and the `sha256` case passing for the wrong reason (unknown env vars are ignored).
+- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_config.py -v`. Expected: two failures — `AttributeError: 'Config' object has no attribute 'organization_uuid'`, and `Failed: DID NOT RAISE <class 'pydantic_core.ValidationError'>` on the second, because an unmodelled env var is ignored (`extra="ignore"`) rather than rejected.
 
-- [ ] **Step 3: Implement** — add the fields after `capture_deny_marker` and replace the validator:
+- [ ] **Step 3: Implement** — add to `Config`, after the compliance key Task 6.1 introduced:
 
 ```python
-    # --- compliance readers -------------------------------------------
-    # sk-ant-api01-… with read:compliance_activities and
-    # read:compliance_user_data. Setting it enables the readers.
-    compliance_key: str | None = None
-    # The key can read every linked organization while the hook's
-    # tenant binding is per organization, so the readers filter to this
-    # one. It equals the frame's `tenant_id`.
+    # The key can read every linked organization while the hook's tenant
+    # binding is per organization, so the readers filter to this one. It
+    # equals the frame's `tenant_id`. Not a query parameter: both
+    # listings reject `organization_uuid`, so the filter runs over the
+    # rows a listing returns.
     organization_uuid: str | None = None
     # How far behind now the `updated_at.gte` bound sits, and the initial
     # watermark on a cold start — never a full backfill.
     poll_lag_seconds: int = 120
     # Bounds one tick against the 600 rpm shared with the sync adapter.
-    # The local-sessions listing cannot be ordered, so a tick that hits
-    # this cap leaves the oldest sessions untouched and must not advance
-    # its watermark.
+    # The local-session listing cannot be ordered, so a tick that hits
+    # this cap leaves the *oldest* sessions untouched and must not
+    # advance its watermark.
     max_sessions_per_tick: int = 200
     # `md5` takes the digest the file listing already carries and makes
     # no extra request. `full` downloads the stored bytes for sha1 and
@@ -6133,181 +6333,209 @@ def test_attachment_hashing_must_be_md5_or_full(monkeypatch: pytest.MonkeyPatch)
     # file is never started, and falls back to the listing's md5 rather
     # than to no digest. A ranged read yields a snippet, never a digest.
     max_attachment_fetch_bytes: int = 10 * 1024 * 1024
-
-    @property
-    def hook_enabled(self) -> bool:
-        """The hook is in use when it can verify, or was told not to."""
-        return bool(self.signing_secrets) or self.hook_allow_unsigned
-
-    @property
-    def compliance_enabled(self) -> bool:
-        return bool(self.compliance_key)
-
-    @model_validator(mode="after")
-    def _check_credentials(self) -> Config:
-        if not self.hook_enabled and not self.compliance_enabled:
-            raise ValueError(
-                "set SLASHID_HOOK_SIGNING_SECRET (or HOOK_ALLOW_UNSIGNED) "
-                "or SLASHID_COMPLIANCE_KEY — with neither there is nothing to do"
-            )
-        if self.compliance_enabled and not self.organization_uuid:
-            raise ValueError("SLASHID_ORGANIZATION_UUID is required with SLASHID_COMPLIANCE_KEY")
-        if self.hook_allow_unsigned and self.policy_url:
-            raise ValueError("HOOK_ALLOW_UNSIGNED cannot be combined with POLICY_URL")
-        return self
+    # One document per feed, in its own collection: a watermark is a
+    # different lifetime from a pending record, and the pending
+    # collection carries a TTL policy that would delete these.
+    checkpoint_collection: str = "anthropic_checkpoints"
 ```
 
-Delete `_check_signing`; `_check_credentials` replaces it. The existing `test_signing_secret_required_unless_unsigned_allowed` still passes — with no compliance key the hook is the only capability, so its absence is still a startup failure.
-
-- [ ] **Step 4: Run** — `cd anthropic && uv run ruff format . && uv run pytest tests/test_config.py -v && uv run ruff check . && uv run ty check`. Expected: 10 passed.
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run pytest tests/test_config.py -v && uv run ruff check . && uv run ty check`. Expected: the module's existing cases plus 2.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add anthropic/src/slashid_anthropic_forwarder/config.py anthropic/tests/test_config.py
-git commit -m "feat(anthropic): compliance config, and the signing secret only when the hook runs"
+git commit -m "feat(anthropic): the compliance reader knobs"
 ```
 
-### Task 7.2: record the compliance fixtures from the live tenant
+### Task 7.2: the recorded corpus, and one transport that serves it
 
 **Files:**
-- Create: `anthropic/scripts/record_compliance_fixtures.py`
-- Create: `anthropic/tests/fixtures/compliance/*.json` (recorded output, committed)
-- Test: `anthropic/tests/test_fixtures_scrubbed.py`
+- Create: `anthropic/tests/compliance_fixtures.py`
+- Test: `anthropic/tests/test_compliance_fixtures.py`
+- Read only: `anthropic/tests/fixtures/compliance/*.json`, `anthropic/scripts/record_compliance_fixtures.py`, `anthropic/tests/test_fixtures_scrubbed.py`
 
-Every test below runs against recorded responses, and the repo has none. This records them once from the tenant that produced `tests/fixtures/frame_*.json`, scrubbed with **the same substitution map those frames already use**, so a compliance fixture and a frame fixture describe the same conversation: organization `11111111-1111-1111-1111-111111111111`, user `user_01AbCdEfGhIjKlMnOpQrStUv`, `alice@example.com`, and session uuids `0000000N-0000-4000-8000-000000000000`. The `clls_` identifier is not opaque — it is URL-safe base64 of `{"v":1,"o":…,"p":…,"s":…}` — so scrubbing it means decoding, substituting `o`, `p` and `s`, and **re-encoding**, not replacing the outer string. A `toolu_` id is a model-minted token with no tenant information and is kept verbatim: it is the join key the cross-source tests measure.
+The corpus is committed; this task is the double that serves it, written **before** any reader so no reader is ever tested against a hand-built dict. It lives in its own module, like Chunk 5's `tests/fake_firestore.py`, because three test modules import it.
 
-The rejections are recorded too — four of them, all confirmed against the tenant. `updated_at.gte` is refused on chats without `order_by`; local sessions refuse **both** ordering parameters; `created_at[gte]` is refused in favour of `created_at.gte`; and **`organization_uuid` is not a query parameter on either listing**, which is why the readers filter to the bound organization in Python rather than pushing the filter into the URL. A recorded 4xx body is what keeps each of those from being quietly "fixed" later.
+Two properties matter, and the second is the one a naive double gets wrong.
 
-Capture exactly these, each written as `{"request": {"method", "url", "params"}, "status": …, "body": …}` so a test can assert the query vocabulary from the same file that carries the response. The paths are the ones that answered, not inferred ones — note `/apps/sessions/local`, which is **not** `/apps/local_sessions`, and `/organizations/me`, since bare `/organizations` is a 404:
+**Route by path, never by call order.** One reader pass touches four endpoints in an order that depends on the data; a double that replays a list positionally serves a chat listing to a session request. Every fixture declares the path it answers in its own `request.path`, so the routing table builds itself from the corpus and cannot drift from it.
 
-| Fixture | Request |
+**Never repeat a body.** The earlier draft of this double answered every request with the last recorded body, which turns a pager into an infinite loop: `iter_activities` follows `last_id` while `has_more` is true, so the test hangs instead of failing. Serving each path its own recorded body once — and 404 for an unknown path — makes a wrong request a visible failure. As it happens every recorded listing has `has_more: false` and `next_page: null`, so the pagers terminate on the first page; the one test that needs a second page builds a synthetic pair inline and says so.
+
+What the corpus holds:
+
+| Fixture | What it is |
 | --- | --- |
-| `activities_asc.json` | `GET /activities` with `created_at.gte`, `order=asc`, `limit=100` → `{data, has_more, first_id, last_id}` |
-| `activities_asc_page2.json` | the same, plus `after_id=<last_id of page 1>` |
-| `activities_default_order.json` | `GET /activities` with `created_at.gte` and **no** `order` — proof the default is `desc` |
-| `chats_updated.json` | `GET /apps/chats` with `updated_at.gte`, `order_by=updated_at`, `limit=100` → `{data, has_more, first_id, last_id}` |
-| `chats_rejected.json` | the same **without** `order_by`, and again with `order=updated_at` — both 4xx, a two-entry list |
-| `chat_messages.json` | `GET /apps/chats/{claude_chat_id}/messages` for the claude.ai chat behind `frame_attachment.json` — answers the **chat object**, whose turns are in a `chat_messages` array, not `data` |
-| `sessions_updated.json` | `GET /apps/sessions/local` with `updated_at.gte`, `limit=20` → `{data, next_page}`; item keys `created_at, id, organization_uuid, product_surface, truncated, type, updated_at, user, workspace_id` |
-| `sessions_updated_page2.json` | the same, continued with the listing's `next_page` |
-| `sessions_order_rejected.json` | `GET /apps/sessions/local` with `order=asc`, and again with `order_by=updated_at` — both rejections, a two-entry list |
-| `filters_rejected.json` | `GET /activities` with `created_at[gte]`, and both listings with `organization_uuid=<uuid>` — three rejections, a three-entry list |
-| `session_messages.json` | `GET /apps/sessions/local/{clls_id}/messages` with `limit=1000`, `tool_result_max_bytes=10000`, `tool_use_input_max_bytes=10000` → `{data, next_page, session}`; message keys are exactly `type, id, role, created_at, provenance, model, content` |
-| `session_messages_page2.json` | the same, continued with that response's `next_page` — a transcript paginates like the listing it came from |
-| `session_messages_full.json` | the same with both caps at `-1`, so a test can see a `truncated` flag appear and disappear |
-| `file_content_maria.txt` | `GET /apps/chats/files/{id}/content` for the small plain-text attachment — raw bytes, the one body worth keeping |
-| `file_head_404.json` | `HEAD` on that same content URL: status only, recorded because it is the reason the listing is the only cheap metadata |
-| `organization_me.json` | `GET /organizations/me`, the only endpoint that answers with the organization. Not read at runtime — `SLASHID_ORGANIZATION_UUID` is configured — but it is how an operator finds that uuid, and the README's instruction should cite a capture rather than a guess |
+| `sessions_list.json` | `GET /apps/sessions/local?limit=30` → `{data, next_page}`, six sessions. Item keys: `type, id, organization_uuid, workspace_id, user, product_surface, created_at, updated_at, truncated`. **`user` is here** — no message carries one |
+| `session_messages_1..6.json` | `GET /apps/sessions/local/{clls_id}/messages?limit=1000&tool_result_max_bytes=-1&tool_use_input_max_bytes=-1` → `{session, data, next_page}`. Message keys are exactly `type, id, role, created_at, provenance, model, content` |
+| `chats_list.json` | `GET /apps/chats?limit=100` → `{data, has_more, first_id, last_id}`. The chat item carries `model` and `user` |
+| `chat_messages_1..3.json` | `GET /apps/chats/{claude_chat_id}/messages` → the **chat object**, turns under `chat_messages`; message keys `id, role, created_at, content, files, generated_files, artifacts` — no `model`, no `provenance` |
+| `activities.json` | `GET /activities?limit=1000&order=asc` → 26 rows over ten types, exactly one `inference_hooks_request_denied` |
+| `filters_rejected.json` | a `cases` list: the four rejections, plus `GET /organizations` answering 200 |
+| `organizations_me.json` | `GET /organizations/me` answering **404** — the `/me` suffix does not exist under `/v1/compliance`; `/organizations` is the one that answers, and it is in `filters_rejected.json` |
 
-**A message carries no user.** The listed keys above are the whole message: identity lives on the *session* item's `user`, so Reader B takes it from the listing and hands it down, and never walks the transcript for it.
+Three fixtures earn their place by being awkward. `session_messages_3.json` is a **tool-free run** — the unjoinable case, and the one Reader B must leave alone. `chat_messages_2.json` has five assistant messages with `tool_result` blocks inline and two artifacts. `chat_messages_1.json` carries the three-entry `files[]` — `guiaSADT.pdf` (59430 B), a JPEG (72878 B) and `maria.txt` (27 B, md5 `9ae4c5f2489fadc563c6f747d6298fe4`), which is **byte-identical to the extracted text in `frame_attachment.json`** and is what makes the `full`-tier test a real digest comparison rather than a mock agreeing with itself.
 
-The PDF and the JPEG are recorded as **listing entries only** — their `md5` and `size_bytes` ride in `chat_messages.json` and are all the `md5` tier needs, the over-cap test needs no body by construction, and neither belongs in the repo.
-
-- [ ] **Step 1: Write the recorder** — `anthropic/scripts/record_compliance_fixtures.py`. It takes the real identifiers from the environment so none of them is ever written into the file, and the session map from repeated `--session` arguments:
+- [ ] **Step 1: Write the helper** — `anthropic/tests/compliance_fixtures.py`. It is test infrastructure, not a test:
 
 ```python
-"""Record Compliance API responses into tests/fixtures/compliance/, scrubbed.
+"""The recorded compliance corpus, and one transport that serves it.
 
-Run once, against the tenant that produced tests/fixtures/frame_*.json:
-
-    ANTHROPIC_COMPLIANCE_KEY=sk-ant-api01-… \
-    ANTHROPIC_ORG_UUID=… ANTHROPIC_ACCOUNT_UUID=… \
-    ANTHROPIC_USER_ID=user_01… ANTHROPIC_USER_EMAIL=… \
-    uv run python scripts/record_compliance_fixtures.py \
-        --session <real-uuid>=00000002-0000-4000-8000-000000000000 \
-        --chat <real-uuid>=00000006-0000-4000-8000-000000000000
-
-Scrubbing is a whole-document string substitution over the serialized
-JSON, plus a decode/re-encode pass for ``clls_`` identifiers, whose
-payload carries the organization, account and session uuids inside
-base64. Nothing is written until every substitution has been applied.
-"""
-```
-
-Its shape: `record(method, path, params, name)` performs the call, prints the effective URL and status, scrubs, writes. Two rules worth spelling out in the module:
-
-```python
-FAKE_ORG = "11111111-1111-1111-1111-111111111111"
-FAKE_ACCOUNT = "22222222-2222-2222-2222-222222222222"
-FAKE_USER = "user_01AbCdEfGhIjKlMnOpQrStUv"
-FAKE_EMAIL = "alice@example.com"
-# Keep `toolu_` ids verbatim: they are model-minted tokens carrying no
-# tenant information, and they are the key the cross-source tests join on.
-
-
-def scrub_session_id(session_id: str, subs: dict[str, str]) -> str:
-    """Re-encode a ``clls_`` id with substituted uuids.
-
-    Replacing the outer string would break the decode the client does,
-    and leaving it would leak the organization and account uuids that
-    sit inside its base64 payload.
-    """
-    raw = base64.urlsafe_b64decode(_pad(session_id.removeprefix("clls_")))
-    payload = json.loads(raw)
-    for key in ("o", "p", "s"):
-        if payload.get(key) in subs:
-            payload[key] = subs[payload[key]]
-    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    return "clls_" + encoded.rstrip("=")
-```
-
-- [ ] **Step 2: Run it against the tenant** — `cd anthropic && uv run python scripts/record_compliance_fixtures.py --session … --chat …`. Expected: one line per capture, e.g. `GET https://api.anthropic.com/v1/compliance/activities?created_at.gte=…&order=asc&limit=100 -> 200 (68 rows)`, and the two rejection captures printing `-> 400`. **A 404 here means a path constant is wrong** — fix it in the recorder before any module depends on it; this task is the only place a wrong path is cheap.
-
-- [ ] **Step 3: Write the scrub guard**, `anthropic/tests/test_fixtures_scrubbed.py`:
-
-```python
-"""No real identifier may reach the repository.
-
-The fixtures are recorded from a live tenant, so this walks every byte of
-them on each run rather than trusting the recorder.
+Recorded from the live tenant by ``scripts/record_compliance_fixtures.py``
+and scrubbed; ``test_fixtures_scrubbed.py`` re-checks every byte, base64
+included. Each file is ``{request: {method, path, params}, status, body}``,
+except ``filters_rejected.json``, which holds a ``cases`` list of the same
+shape.
 """
 
 from __future__ import annotations
 
-import base64
 import json
-import pathlib
-import re
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
-FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "compliance"
-ALLOWED_UUIDS = {
-    "11111111-1111-1111-1111-111111111111",
-    "22222222-2222-2222-2222-222222222222",
-} | {f"0000000{n}-0000-4000-8000-000000000000" for n in range(1, 10)}
-UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-FORBIDDEN = ("sk-ant-", "whsec_", "@anthropic.com")
+import httpx
 
+FIXTURES = Path(__file__).parent / "fixtures" / "compliance"
+PAIRED = Path(__file__).parent / "fixtures" / "paired"
 
-def _texts() -> list[tuple[str, str]]:
-    return [(p.name, p.read_text(errors="replace")) for p in sorted(FIXTURES.iterdir())]
-
-
-def test_no_credentials_or_real_uuids() -> None:
-    for name, text in _texts():
-        for needle in FORBIDDEN:
-            assert needle not in text, f"{name} carries {needle!r}"
-        assert set(UUID.findall(text)) <= ALLOWED_UUIDS, name
+# The stored bytes of the smallest attachment in the corpus. Its md5 is the
+# one `chat_messages_1.json` lists, and it is byte-identical to the text
+# `frame_attachment.json` carries — which is the measured claim that plain
+# text crosses the two surfaces unchanged.
+MARIA_ID = "claude_file_01MpfHfLBGDPcEBwPQvWZMbY"
+MARIA_BYTES = b"Maria tinha um carneirinho\n"
 
 
-def test_clls_ids_decode_to_scrubbed_uuids() -> None:
-    # The uuids inside a session id are base64, so the regex above cannot
-    # see them. Decode every one and check its payload too.
-    for name, text in _texts():
-        for encoded in re.findall(r"clls_[A-Za-z0-9_-]+", text):
-            raw = encoded.removeprefix("clls_")
-            payload = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-            assert {payload["o"], payload["p"], payload["s"]} <= ALLOWED_UUIDS, name
+def recorded(name: str) -> dict[str, Any]:
+    return json.loads((FIXTURES / name).read_text())
+
+
+def body(name: str) -> dict[str, Any]:
+    return recorded(name)["body"]
+
+
+def cases(name: str = "filters_rejected.json") -> list[dict[str, Any]]:
+    return recorded(name)["cases"]
+
+
+def _routes() -> dict[str, str]:
+    """Path → fixture, built from the corpus so it cannot drift from it."""
+    table: dict[str, str] = {}
+    for path in sorted(FIXTURES.iterdir()):
+        payload = json.loads(path.read_text())
+        request = payload.get("request")
+        if isinstance(request, dict) and request.get("path"):
+            table[request["path"]] = path.name
+    return table
+
+
+ROUTES = _routes()
+
+
+def transport(
+    *, files: Mapping[str, bytes] | None = None
+) -> tuple[httpx.AsyncClient, list[httpx.Request]]:
+    """A client serving the corpus by path, and the requests it saw.
+
+    By path and never by call order: one reader pass touches four
+    endpoints in a data-dependent order. An unrouted path is a 404, which
+    surfaces a wrong request as a failure instead of as a plausible body.
+    """
+    seen: list[httpx.Request] = []
+    bodies = {MARIA_ID: MARIA_BYTES, **(files or {})}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path.removeprefix("/v1/compliance")
+        if "/files/" in path:
+            file_id = path.split("/files/")[1].split("/")[0]
+            if file_id not in bodies:
+                return httpx.Response(404, json={"type": "error"})
+            return httpx.Response(200, content=bodies[file_id])
+        name = ROUTES.get(path)
+        if name is None:
+            return httpx.Response(404, json={"type": "error", "path": path})
+        entry = recorded(name)
+        return httpx.Response(entry["status"], json=entry["body"])
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler)), seen
 ```
 
-- [ ] **Step 4: Run** — `cd anthropic && uv run pytest tests/test_fixtures_scrubbed.py -v`. Expected: 2 passed. A failure names the fixture and the leak; re-record rather than hand-editing, so the recorder's map stays the single source of truth.
+- [ ] **Step 2: Write its tests** — `anthropic/tests/test_compliance_fixtures.py`:
 
-- [ ] **Step 5: Commit**
+```python
+"""The double itself, because three modules trust it."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+from tests.compliance_fixtures import (
+    MARIA_BYTES,
+    MARIA_ID,
+    PAIRED,
+    ROUTES,
+    body,
+    cases,
+    transport,
+)
+
+
+def test_every_listing_endpoint_is_routed() -> None:
+    assert {"/apps/sessions/local", "/apps/chats", "/activities"} <= set(ROUTES)
+
+
+async def test_a_path_is_served_once_and_an_unknown_path_404s() -> None:
+    client, seen = transport()
+    async with client:
+        first = await client.get("https://api.anthropic.com/v1/compliance/apps/chats")
+        missing = await client.get("https://api.anthropic.com/v1/compliance/nope")
+    assert first.json() == body("chats_list.json")
+    assert missing.status_code == 404
+    assert len(seen) == 2
+
+
+async def test_the_file_body_matches_the_listed_md5() -> None:
+    # Not a mock agreeing with itself: the listing's md5 was recorded from
+    # the tenant and these bytes are the frame's extracted text.
+    listed = next(
+        entry
+        for message in body("chat_messages_1.json")["chat_messages"]
+        for entry in (message.get("files") or [])
+        if entry["id"] == MARIA_ID
+    )
+    assert hashlib.md5(MARIA_BYTES).hexdigest() == listed["md5"]
+    assert len(MARIA_BYTES) == listed["size_bytes"]
+
+
+def test_the_paired_frames_cover_the_recorded_sessions() -> None:
+    # tests/fixtures/paired/session_N_frame_M.json was captured alongside
+    # session_messages_N.json. Task 7.9 measures the address across them.
+    sessions = {json.loads(p.read_text())["session_id"] for p in PAIRED.glob("*.json")}
+    assert len(sessions) == 6
+
+
+def test_the_recorded_rejections_are_the_four_the_client_encodes() -> None:
+    rejected = [c for c in cases() if c["status"] >= 400]
+    params = " ".join(c["request"]["params"] for c in rejected)
+    assert "updated_at.gte" in params  # chats, without order_by
+    assert "order=asc" in params  # local sessions
+    assert "order_by=updated_at" in params  # local sessions, the other one
+    assert "created_at%5Bgte%5D" in params  # the bracketed form
+    assert any(c["status"] == 200 and c["request"]["path"] == "/organizations" for c in cases())
+```
+
+- [ ] **Step 3: Run** — `cd anthropic && uv run ruff format . && uv run pytest tests/test_compliance_fixtures.py tests/test_fixtures_scrubbed.py -v && uv run ruff check .`. Expected: 5 passed here, and the scrub guard green — it already is, and this task must not change it.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add anthropic/scripts/record_compliance_fixtures.py \
-        anthropic/tests/fixtures/compliance anthropic/tests/test_fixtures_scrubbed.py
-git commit -m "test(anthropic): record scrubbed compliance api fixtures"
+git add anthropic/tests/compliance_fixtures.py anthropic/tests/test_compliance_fixtures.py
+git commit -m "test(anthropic): route the recorded compliance corpus by path"
 ```
 
 ### Task 7.3: `client.py` — three feeds, three query vocabularies
@@ -6317,7 +6545,7 @@ git commit -m "test(anthropic): record scrubbed compliance api fixtures"
 - Create: `anthropic/src/slashid_anthropic_forwarder/compliance/client.py`
 - Test: `anthropic/tests/test_client.py`, `anthropic/tests/test_feed_vocabulary.yaml`
 
-One adapter per feed, not one generic pager. The differences are measured and none of them is cosmetic:
+One adapter per feed, not one generic pager. The differences are measured and none is cosmetic:
 
 | Feed | Lower bound | Ordering | Page token |
 | --- | --- | --- | --- |
@@ -6325,19 +6553,20 @@ One adapter per feed, not one generic pager. The differences are measured and no
 | chats | `updated_at.gte`, **rejected** unless ordered | `order_by=updated_at` — `order_by`, not `order` | `last_id`, sent back as `after_id` |
 | local sessions | `updated_at.gte` | **no ordering parameter exists**; both are rejected; newest-first | `next_page` |
 
-The activity one is the dangerous one, because getting it wrong produces no error at all: the feed answers 200 with full pages, and a reader resuming from its watermark without `order=asc` walks steadily further into the past and never sees a new denial. Local sessions being unorderable is why the sessions adapter returns a `Drain` carrying `complete`, rather than an iterator — a truncated drain is a value the caller has to handle, so it is in the type.
+The activity one is the dangerous one, because getting it wrong produces no error: the feed answers 200 with full pages, and a reader resuming from its watermark without `order=asc` walks steadily further into the past and never sees a new denial. Local sessions being unorderable is why the sessions adapter returns a `Drain` carrying `complete` rather than an iterator — a truncated drain is a value the caller must handle, so it is in the type.
+
+Three more facts the paths and filters rest on: the session listing is `/apps/sessions/local`, **not** `/apps/local_sessions`; the bound is dotted, `created_at[gte]` is rejected; and `organization_uuid` is not a query parameter on either listing, so the bound-organization filter runs in Python over the rows a listing returns.
+
+The client **does not own its httpx client**: the tick shares one with the push path, and headers are per request. So no `aclose`, no context manager — a double-closed client is a failure mode this module has no reason to invent.
 
 - [ ] **Step 1: Write the failing tests** — `anthropic/tests/test_client.py`:
 
 ```python
-"""The three feeds, against recorded responses."""
+"""The three feeds, against the recorded corpus."""
 
 from __future__ import annotations
 
-import json
-import pathlib
 from datetime import UTC, datetime
-from typing import Any
 
 import httpx
 import pytest
@@ -6349,113 +6578,84 @@ from slashid_anthropic_forwarder.compliance.client import (
     decode_session_id,
     provenance_type,
 )
+from tests.compliance_fixtures import MARIA_BYTES, MARIA_ID, body, cases, transport
 
-FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "compliance"
 SINCE = datetime(2026, 9, 20, 12, 0, 0, tzinfo=UTC)
 
 
-def recorded(name: str) -> dict[str, Any]:
-    return json.loads((FIXTURES / name).read_text())
-
-
-def replay(*names: str) -> tuple[ComplianceClient, list[httpx.Request]]:
-    """Answer each successive request with the next recorded response."""
-    bodies = [recorded(n) for n in names]
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        entry = bodies[min(len(seen) - 1, len(bodies) - 1)]
-        return httpx.Response(entry["status"], json=entry["body"])
-
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+def a_client() -> tuple[ComplianceClient, list[httpx.Request]]:
+    client, seen = transport()
     return ComplianceClient(client, api_key="sk-ant-api01-fixture"), seen
 
 
 @yaml_pytest(filename="test_feed_vocabulary.yaml")
-async def test_feed_vocabulary(feed: str, fixture: str, params: dict[str, str]) -> None:
-    client, seen = replay(fixture)
-    async with client:
-        await _drain(client, feed)
+async def test_feed_vocabulary(feed: str, params: dict[str, str]) -> None:
+    client, seen = a_client()
+    await _drain(client, feed)
     query = dict(seen[0].url.params)
     assert {k: query.get(k) for k in params} == params
-    # Nothing a feed rejects may leak in from another feed's vocabulary.
+    # Nothing a feed rejects may leak in from another feed's vocabulary —
+    # `order` on chats and either ordering on sessions are recorded 4xx.
     assert set(query) <= set(params) | {"limit", "after_id", "page"}
 
 
-async def test_activities_authenticate_with_the_api_key_and_version() -> None:
-    client, seen = replay("activities_asc.json")
-    async with client:
-        [_ async for _ in client.iter_activities(since=SINCE)]
+async def test_requests_carry_the_key_and_the_version() -> None:
+    client, seen = a_client()
+    [_ async for _ in client.iter_activities(since=SINCE)]
     assert seen[0].headers["x-api-key"] == "sk-ant-api01-fixture"
     assert seen[0].headers["anthropic-version"] == "2023-06-01"
 
 
-async def test_activities_page_forward_with_after_id() -> None:
-    client, seen = replay("activities_asc.json", "activities_asc_page2.json")
-    async with client:
-        rows = [row async for row in client.iter_activities(since=SINCE)]
-    page1 = recorded("activities_asc.json")["body"]
-    assert len(seen) >= 2
-    assert dict(seen[1].url.params)["after_id"] == page1["last_id"]
-    assert len(rows) > len(page1["data"])
+async def test_activities_stop_when_has_more_is_false() -> None:
+    client, seen = a_client()
+    rows = [row async for row in client.iter_activities(since=SINCE)]
+    assert len(rows) == len(body("activities.json")["data"])
+    assert len(seen) == 1
 
 
-async def test_the_activity_feed_default_is_newest_first() -> None:
-    # Recorded without `order`, and the reason the adapter always sends it:
-    # resuming from a watermark against a desc feed pages into the past
-    # forever, answering 200 the whole way.
-    body = recorded("activities_default_order.json")["body"]
-    stamps = [row["created_at"] for row in body["data"]]
-    assert stamps == sorted(stamps, reverse=True)
+async def test_a_second_page_is_fetched_with_after_id() -> None:
+    # No second page was recorded — the tenant's whole window fits one —
+    # so this pair is synthetic, and it exists only to pin the cursor
+    # parameter the recorded body names (`last_id`) to the one the
+    # request sends (`after_id`).
+    pages = [
+        {"data": [{"id": "a", "type": "x"}], "has_more": True, "last_id": "cursor-1"},
+        {"data": [{"id": "b", "type": "x"}], "has_more": False, "last_id": "cursor-2"},
+    ]
+    seen: list[httpx.Request] = []
 
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=pages[min(len(seen) - 1, 1)])
 
-async def test_chats_reject_the_bound_without_order_by_and_reject_order() -> None:
-    # Recorded, not asserted from documentation: `updated_at.gte` alone is
-    # a 4xx, and the parameter is `order_by`, never `order`.
-    for entry in recorded("chats_rejected.json")["body"]:
-        assert entry["status"] >= 400
-
-
-async def test_local_sessions_reject_every_ordering_parameter() -> None:
-    for entry in recorded("sessions_order_rejected.json")["body"]:
-        assert entry["status"] >= 400
-
-
-async def test_the_bound_is_dotted_and_the_org_filter_is_not_a_parameter() -> None:
-    # Three more rejections, and the second pair is why the readers filter
-    # to the bound organization in Python: `organization_uuid` is not a
-    # query parameter on either listing, so the filter cannot move into
-    # the URL however much cheaper that would be.
-    for entry in recorded("filters_rejected.json")["body"]:
-        assert entry["status"] >= 400
-    tried = {tuple(sorted(entry["request"]["params"])) for entry in
-             recorded("filters_rejected.json")["body"]}
-    assert any("created_at[gte]" in params for params in tried)
-    assert any("organization_uuid" in params for params in tried)
+    client = ComplianceClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k"
+    )
+    rows = [row async for row in client.iter_activities(since=SINCE)]
+    assert [r["id"] for r in rows] == ["a", "b"]
+    assert dict(seen[1].url.params)["after_id"] == "cursor-1"
 
 
 async def test_local_sessions_drain_is_marked_incomplete_at_the_cap() -> None:
-    client, _ = replay("sessions_updated.json", "sessions_updated_page2.json")
-    async with client:
-        drain = await client.drain_local_sessions(since=SINCE, limit=1)
-    assert len(drain.sessions) == 1
+    client, _ = a_client()
+    drain = await client.drain_local_sessions(since=SINCE, limit=2)
+    assert len(drain.sessions) == 2
     assert drain.complete is False
 
 
 async def test_a_completed_drain_says_so() -> None:
-    client, _ = replay("sessions_updated.json")
-    async with client:
-        drain = await client.drain_local_sessions(since=SINCE, limit=500)
+    client, _ = a_client()
+    drain = await client.drain_local_sessions(since=SINCE, limit=500)
+    assert len(drain.sessions) == len(body("sessions_list.json")["data"])
     assert drain.complete is True
 
 
 async def test_decode_session_id_yields_the_frames_session_id() -> None:
-    body = recorded("sessions_updated.json")["body"]
-    decoded = {decode_session_id(s["id"]) for s in body["data"]}
-    # The frame fixtures' session ids are exactly these uuids; that is the
+    decoded = {decode_session_id(s["id"]) for s in body("sessions_list.json")["data"]}
+    # The paired frames carry exactly these as `session_id`; that is the
     # whole join between a captured delivery and a stored transcript.
-    assert "00000002-0000-4000-8000-000000000000" in decoded
+    assert "00000001-0000-4000-8000-000000000000" in decoded
+    assert None not in decoded
 
 
 def test_decode_session_id_survives_a_missing_pad_and_refuses_junk() -> None:
@@ -6469,53 +6669,66 @@ def test_provenance_is_an_object_not_a_string() -> None:
         "content_unavailable"
     )
     # Unknown values are tolerated by the schema and by us: skipped, never
-    # rejected. A bare string was never the shape.
+    # rejected. A bare string was never the shape, and `None` is the shape
+    # a produced local-session turn actually has.
     assert provenance_type({"provenance": {"type": "future_kind"}}) == "future_kind"
+    assert provenance_type({"provenance": None}) is None
     assert provenance_type({}) is None
 
 
-async def test_transcript_truncation_is_visible_and_liftable() -> None:
-    capped = recorded("session_messages.json")["body"]
-    full = recorded("session_messages_full.json")["body"]
-    assert any(
-        block.get("truncated")
-        for msg in capped["data"]
-        for block in msg.get("content", [])
-    )
-    assert not any(
-        block.get("truncated") for msg in full["data"] for block in msg.get("content", [])
-    )
-
-
 async def test_a_chat_transcript_lives_under_chat_messages_not_data() -> None:
-    # The chats endpoint answers the chat object itself, so its turns are
-    # in `chat_messages`. Reading `data` here silently yields nothing.
-    client, _ = replay("chat_messages.json")
-    async with client:
-        messages = await client.chat_messages("11111111-2222-3333-4444-555555555555")
-    assert messages and messages == recorded("chat_messages.json")["body"]["chat_messages"]
+    # The chats endpoint answers the chat object, so its turns are under
+    # `chat_messages`. Reading `data` yields nothing and says nothing.
+    client, _ = a_client()
+    chat = body("chats_list.json")["data"][1]
+    messages = await client.chat_messages(chat["id"])
+    assert messages
+    assert messages == body("chat_messages_2.json")["chat_messages"]
 
 
-async def test_a_session_transcript_pages_on_next_page() -> None:
-    # `{data, next_page, session}` — the transcript paginates like the
-    # listing it came from, not like the two ordered feeds.
-    client, seen = replay("session_messages.json", "session_messages_page2.json")
-    async with client:
-        messages = await client.session_messages("clls_fixture")
-    first = recorded("session_messages.json")["body"]
-    assert dict(seen[1].url.params)["page"] == first["next_page"]
-    assert len(messages) > len(first["data"])
+async def test_the_chat_object_is_available_for_its_model() -> None:
+    # No chat message carries a model; the chat does, and Reader B needs
+    # it, so the client hands back both halves.
+    client, _ = a_client()
+    chat = body("chats_list.json")["data"][1]
+    fetched = await client.chat(chat["id"])
+    assert fetched["model"] == body("chat_messages_2.json")["model"]
+
+
+async def test_a_session_transcript_comes_back_whole() -> None:
+    client, _ = a_client()
+    session = body("sessions_list.json")["data"][0]
+    messages = await client.session_messages(session["id"])
+    assert len(messages) == len(body("session_messages_1.json")["data"])
+
+
+async def test_tool_caps_ride_on_a_transcript_request() -> None:
+    client, seen = a_client()
+    session = body("sessions_list.json")["data"][0]
+    await client.session_messages(session["id"], tool_block_bytes=-1)
+    query = dict(seen[0].url.params)
+    assert query["tool_result_max_bytes"] == "-1"
+    assert query["tool_use_input_max_bytes"] == "-1"
+
+
+async def test_file_content_is_the_whole_body() -> None:
+    client, _ = a_client()
+    assert await client.file_content(MARIA_ID) == MARIA_BYTES
 
 
 async def test_non_2xx_raises() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"error": "rate_limited"})
 
-    async with ComplianceClient(
+    client = ComplianceClient(
         httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k"
-    ) as client:
-        with pytest.raises(ComplianceError):
-            [_ async for _ in client.iter_activities(since=SINCE)]
+    )
+    with pytest.raises(ComplianceError):
+        [_ async for _ in client.iter_activities(since=SINCE)]
+
+
+def test_the_rejections_the_vocabulary_avoids_were_recorded() -> None:
+    assert len([c for c in cases() if c["status"] >= 400]) == 5
 
 
 async def _drain(client: ComplianceClient, feed: str) -> None:
@@ -6535,25 +6748,22 @@ async def _drain(client: ComplianceClient, feed: str) -> None:
 # into the past forever, with 200s and full pages the whole way.
 id: activities_ask_ascending_explicitly
 feed: activities
-fixture: activities_asc.json
 params:
   created_at.gte: "2026-09-20T12:00:00+00:00"
   order: asc
 ---
 # `updated_at.gte` is rejected unless the ordering rides with it, and the
-# parameter is `order_by`. Sending `order` here is a 4xx.
+# parameter is `order_by`. Sending `order` here is a recorded 4xx.
 id: chats_need_order_by_with_the_bound
 feed: chats
-fixture: chats_updated.json
 params:
   updated_at.gte: "2026-09-20T12:00:00+00:00"
   order_by: updated_at
 ---
 # No ordering parameter exists at all — both `order` and `order_by` are
-# rejected — so the bound is the only thing this feed accepts.
+# recorded rejections — so the bound is the only thing this feed takes.
 id: local_sessions_take_the_bound_and_nothing_else
 feed: local_sessions
-fixture: sessions_updated.json
 params:
   updated_at.gte: "2026-09-20T12:00:00+00:00"
 ```
@@ -6587,21 +6797,21 @@ cosmetic:
   reader drains the whole lagging window each tick and the drain
   reports whether it finished.
 
-Three more measured facts the paths and the filters rest on. The local
-session listing is ``/apps/sessions/local``, **not**
-``/apps/local_sessions``. The bound is dotted — ``created_at[gte]`` is
-rejected. And ``organization_uuid`` is not a query parameter on either
-listing, so filtering to the bound organization happens here in Python,
-after the listing, and cannot be pushed into the URL.
+Three more facts the paths and the filters rest on. The local session
+listing is ``/apps/sessions/local``, **not** ``/apps/local_sessions``.
+The bound is dotted — ``created_at[gte]`` is rejected. And
+``organization_uuid`` is not a query parameter on either listing, so
+filtering to the bound organization happens in Python, over the rows a
+listing returns.
 
 The envelopes differ too: the two ordered feeds answer ``{data,
 has_more, first_id, last_id}``, the session listing and a session
 transcript answer ``{data, next_page, …}``, and a **chat** transcript
-answers the chat object itself, whose turns sit under ``chat_messages``.
+answers the chat object itself, whose turns sit under ``chat_messages``
+and whose ``model`` no message repeats.
 
-Our own reads land in the activity feed as ``compliance_api_accessed``,
-so a poller adds noise to the tenant's own audit record; Reader A
-filters it.
+This client does not own its ``httpx.AsyncClient``: the tick shares one
+with the push path, and every header here is per request.
 """
 
 from __future__ import annotations
@@ -6613,7 +6823,6 @@ import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from types import TracebackType
 from typing import Any
 
 import httpx
@@ -6629,7 +6838,7 @@ _CHATS = "/apps/chats"
 # way round, and it is the one path here worth pinning in a constant.
 _SESSIONS = "/apps/sessions/local"
 _FILE_CONTENT = "/apps/chats/files/{file_id}/content"
-# Transcript pages, which the listings' limit does not bound.
+# Transcript pages, which a listing's limit does not bound.
 _MESSAGE_PAGE = 1_000
 
 # Transcript endpoints cap each tool block at this many bytes and flag the
@@ -6638,12 +6847,14 @@ TOOL_BLOCK_DEFAULT_BYTES = 10_000
 TOOL_BLOCK_FULL = -1
 
 DENIED_ACTIVITY = "inference_hooks_request_denied"
+# Our own reads are audited as this, so a poller adds noise to the
+# tenant's audit record and Reader A filters the feed by type.
 OWN_READ_ACTIVITY = "compliance_api_accessed"
 
 # ``provenance`` is an object — {"type": "client_asserted"} — never a bare
 # string, and a fourth value exists: ``content_unavailable``, carrying a
 # ``reason`` of not_captured, client_aborted, cmek_key_revoked,
-# retention_elapsed or oversize. None of the three is a produced turn.
+# retention_elapsed or oversize. A produced turn has no provenance at all.
 REPLAYED = "client_asserted"
 SYNTHETIC = "synthetic_marker"
 UNAVAILABLE = "content_unavailable"
@@ -6669,7 +6880,12 @@ class Drain:
 
 
 def provenance_type(message: Mapping[str, Any]) -> str | None:
-    """The ``type`` inside a message's ``provenance`` object, or None."""
+    """The ``type`` inside a message's ``provenance`` object, or None.
+
+    ``None`` is the common answer and the meaningful one: in the recorded
+    transcripts a newly-produced turn carries ``"provenance": null`` and a
+    replayed or synthetic one carries an object.
+    """
     provenance = message.get("provenance")
     if isinstance(provenance, Mapping):
         kind = provenance.get("type")
@@ -6710,17 +6926,6 @@ class ComplianceClient:
         self._base = base_url.rstrip("/")
         self._headers = {"x-api-key": api_key, "anthropic-version": API_VERSION}
 
-    async def __aenter__(self) -> ComplianceClient:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        await self._client.aclose()
-
     async def _get(self, path: str, params: Mapping[str, Any]) -> dict[str, Any]:
         try:
             response = await self._client.get(
@@ -6731,10 +6936,10 @@ class ComplianceClient:
         if response.status_code // 100 != 2:
             raise ComplianceError(f"{path}: HTTP {response.status_code} {response.text[:200]}")
         try:
-            body = response.json()
+            payload = response.json()
         except ValueError as exc:
             raise ComplianceError(f"{path}: unparseable body") from exc
-        return body if isinstance(body, dict) else {"data": body}
+        return payload if isinstance(payload, dict) else {"data": payload}
 
     # --- feed one: activities, ordered, resumable ---------------------
 
@@ -6748,13 +6953,13 @@ class ComplianceClient:
             "limit": page_size,
         }
         while True:
-            body = await self._get(_ACTIVITIES, params)
-            rows = _rows(body)
+            payload = await self._get(_ACTIVITIES, params)
+            rows = _rows(payload)
             for row in rows:
                 yield row
-            if not body.get("has_more") or not body.get("last_id") or not rows:
+            if not payload.get("has_more") or not payload.get("last_id") or not rows:
                 return
-            params = {**params, "after_id": body["last_id"]}
+            params = {**params, "after_id": payload["last_id"]}
 
     # --- feed two: chats, ordered only when asked ---------------------
 
@@ -6768,13 +6973,13 @@ class ComplianceClient:
             "limit": page_size,
         }
         while True:
-            body = await self._get(_CHATS, params)
-            rows = _rows(body)
+            payload = await self._get(_CHATS, params)
+            rows = _rows(payload)
             for row in rows:
                 yield row
-            if not body.get("has_more") or not body.get("last_id") or not rows:
+            if not payload.get("has_more") or not payload.get("last_id") or not rows:
                 return
-            params = {**params, "after_id": body["last_id"]}
+            params = {**params, "after_id": payload["last_id"]}
 
     # --- feed three: local sessions, unorderable ----------------------
 
@@ -6787,13 +6992,13 @@ class ComplianceClient:
         the oldest sessions unread and the returned ``complete`` is False.
         """
         # No `organization_uuid` here: both listings reject it as a query
-        # parameter, so the bound-organization filter is the caller's and
-        # runs over the rows this returns.
+        # parameter, so that filter is the caller's and runs over these
+        # rows.
         params: dict[str, Any] = {"updated_at.gte": since.isoformat(), "limit": min(limit, 100)}
         sessions: list[dict[str, Any]] = []
         while True:
-            body = await self._get(_SESSIONS, params)
-            rows = _rows(body)
+            payload = await self._get(_SESSIONS, params)
+            rows = _rows(payload)
             for row in rows:
                 if len(sessions) >= limit:
                     log.warning(
@@ -6803,41 +7008,44 @@ class ComplianceClient:
                     )
                     return Drain(sessions=sessions, complete=False)
                 sessions.append(row)
-            token = body.get("next_page")
+            token = payload.get("next_page")
             if not token or not rows:
                 return Drain(sessions=sessions, complete=True)
             params = {**params, "page": token}
 
     # --- transcripts and bytes ----------------------------------------
 
+    async def chat(
+        self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
+    ) -> dict[str, Any]:
+        """The chat object, turns included. Its ``model`` is the only one
+        there is — no chat message carries one."""
+        return await self._get(f"{_CHATS}/{chat_id}/messages", _tool_caps(tool_block_bytes))
+
     async def chat_messages(
         self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
     ) -> list[dict[str, Any]]:
-        """A chat transcript. The endpoint answers the **chat object**, so
-        the turns are under ``chat_messages``; reading ``data`` here
-        yields nothing and says nothing about why."""
-        body = await self._get(f"{_CHATS}/{chat_id}/messages", _tool_caps(tool_block_bytes))
-        turns = body.get("chat_messages")
-        if not isinstance(turns, Sequence):
-            return []
-        return [turn for turn in turns if isinstance(turn, dict)]
+        """A chat's turns, which sit under ``chat_messages`` rather than
+        ``data``: reading ``data`` here yields nothing and says nothing
+        about why."""
+        return _chat_messages(await self.chat(chat_id, tool_block_bytes=tool_block_bytes))
 
     async def session_messages(
         self, session_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
     ) -> list[dict[str, Any]]:
-        """A local-session transcript, ``{data, next_page, session}``.
+        """A local-session transcript, ``{session, data, next_page}``.
 
         It paginates like the listing it came from rather than like the
         two ordered feeds, so this follows ``next_page`` to the end: a
-        partial transcript would silently hide produced turns.
+        partial transcript silently hides produced turns.
         """
         params: dict[str, Any] = {**_tool_caps(tool_block_bytes), "limit": _MESSAGE_PAGE}
         messages: list[dict[str, Any]] = []
         while True:
-            body = await self._get(f"{_SESSIONS}/{session_id}/messages", params)
-            rows = _rows(body)
+            payload = await self._get(f"{_SESSIONS}/{session_id}/messages", params)
+            rows = _rows(payload)
             messages.extend(rows)
-            token = body.get("next_page")
+            token = payload.get("next_page")
             if not token or not rows:
                 return messages
             params = {**params, "page": token}
@@ -6864,14 +7072,21 @@ def _tool_caps(tool_block_bytes: int) -> dict[str, Any]:
     }
 
 
-def _rows(body: Mapping[str, Any]) -> list[dict[str, Any]]:
-    data = body.get("data")
+def _rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    data = payload.get("data")
     if not isinstance(data, Sequence):
         return []
     return [row for row in data if isinstance(row, dict)]
+
+
+def _chat_messages(chat: Mapping[str, Any]) -> list[dict[str, Any]]:
+    turns = chat.get("chat_messages")
+    if not isinstance(turns, Sequence):
+        return []
+    return [turn for turn in turns if isinstance(turn, dict)]
 ```
 
-- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_client.py -v && uv run ty check`. Expected: 18 passed (3 yaml cases plus 15). If `test_feed_vocabulary` fails on an unexpected parameter, the adapter is leaking another feed's vocabulary — that assertion exists precisely to catch a "harmless" shared helper being introduced later.
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_client.py -v && uv run ty check`. Expected: 18 passed (3 yaml cases plus 15). If `test_feed_vocabulary` fails on an unexpected parameter, the adapter is leaking another feed's vocabulary — that assertion exists to catch a "harmless" shared helper being introduced later, and `filters_rejected.json` records what each feed does with one.
 
 - [ ] **Step 5: Commit**
 
@@ -7164,409 +7379,160 @@ git add anthropic/src/slashid_anthropic_forwarder/compliance/checkpoint.py \
 git commit -m "feat(anthropic): three compliance cursors, lagging and never backfilling"
 ```
 
-### Task 7.6: `denials.py` — Reader A
+### Task 7.6: `record.py` carries the digests a reader delivers
 
 **Files:**
-- Create: `anthropic/src/slashid_anthropic_forwarder/compliance/denials.py`
-- Test: `anthropic/tests/test_denials.py`
+- Modify: `anthropic/src/slashid_anthropic_forwarder/record.py`
+- Test: `anthropic/tests/test_record.py`
 
-The simplest reader, because a denial needs no join heuristic at all: the activity's `request_id` **is** the `webhook-id`, and a denied frame has no assistant run to address, so the hook stored its record under an address derived from that delivery id. Reader A looks it up directly and never scans the envelope's `webhook_ids`.
+Reader B cannot hand a completing `accessed_files` list to the store. It holds the listing's entries but not the frame's untruncated `tool_result` ones, and a merged list field replaces rather than unions — so a reader that sent `accessed_files` would overwrite the better digests with nothing. It delivers `file_digests` instead, under the same name the record's `awaiting` set already uses (`record.FILE_DIGESTS`), and the swap happens where the record becomes an event.
 
-**The prefix is `deny:`, not `hook:`, and that distinction is load-bearing.** One frame can carry an unjoinable previous run *and* an honoured deny on its fresh round, which are two unrelated invocations arriving on one delivery. Both keyed on the delivery id alone would merge into a single record — the denial's stamp landing on the previous run's content, and one of the two events disappearing. Two prefixes over the same id keep them apart at no cost: `hook:` addresses the unjoinable run the frame reports, `deny:` addresses the denial the frame was answered with.
+**That place is `to_event`, not `pending.py`.** `to_event` is the one function that turns the stored mapping into `AIInvocationObservedV1`, it already rewrites `parsed_as` from `contributed` on the way through, and both pushers reach the wire through it. Putting the swap beside `FILE_DIGESTS` in the same module keeps the expectation, its carrier field and its application in one file; putting it in `pending.py` would mean two call sites (`push_claimed` and nothing else today, more later) each remembering to apply it.
 
-Two properties make it worth having even though the hook already knows it denied. An activity exists **only when the block was actually honoured** — a shadow-mode deny produces nothing — so the feed is the authoritative record of what was blocked, and `SLASHID_SHADOW_MODE` leaves the correctness path. And the activity carries a **real client user agent** (`claude-cli/2.1.278`) that no frame does.
-
-The noise is the other half of the job: our own reads are audited as `compliance_api_accessed`, and in the measured window **48 of 68 rows were this reader's own calls**. Filtering on the activity type rather than on our `api_key_id` keeps that out without the reader having to know its own key.
-
-`model` is absent from the activity. It comes from the conversation's transcript when one is available and is `"unknown"` otherwise — and Reader B already read this tick's transcripts, so it hands over what it saw rather than making Reader A re-list the sessions.
-
-- [ ] **Step 1: Write the failing tests** — `anthropic/tests/test_denials.py`:
+- [ ] **Step 1: Write the failing tests** — append to `tests/test_record.py`:
 
 ```python
-"""Reader A: denials from the activity feed."""
-
-from __future__ import annotations
-
-import json
-import pathlib
-from datetime import UTC, datetime
-from typing import Any
-
-import httpx
-
-from slashid_anthropic_forwarder.compliance.checkpoint import ACTIVITIES, Cursors
-from slashid_anthropic_forwarder.compliance.client import ComplianceClient
-from slashid_anthropic_forwarder.compliance.denials import denial_address, read_denials
-from slashid_anthropic_forwarder.store import Seen
-from tests.test_client import recorded
-from tests.test_cursors import LAG, NOW, _FakeStore
-
-FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "compliance"
-ORG = "11111111-1111-1111-1111-111111111111"
-
-
-class _FakeStore2:
-    """The slice of PendingStore a reader touches."""
-
-    def __init__(self, states: dict[str, Seen] | None = None) -> None:
-        self.states = states or {}
-        self.upserts: list[tuple[str, dict[str, Any]]] = []
-        self.completions: list[tuple[str, dict[str, Any]]] = []
-
-    async def seen(self, address: str) -> Seen:
-        return self.states.get(address, Seen.ABSENT)
-
-    async def upsert(self, address, fields, expectations=()):  # noqa: ANN001
-        self.upserts.append((address, fields))
-
-    async def complete(self, address, fields, clears=()):  # noqa: ANN001
-        self.completions.append((address, fields))
-
-
-def _client(name: str = "activities_asc.json") -> ComplianceClient:
-    entry = recorded(name)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(entry["status"], json=entry["body"])
-
-    return ComplianceClient(httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k")
-
-
-def _cursors() -> Cursors:
-    return Cursors({ACTIVITIES: _FakeStore()}, poll_lag_seconds=LAG)
-
-
-def _denials() -> list[dict[str, Any]]:
-    return [
-        row
-        for row in recorded("activities_asc.json")["body"]["data"]
-        if row["type"] == "inference_hooks_request_denied"
-    ]
-
-
-async def test_own_reads_are_filtered_out(config) -> None:  # noqa: ANN001
-    # 48 of the 68 recorded rows are this reader's own calls.
-    store, settled = _FakeStore2(), []
-    async with _client() as client:
-        counters = await read_denials(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), models={}, now=NOW,
-        )
-    assert counters.skipped_not_a_denial > 0
-    assert counters.handled == len(_denials())
-
-
-async def test_a_live_record_is_completed_by_address(config) -> None:  # noqa: ANN001
-    denial = _denials()[0]
-    address = denial_address(denial["request_id"])
-    store = _FakeStore2({address: Seen.LIVE})
-    settled: list[str] = []
-    async with _client() as client:
-        await read_denials(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), models={}, now=NOW,
-        )
-    assert store.completions[0][0] == address
-    assert store.completions[0][1]["stop_reason"] == "guardrail_intervened"
-    assert store.upserts == []
-    assert settled == [address]
-
-
-async def test_the_address_is_the_webhook_id_under_the_deny_prefix(config) -> None:  # noqa: ANN001
-    # The activity's request_id IS the webhook-id, so this is a lookup and
-    # never a scan of the record's webhook_ids. The prefix is `deny:`: one
-    # frame can carry an unjoinable previous run and an honoured deny on
-    # its fresh round, and a shared `hook:` key would merge the two.
-    assert denial_address("msg_011CfFY5o3qw6T9McLDb6Zqm") == "deny:msg_011CfFY5o3qw6T9McLDb6Zqm"
-    assert denial_address("msg_1") != "hook:msg_1"
-
-
-async def test_a_tombstoned_record_is_left_alone(config) -> None:  # noqa: ANN001
-    denial = _denials()[0]
-    store = _FakeStore2({denial_address(denial["request_id"]): Seen.TOMBSTONED})
-    settled: list[str] = []
-    async with _client() as client:
-        await read_denials(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), models={}, now=NOW,
-        )
-    assert store.completions == [] and store.upserts == [] and settled == []
-
-
-async def test_an_unrecorded_denial_is_emitted_standalone(config) -> None:  # noqa: ANN001
-    # Hook down, or a rollout below 100%: the activity is the whole record.
-    denial = _denials()[0]
-    store, settled = _FakeStore2(), []
-    async with _client() as client:
-        await read_denials(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), models={}, now=NOW,
-        )
-    address, fields = store.upserts[0]
-    assert address == denial_address(denial["request_id"])
-    assert fields["stop_reason"] == "guardrail_intervened"
-    assert fields["identity_details"]["user_id"] == denial["actor"]["user_id"]
-    # The real client agent, which no frame carries.
-    assert fields["user_agent"].startswith("claude-cli/")
-    assert fields["model"]["id"] == "unknown"
-    assert settled == [address]
-
-
-async def test_model_falls_back_to_the_transcript_when_one_was_read(config) -> None:  # noqa: ANN001
-    denial = _denials()[0]
-    models = {denial["conversation_id"]: "claude-opus-5"}
-    store = _FakeStore2()
-    async with _client() as client:
-        await read_denials(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder([]), models=models, now=NOW,
-        )
-    assert store.upserts[0][1]["model"]["id"] == "claude-opus-5"
-
-
-async def test_another_organizations_activity_is_skipped(config) -> None:  # noqa: ANN001
-    # The key reads every linked organization; the binding is per org.
-    store = _FakeStore2()
-    async with _client() as client:
-        counters = await read_denials(
-            client, store=store, cursors=_cursors(),
-            config=config.model_copy(update={"organization_uuid": "other"}),
-            settle=_recorder([]), models={}, now=NOW,
-        )
-    assert counters.handled == 0 and counters.skipped_other_org > 0
-
-
-def _recorder(sink: list[str]):  # noqa: ANN202
-    async def settle(address: str) -> bool:
-        sink.append(address)
-        return True
-
-    return settle
-```
-
-Add a `config` fixture to `anthropic/tests/conftest.py`, since three test modules in this chunk need the same one:
-
-```python
-@pytest.fixture
-def config(monkeypatch: pytest.MonkeyPatch) -> Config:
-    for key, value in {
-        "SLASHID_ENDPOINT": "https://api.slashid.example",
-        "SLASHID_PUSH_TOKEN": "token",
-        "SLASHID_COMPLIANCE_KEY": "sk-ant-api01-fixture",
-        "SLASHID_ORGANIZATION_UUID": "11111111-1111-1111-1111-111111111111",
-    }.items():
-        monkeypatch.setenv(key, value)
-    return Config()
-```
-
-- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_denials.py -v`. Expected: collection ERROR, `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.compliance.denials'`.
-
-- [ ] **Step 3: Implement**:
-
-```python
-"""Reader A — denials, from the activity feed.
-
-A denied call produces no response and therefore no successor frame, so
-its pending record can only be completed by this reader or flushed on
-its deadline. Two things make the round trip worth it:
-
-* an activity exists **only when the block was honoured**. A shadow-mode
-  deny records nothing, so the feed is the authoritative record of what
-  was actually blocked and ``SLASHID_SHADOW_MODE`` stays out of the
-  correctness path.
-* the activity carries a real client user agent (``claude-cli/2.1.278``)
-  that no frame does.
-
-It has no ``model``, so that comes from the conversation's transcript
-when Reader B read one this tick, and ``"unknown"`` otherwise.
-"""
-
-from __future__ import annotations
-
-import logging
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
-
-from slashid_ai_forwarder_core.events import (
-    AIInvocationObservedV1,
-    AIModel,
-    AnthropicIdentityDetails,
-)
-
-from ..config import Config
-from ..store import PendingStore, Seen
-from .checkpoint import ACTIVITIES, Cursors
-from .client import DENIED_ACTIVITY, ComplianceClient
-
-log = logging.getLogger(__name__)
-
-PARSED_AS = "anthropic-compliance"
-
-Settle = Callable[[str], Awaitable[bool]]
-
-
-@dataclass
-class DenialCounters:
-    handled: int = 0
-    completed: int = 0
-    emitted: int = 0
-    tombstoned: int = 0
-    skipped_not_a_denial: int = 0
-    skipped_other_org: int = 0
-    dropped_no_identity: int = 0
-    newest: datetime | None = field(default=None)
-
-
-def denial_address(request_id: str) -> str:
-    """The pending record's address for a denied delivery.
-
-    A denial has no assistant run, so there is no content anchor and no
-    agreement to reach: the address is the delivery id, which is unique
-    by construction. The activity's ``request_id`` is that same
-    ``webhook-id``, so this is a direct lookup rather than a scan of the
-    record's ``webhook_ids``.
-
-    ``deny:`` rather than ``hook:`` because the delivery id alone is not
-    unique *per invocation*: one frame can carry an unjoinable previous
-    run, addressed ``hook:<id>``, and an honoured deny on its fresh
-    round. They are two unrelated invocations on one delivery, and a
-    shared key would merge them — stamping the denial onto the previous
-    run's content and losing one of the two events. The hook path writes
-    under this exact recipe; the literal is pinned by a test on both
-    sides.
-    """
-    return f"deny:{request_id}"
-
-
-async def read_denials(
-    client: ComplianceClient,
-    *,
-    store: PendingStore,
-    cursors: Cursors,
-    config: Config,
-    settle: Settle,
-    models: Mapping[str, str],
-    now: datetime,
-) -> DenialCounters:
-    """One pass over the activity feed from the saved watermark."""
-    start = cursors.window_start(ACTIVITIES, now=now)
-    counters = DenialCounters()
-    newest = start
-    last_id: str | None = None
-    async for activity in client.iter_activities(since=start):
-        created = _created_at(activity)
-        if created:
-            newest = max(newest, created)
-        last_id = activity.get("id") or last_id
-        if activity.get("type") != DENIED_ACTIVITY:
-            # Our own reads land here as `compliance_api_accessed` — 48 of
-            # 68 rows in the measured window. Filtering by type keeps them
-            # out without the reader needing to know its own api_key_id.
-            counters.skipped_not_a_denial += 1
-            continue
-        if activity.get("organization_uuid") != config.organization_uuid:
-            counters.skipped_other_org += 1
-            continue
-        await _handle(activity, store=store, settle=settle, models=models, counters=counters)
-    cursors.advance(ACTIVITIES, timestamp=newest, id=last_id, drained=True)
-    counters.newest = newest
-    return counters
-
-
-async def _handle(
-    activity: Mapping[str, Any],
-    *,
-    store: PendingStore,
-    settle: Settle,
-    models: Mapping[str, str],
-    counters: DenialCounters,
-) -> None:
-    request_id = activity.get("request_id")
-    if not isinstance(request_id, str):
-        return
-    counters.handled += 1
-    address = denial_address(request_id)
-    state = await store.seen(address)
-    if state is Seen.TOMBSTONED:
-        counters.tombstoned += 1
-        return
-    actor = activity.get("actor") or {}
-    if state is Seen.LIVE:
-        # The record already holds the content; this stamps what the feed
-        # alone can attest — that the block actually happened — and the
-        # agent the frame never carried.
-        await store.complete(
-            address,
-            fields={
-                "stop_reason": "guardrail_intervened",
-                "user_agent": actor.get("user_agent"),
-            },
-            clears=(),
-        )
-        counters.completed += 1
-        await settle(address)
-        return
-    user_id = actor.get("user_id")
-    if not isinstance(user_id, str) or not user_id:
-        # The server rejects an Anthropic identity with no identifier.
-        counters.dropped_no_identity += 1
-        return
-    event = _standalone(activity, user_id=user_id, models=models)
-    await store.upsert(address, fields=event.model_dump(mode="json"), expectations=())
-    counters.emitted += 1
-    # upsert + settle(push, retire) leaves the tombstone that stops the
-    # next tick emitting this denial again.
-    await settle(address)
-
-
-def _standalone(
-    activity: Mapping[str, Any], *, user_id: str, models: Mapping[str, str]
-) -> AIInvocationObservedV1:
-    """The event when the hook never recorded this delivery.
-
-    No surface carries the content of a denied call once the frame is
-    gone, so the activity is the whole record: who, which conversation,
-    which client, and that it was blocked.
-    """
-    actor = activity.get("actor") or {}
-    conversation_id = activity.get("conversation_id")
-    model = models.get(conversation_id or "", "unknown")
-    return AIInvocationObservedV1(
-        request_id=activity["request_id"],
-        timestamp=activity["created_at"],
-        identity_details=AnthropicIdentityDetails(user_id=user_id),
-        model=AIModel(
-            id=model,
-            provider="anthropic",
-            raw_model_id=None if model == "unknown" else model,
-        ),
-        parsed_as=PARSED_AS,
-        stop_reason="guardrail_intervened",
-        user_agent=actor.get("user_agent") or activity.get("surface"),
-        conversation_id=conversation_id,
+def _record_with(**over: Any) -> PendingRecord:
+    base: dict[str, Any] = {
+        "address": "toolu_01A",
+        "event": {
+            "request_id": "toolu_01A",
+            "timestamp": "2026-09-20T23:08:20+00:00",
+            "identity_details": {"kind": "anthropic", "user_id": "user_01A"},
+            "model": {"id": "claude-opus-5"},
+            "accessed_files": [
+                {"name": "src/a.py", "content_hashes": {"sha256": "aa"},
+                 "provenance": "tool_result"},
+                {"name": None, "content_hashes": {"sha256": "bb"}, "provenance": "attachment"},
+            ],
+        },
+        "deadline": NOW,
+        "next_attempt_at": NOW,
+        "contributed": [HOOK],
+    }
+    return PendingRecord(**(base | over))
+
+
+def test_digests_replace_the_attachment_group_at_push() -> None:
+    record = _record_with(
+        file_digests=[
+            {"name": "maria.txt", "content_hashes": {"md5": "cc"}, "provenance": "attachment"}
+        ],
+        contributed=[HOOK, COMPLIANCE],
     )
+    event = to_event(record)
+    assert [f.name for f in event.accessed_files or []] == ["src/a.py", "maria.txt"]
+    # The frame's tool-result entry is untouched: it was hashed from an
+    # untruncated transcript, which no reader can match.
+    assert (event.accessed_files or [])[0].content_hashes == {"sha256": "aa"}
+    assert event.parsed_as == PARSED_AS_JOINED
 
 
-def _created_at(activity: Mapping[str, Any]) -> datetime | None:
-    raw = activity.get("created_at")
-    if not isinstance(raw, str):
-        return None
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        return None
+def test_an_empty_visit_keeps_what_the_frame_hashed() -> None:
+    # A reader that found no listing still clears the expectation at the
+    # store, but an empty replacement replaces nothing: an empty listing is
+    # not evidence the round had no attachment, and a frame's
+    # extracted-text digest is exact for plain text.
+    event = to_event(_record_with(file_digests=[]))
+    assert [f.name for f in event.accessed_files or []] == ["src/a.py", None]
+
+
+def test_a_reader_only_record_is_labelled_compliance() -> None:
+    event = to_event(_record_with(contributed=[COMPLIANCE]))
+    assert event.parsed_as == PARSED_AS_COMPLIANCE
+
+
+def test_from_document_carries_the_digests() -> None:
+    record = from_document(
+        "toolu_01A",
+        {
+            "event": {},
+            "deadline": NOW,
+            "next_attempt_at": NOW,
+            "file_digests": [{"name": "maria.txt", "provenance": "attachment"}],
+        },
+    )
+    assert record.file_digests == [{"name": "maria.txt", "provenance": "attachment"}]
 ```
 
-- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_denials.py -v && uv run ty check`. Expected: 7 passed.
+Extend that module's import block with `COMPLIANCE`, `PARSED_AS_COMPLIANCE`, `PARSED_AS_JOINED`, `from_document` and `to_event` as needed.
+
+- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_record.py -v`. Expected: `TypeError: PendingRecord.__init__() got an unexpected keyword argument 'file_digests'` on three of the four, and the fourth (`from_document`) failing on `AttributeError: 'PendingRecord' object has no attribute 'file_digests'`.
+
+- [ ] **Step 3: Implement** — one field, one reader, one helper. On `PendingRecord`, beside `awaiting`:
+
+```python
+    # Attachment digests a reader delivered, applied when the record
+    # becomes an event. They live beside the event rather than inside it
+    # because a reader cannot merge into `accessed_files` — it holds the
+    # listing's entries and not the frame's untruncated tool-result ones,
+    # and a merged list field replaces rather than unions.
+    file_digests: list[dict[str, Any]] = field(default_factory=list)
+```
+
+in `from_document`, beside `awaiting`:
+
+```python
+        file_digests=list(data.get("file_digests") or []),
+```
+
+and the helper, beside `FILE_DIGESTS`'s other users:
+
+```python
+def apply_file_digests(
+    event: Mapping[str, Any], digests: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Swap the attachment group for what a reader measured.
+
+    Pairing a frame's attachment block to a ``files[]`` entry is
+    unreliable — ``file_name`` is null for images and was null for this
+    tenant's PDFs, the ``<uploaded_files>`` order does not match the block
+    order, and ``size_bytes`` disagrees whenever the stored copy was
+    processed — so the group is replaced wholesale. ``tool_result``
+    entries are never touched.
+
+    No digests means no replacement, which is not the same as an empty
+    group: a reader that visited and found nothing clears the expectation
+    at the store, and the frame's own entries stay.
+    """
+    body = dict(event)
+    if not digests:
+        return body
+    existing = body.get("accessed_files") or []
+    body["accessed_files"] = [
+        *[f for f in existing if f.get("provenance") != "attachment"],
+        *digests,
+    ]
+    return body
+```
+
+and `to_event` grows one line:
+
+```python
+def to_event(record: PendingRecord) -> AIInvocationObservedV1:
+    """Validate a record into the event that goes on the wire.
+
+    The one place the stored mapping becomes an event, so it is also
+    where a reader's digests are applied and where ``parsed_as`` is
+    decided from ``contributed``.
+    """
+    return AIInvocationObservedV1.model_validate(
+        {
+            **apply_file_digests(record.event, record.file_digests),
+            "parsed_as": parsed_as(record.contributed),
+        }
+    )
+```
+
+Add `Mapping` and `Sequence` to the `collections.abc` import.
+
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_record.py tests/test_pending.py -v && uv run ty check`. Expected: Chunk 5's 13 plus 4 here, and Chunk 6's `test_pending.py` unchanged and green — nothing above `to_event` moved.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add anthropic/src/slashid_anthropic_forwarder/compliance/denials.py \
-        anthropic/tests/test_denials.py anthropic/tests/conftest.py
-git commit -m "feat(anthropic): reader a completes denials from the activity feed"
+git add anthropic/src/slashid_anthropic_forwarder/record.py anthropic/tests/test_record.py
+git commit -m "feat(anthropic): apply a reader's attachment digests at push"
 ```
 
 ### Task 7.7: `attachments.py` — two tiers, decided before any fetch
@@ -7577,9 +7543,9 @@ git commit -m "feat(anthropic): reader a completes denials from the activity fee
 
 Neither the file id nor the md5 is in a frame — an `attachment` block carries only `file_name`, `media_type`, `size_bytes` and `text` — so both come from the chat message's `files[]`, whose entries are `id`, `filename`, `mime_type`, `size_bytes` and `md5` (lowercase hex). `md5` is the default tier and is free in both senses: the digest already rides in a response Reader B fetches anyway, and no file bytes transit the collector. `full` downloads and adds sha1 and sha256, which OneDrive, SharePoint and Drive resources need.
 
-The cap is decided **from the listing** before any fetch, because there is no cheap metadata call to fall back on: `HEAD` on the content endpoint 404s on every attachment. An oversized file is never started rather than aborted, and it keeps the listing's whole-file md5 — so the entry stays matchable and loses only sha1 and sha256. A partial read is never hashed; a ranged read yields a snippet, never a digest.
+The cap is decided **from the listing**, before any fetch, because there is no cheap metadata call to fall back on: `HEAD` on the content endpoint 404s on every attachment. An oversized file is never started rather than aborted, and it keeps the listing's whole-file md5 — so the entry stays matchable and loses only sha1 and sha256. A partial read is never hashed.
 
-And the reader **replaces rather than pairs**. Pairing a frame's attachment block to a `files[]` entry is unreliable — `file_name` is null for images by documented behaviour and was null for this tenant's PDFs too, the `<uploaded_files>` order does not match the block order, and `size_bytes` disagrees whenever the stored copy was processed. So every entry whose `provenance` is `attachment` is rebuilt from the listing, and `tool_result` entries are never touched. `AIAccessedFile.provenance` (Chunk 2 Task 2.5) is what makes that rule implementable at all.
+The corpus gives all three cases in one message. `chat_messages_1.json`'s user turn lists `guiaSADT.pdf` (59430 B), a JPEG (72878 B) and `maria.txt` (27 B) — and `maria.txt`'s listed md5 is the md5 of the text `frame_attachment.json` carries, so the `full` tier can be checked against a digest recorded from the tenant rather than against the mock's own arithmetic. `chat_messages_2.json` adds the awkward one: a `mime_type` of `"txt"`, a bare extension rather than a media type, which is exactly what Chunk 2 Task 2.2 made `parse_media_type` degrade to `None` on instead of raising.
 
 - [ ] **Step 1: Write the failing tests** — `anthropic/tests/test_attachments.py`:
 
@@ -7589,145 +7555,114 @@ And the reader **replaces rather than pairs**. Pairing a frame's attachment bloc
 from __future__ import annotations
 
 import hashlib
-import pathlib
 
-import httpx
 from slashid_ai_forwarder_core.events import AIAccessedFile
 
 from slashid_anthropic_forwarder.compliance.attachments import (
-    apply_file_digests,
     files_from_listing,
     listed_files,
-    replace_attachments,
 )
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
-from tests.test_client import recorded
-
-FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "compliance"
-MARIA = (FIXTURES / "file_content_maria.txt").read_bytes()
+from tests.compliance_fixtures import MARIA_BYTES, body, transport
+from tests.test_pending import config as a_config
 
 
-def _message() -> dict:
-    # A chat transcript answers the chat object; its turns are under
-    # `chat_messages`, and `files[]` hangs off the one that carried them.
-    return next(m for m in recorded("chat_messages.json")["body"]["chat_messages"] if m.get("files"))
-
-
-def _client(body: bytes = MARIA) -> tuple[ComplianceClient, list[httpx.Request]]:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, content=body)
-
-    return (
-        ComplianceClient(httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k"),
-        seen,
+def _uploads() -> dict:
+    return next(
+        m for m in body("chat_messages_1.json")["chat_messages"] if m.get("files")
     )
 
 
-async def test_md5_tier_takes_the_listing_digest_and_makes_no_request(config) -> None:  # noqa: ANN001
-    client, seen = _client()
-    entries = listed_files(_message())
-    async with client:
-        files = await files_from_listing(client, entries, config=config)
+def a_client() -> tuple[ComplianceClient, list]:
+    client, seen = transport()
+    return ComplianceClient(client, api_key="k"), seen
+
+
+def test_listed_files_reads_the_five_fields_and_lowercases_the_digest() -> None:
+    entries = listed_files(_uploads())
+    assert [e.filename for e in entries] == [
+        "guiaSADT.pdf",
+        "WhatsApp Image 2026-09-02 at 17.07.21.jpeg",
+        "maria.txt",
+    ]
+    assert all(e.md5 == (e.md5 or "").lower() for e in entries)
+    assert listed_files({"role": "user", "content": []}) == []
+
+
+async def test_md5_tier_takes_the_listing_digest_and_makes_no_request() -> None:
+    client, seen = a_client()
+    entries = listed_files(_uploads())
+    files = await files_from_listing(client, entries, config=a_config())
     assert seen == []
-    assert [f.content_hashes and set(f.content_hashes) for f in files] == [{"md5"}] * len(entries)
+    assert [set(f.content_hashes or {}) for f in files] == [{"md5"}] * 3
     assert all(f.provenance == "attachment" for f in files)
+    assert [f.byte_length for f in files] == [59430, 72878, 27]
 
 
-async def test_full_tier_downloads_and_its_md5_equals_the_listing(config) -> None:  # noqa: ANN001
-    client, seen = _client()
-    entry = next(e for e in listed_files(_message()) if e.filename == "maria.txt")
-    async with client:
-        files = await files_from_listing(
-            client, [entry], config=config.model_copy(update={"attachment_hashing": "full"})
-        )
+async def test_full_tier_downloads_and_its_md5_equals_the_listing() -> None:
+    client, seen = a_client()
+    entry = next(e for e in listed_files(_uploads()) if e.filename == "maria.txt")
+    files = await files_from_listing(
+        client, [entry], config=a_config(attachment_hashing="full")
+    )
     assert len(seen) == 1
     hashes = files[0].content_hashes or {}
     assert set(hashes) == {"md5", "sha1", "sha256"}
-    assert hashes["md5"] == entry.md5 == hashlib.md5(MARIA).hexdigest()
-    assert hashes["sha256"] == hashlib.sha256(MARIA).hexdigest()
+    # The listing's md5 was recorded from the tenant; these bytes are the
+    # frame's extracted text. Their agreeing is the measured claim.
+    assert hashes["md5"] == entry.md5 == hashlib.md5(MARIA_BYTES).hexdigest()
+    assert hashes["sha256"] == hashlib.sha256(MARIA_BYTES).hexdigest()
 
 
-async def test_an_oversized_file_is_never_requested(config) -> None:  # noqa: ANN001
-    # Decided from the listing's size_bytes, before any fetch — there is
-    # no HEAD to fall back on, so this is the only place to decide it.
-    client, seen = _client()
-    entry = next(e for e in listed_files(_message()) if e.mime_type == "image/jpeg")
-    full = config.model_copy(
-        update={"attachment_hashing": "full", "max_attachment_fetch_bytes": 1024}
+async def test_an_oversized_file_is_never_requested() -> None:
+    # Decided from the listing's size_bytes before any fetch — there is no
+    # HEAD to fall back on, so this is the only place to decide it.
+    client, seen = a_client()
+    entry = next(e for e in listed_files(_uploads()) if e.mime_type == "image/jpeg")
+    files = await files_from_listing(
+        client,
+        [entry],
+        config=a_config(attachment_hashing="full", max_attachment_fetch_bytes=1024),
     )
-    async with client:
-        files = await files_from_listing(client, [entry], config=full)
     assert seen == []
     assert files[0].content_hashes == {"md5": entry.md5}
 
 
-async def test_an_entry_with_no_md5_yields_no_digest(config) -> None:  # noqa: ANN001
-    client, _ = _client()
-    entry = listed_files(_message())[0]
-    async with client:
-        files = await files_from_listing(
-            client, [entry.__class__(**{**entry.__dict__, "md5": None})], config=config
-        )
-    assert files[0].content_hashes is None
+async def test_an_unknown_size_is_treated_as_over_the_cap() -> None:
+    client, seen = a_client()
+    entry = next(e for e in listed_files(_uploads()) if e.filename == "maria.txt")
+    sized = type(entry)(**{**entry.__dict__, "size_bytes": None})
+    files = await files_from_listing(
+        client, [sized], config=a_config(attachment_hashing="full")
+    )
+    assert seen == []
+    assert files[0].content_hashes == {"md5": entry.md5}
 
 
-def test_attachments_are_replaced_and_tool_results_preserved() -> None:
-    existing = [
-        AIAccessedFile(name="src/a.py", content_hashes={"sha256": "aa"}, provenance="tool_result"),
-        AIAccessedFile(name=None, content_hashes={"sha256": "bb"}, provenance="attachment"),
-    ]
-    replacement = [
-        AIAccessedFile(name="maria.txt", content_hashes={"md5": "cc"}, provenance="attachment")
-    ]
-    merged = replace_attachments(existing, replacement)
-    assert [f.name for f in merged] == ["src/a.py", "maria.txt"]
-    assert merged[0].content_hashes == {"sha256": "aa"}
+async def test_a_missing_body_degrades_to_the_listing_md5() -> None:
+    client, _ = a_client()
+    entry = next(e for e in listed_files(_uploads()) if e.filename == "guiaSADT.pdf")
+    files = await files_from_listing(
+        client, [entry], config=a_config(attachment_hashing="full")
+    )
+    # The corpus holds no body for the PDF, so the transport 404s and the
+    # entry keeps a whole-file digest instead of losing the entry.
+    assert files[0].content_hashes == {"md5": entry.md5}
 
 
-def test_apply_file_digests_swaps_the_group_and_drops_the_carrier() -> None:
-    # The precondition `pending.py` satisfies with one call, tested here so
-    # that chunk has nothing to decide: in, the stored mapping; out, the
-    # same mapping with the attachment group replaced and `file_digests`
-    # gone, ready to validate as an AIInvocationObservedV1.
-    fields = {
-        "request_id": "toolu_01A",
-        "accessed_files": [
-            {"name": "src/a.py", "content_hashes": {"sha256": "aa"}, "provenance": "tool_result"},
-            {"name": None, "content_hashes": {"sha256": "bb"}, "provenance": "attachment"},
-        ],
-        "file_digests": [
-            {"name": "maria.txt", "content_hashes": {"md5": "cc"}, "provenance": "attachment"}
-        ],
-    }
-    applied = apply_file_digests(fields)
-    assert "file_digests" not in applied
-    assert [f["name"] for f in applied["accessed_files"]] == ["src/a.py", "maria.txt"]
-
-
-def test_apply_file_digests_is_a_no_op_without_a_visit() -> None:
-    # A record the reader never reached — hook-only, or a flush on the
-    # deadline — must come through byte-identical.
-    fields = {"request_id": "toolu_01A", "accessed_files": [{"name": "a", "provenance": "attachment"}]}
-    assert apply_file_digests(fields) == fields
-
-
-def test_an_empty_visit_keeps_the_frames_entries() -> None:
-    # The reader visited and found no listing. That clears the expectation
-    # at the store, but it is not a reason to delete what the frame hashed:
-    # an empty replacement replaces nothing.
-    fields = {
-        "accessed_files": [{"name": "a.txt", "provenance": "attachment"}],
-        "file_digests": [],
-    }
-    applied = apply_file_digests(fields)
-    assert applied["accessed_files"] == fields["accessed_files"]
-    assert "file_digests" not in applied
+async def test_a_bare_extension_mime_type_degrades_to_none() -> None:
+    # `"txt"` is not a media type. Chunk 2 Task 2.2 made parse_media_type
+    # fall back rather than raise; this is the recorded value that needs it.
+    client, _ = a_client()
+    message = next(
+        m for m in body("chat_messages_2.json")["chat_messages"] if m.get("files")
+    )
+    files = await files_from_listing(client, listed_files(message), config=a_config())
+    assert files[0].media_type is None
+    assert files[0].content_hashes is not None
 ```
 
-The third case is the one to get wrong. An empty visit is *not* evidence that the round had no attachment — it can equally mean the listing had not materialized, or that the reader scoped to a different message — and a frame's extracted-text digest is exact for plain text. So an empty replacement replaces nothing, and only the expectation is cleared. Deleting the entries instead would turn a reader miss into data loss on the one surface that carries attachments at all.
+`tests/test_pending.py`'s `config` helper takes keyword overrides already, so `a_config(attachment_hashing="full")` needs nothing new.
 
 - [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_attachments.py -v`. Expected: collection ERROR, `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.compliance.attachments'`.
 
@@ -7786,12 +7721,15 @@ class ListedFile:
 
 
 def listed_files(message: Mapping[str, Any]) -> list[ListedFile]:
-    """The uploads hanging off one user message.
+    """The uploads hanging off one message.
 
     ``files[]`` hangs off the single message that carried the upload, so
     an attachment is reported once, on the invocation that consumed it.
     Without that, a twenty-turn chat about one PDF would look like twenty
-    accesses.
+    accesses. ``generated_files`` and ``artifacts`` are deliberately not
+    read here: the first is reserved for a ``generated`` provenance that
+    is not emitted yet, and an artifact is the assistant's own output,
+    which does not belong in a field a reviewer reads as ingress.
     """
     raw = message.get("files")
     if not isinstance(raw, Sequence):
@@ -7840,6 +7778,9 @@ async def files_from_listing(
             AIAccessedFile(
                 name=entry.filename,
                 content_hashes=hashes,
+                # A recorded `mime_type` is sometimes a bare extension
+                # ("txt"), which is not a media type; Chunk 2 made this
+                # fall back to None rather than raise.
                 media_type=parse_media_type(entry.mime_type),
                 byte_length=entry.size_bytes,
                 provenance="attachment",
@@ -7862,60 +7803,9 @@ def _should_fetch(entry: ListedFile, config: Config) -> bool:
         log.info("compliance: attachment %s has no size_bytes; keeping the listing md5", entry.id)
         return False
     return entry.size_bytes <= config.max_attachment_fetch_bytes
-
-
-def replace_attachments(
-    existing: Sequence[AIAccessedFile], replacements: Sequence[AIAccessedFile]
-) -> list[AIAccessedFile]:
-    """Swap the attachment group, keep everything else.
-
-    Pairing block to listing entry is unreliable — ``file_name`` is null
-    for images and was null for this tenant's PDFs, the
-    ``<uploaded_files>`` order does not match the block order, and
-    ``size_bytes`` disagrees whenever the stored copy was processed — so
-    the group is replaced wholesale. ``tool_result`` entries are never
-    touched: they were hashed from an untruncated frame, which is better
-    than anything a reader can produce.
-    """
-    kept = [f for f in existing if f.provenance != "attachment"]
-    return [*kept, *replacements]
-
-
-def apply_file_digests(fields: Mapping[str, Any]) -> dict[str, Any]:
-    """Fold a reader's ``file_digests`` into a stored record's fields.
-
-    **The one call `pending.py` owes this chunk**, and the reason the
-    reader cannot do it itself: Reader B holds the listing's entries but
-    not the frame's untruncated ``tool_result`` ones, and a merged list
-    field replaces rather than unions, so a reader that sent
-    ``accessed_files`` would wipe the better digests. It delivers
-    ``file_digests`` instead — the same name the record's ``awaiting``
-    set uses — and this folds them in.
-
-    Call it **once, on the mapping about to be validated into
-    ``AIInvocationObservedV1``, immediately before that validation**.
-    It is a pure function over the mapping: no store, no network, safe on
-    a record no reader ever visited, and it removes the carrier key so
-    the result validates under ``extra="forbid"``.
-    """
-    digests = fields.get("file_digests")
-    if digests is None:
-        return dict(fields)
-    out = {k: v for k, v in fields.items() if k != "file_digests"}
-    if not digests:
-        # An empty visit is not evidence the round had no attachment — the
-        # listing may not have materialized — and a frame's extracted-text
-        # digest is exact for plain text. Replace nothing.
-        return out
-    existing = out.get("accessed_files") or []
-    out["accessed_files"] = [
-        *[f for f in existing if f.get("provenance") != "attachment"],
-        *digests,
-    ]
-    return out
 ```
 
-- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_attachments.py -v && uv run ty check`. Expected: 8 passed. If the `full` case fails on the md5 comparison, the fixture's recorded bytes and its listing entry came from different captures — re-record both together, never hand-edit the digest.
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_attachments.py -v && uv run ty check`. Expected: 7 passed. If the `full` case fails on the md5 comparison, the recorded listing and the bytes in `compliance_fixtures.py` have drifted apart — re-record, never hand-edit the digest.
 
 - [ ] **Step 5: Commit**
 
@@ -7925,95 +7815,439 @@ git add anthropic/src/slashid_anthropic_forwarder/compliance/attachments.py \
 git commit -m "feat(anthropic): attachment digests from the listing, or the stored bytes"
 ```
 
-### Task 7.8: `responses.py` — Reader B
+### Task 7.8: `denials.py` — Reader A
+
+**Files:**
+- Create: `anthropic/src/slashid_anthropic_forwarder/compliance/denials.py`
+- Test: `anthropic/tests/test_denials.py`
+
+The simplest reader, because a denial needs no join heuristic: the activity's `request_id` **is** the `webhook-id`, and Chunk 6 filed the honoured denial under `deny_address(webhook_id)`. Reader A imports that function — it does not re-derive the prefix, because two definitions of one load-bearing key is how silent divergence happens — and looks the record up directly, never scanning `webhook_ids`.
+
+Two properties make the round trip worth it. An activity exists **only when the block was honoured** — a shadow-mode deny records nothing — so the feed is the authoritative record of what was actually blocked, and `SLASHID_SHADOW_MODE` stays out of the correctness path. And the activity carries a **real client user agent**, `claude-cli/2.1.278 (external, sdk-cli)` in the recorded row, that no frame does.
+
+Filtering is the other half of the job. Our own reads are audited as `compliance_api_accessed` — 48 of 68 rows in the measured window — and the recorded feed has ten types and exactly one denial, so the reader filters on the type rather than on its own `api_key_id`, which it would otherwise have to know.
+
+`model` is absent from the activity. It comes from the conversation's transcript when one is available, and Reader B already read this tick's transcripts, so it hands over what it saw rather than making Reader A re-list. `"unknown"` otherwise — including when Reader B failed, which is why the map is a parameter and not a lookup.
+
+- [ ] **Step 1: Write the failing tests** — `anthropic/tests/test_denials.py`. The store under these is Chunk 5's real `FirestorePendingStore` over its fake client, and the push goes through Chunk 6's `push_if_ready`, so what is tested is the path that will run:
+
+```python
+"""Reader A: denials from the activity feed."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from slashid_anthropic_forwarder.address import deny_address
+from slashid_anthropic_forwarder.compliance.checkpoint import ACTIVITIES, Cursors
+from slashid_anthropic_forwarder.compliance.client import ComplianceClient
+from slashid_anthropic_forwarder.compliance.denials import read_denials
+from slashid_anthropic_forwarder.store import Seen
+from tests.compliance_fixtures import body, transport
+from tests.test_cursors import LAG
+from tests.test_cursors import _FakeStore as FakeCheckpoints
+from tests.test_pending import Sink, a_store, config as a_config, seed
+
+NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)
+ORG = "11111111-1111-1111-1111-111111111111"
+
+
+def the_denial() -> dict:
+    return next(
+        row
+        for row in body("activities.json")["data"]
+        if row["type"] == "inference_hooks_request_denied"
+    )
+
+
+def a_reader() -> tuple[ComplianceClient, Cursors]:
+    client, _ = transport()
+    return (
+        ComplianceClient(client, api_key="k"),
+        Cursors({ACTIVITIES: FakeCheckpoints()}, poll_lag_seconds=LAG),
+    )
+
+
+async def run(store, sink: Sink, *, models=None, organization_uuid=ORG):  # noqa: ANN001
+    client, cursors = a_reader()
+    return await read_denials(
+        client,
+        store=store,
+        cursors=cursors,
+        config=a_config(compliance_key="sk-ant-api01-x", organization_uuid=organization_uuid),
+        http=sink.client(),
+        models=models or {},
+        now=NOW,
+    )
+
+
+async def test_everything_that_is_not_a_denial_is_filtered_out() -> None:
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink)
+    rows = body("activities.json")["data"]
+    assert counters.handled == 1
+    assert counters.skipped_not_a_denial == len(rows) - 1
+
+
+async def test_an_unrecorded_denial_is_emitted_standalone_and_tombstoned() -> None:
+    # Hook down, or a rollout below 100%: the activity is the whole record,
+    # because no surface keeps the content of a denied call.
+    store, sink = a_store(), Sink()
+    denial = the_denial()
+    address = deny_address(denial["request_id"])
+    counters = await run(store, sink)
+    assert counters.emitted == 1
+    assert sink.request_ids == [denial["request_id"]]
+    pushed = sink.bodies[0]["events"][0]
+    assert pushed["stop_reason"] == "guardrail_intervened"
+    assert pushed["parsed_as"] == "anthropic-compliance"
+    assert pushed["identity_details"]["user_id"] == denial["actor"]["user_id"]
+    assert pushed["user_agent"].startswith("claude-cli/")
+    assert pushed["conversation_id"] == denial["conversation_id"]
+    assert pushed["model"]["id"] == "unknown"
+    # The retire inside push_if_ready is what stops the next tick
+    # re-emitting it.
+    assert await store.seen(address) is Seen.TOMBSTONED
+
+
+async def test_a_live_record_is_completed_rather_than_re_emitted() -> None:
+    store, sink = a_store(), Sink()
+    denial = the_denial()
+    address = deny_address(denial["request_id"])
+    await seed(store, address)
+    counters = await run(store, sink)
+    assert counters.completed == 1 and counters.emitted == 0
+    pushed = sink.bodies[0]["events"][0]
+    assert pushed["stop_reason"] == "guardrail_intervened"
+    assert pushed["user_agent"].startswith("claude-cli/")
+    # Both sources supplied a field, which is what `joined` means.
+    assert pushed["parsed_as"] == "anthropic-joined"
+
+
+async def test_a_tombstoned_denial_is_left_alone() -> None:
+    store, sink = a_store(), Sink()
+    address = deny_address(the_denial()["request_id"])
+    await seed(store, address)
+    await store.retire(address, "pushed", now=NOW)
+    counters = await run(store, sink)
+    assert counters.tombstoned == 1
+    assert sink.bodies == []
+
+
+async def test_model_falls_back_to_a_transcript_reader_b_already_read() -> None:
+    store, sink = a_store(), Sink()
+    denial = the_denial()
+    await run(store, sink, models={denial["conversation_id"]: "claude-opus-5"})
+    assert sink.bodies[0]["events"][0]["model"]["id"] == "claude-opus-5"
+
+
+async def test_another_organizations_activity_is_skipped() -> None:
+    # The key reads every linked organization; the binding is per org, and
+    # `organization_uuid` is not a query parameter on any feed.
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink, organization_uuid="other")
+    assert counters.handled == 0 and counters.skipped_other_org == 1
+    assert sink.bodies == []
+
+
+async def test_the_watermark_advances_to_the_newest_row_seen() -> None:
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink)
+    newest = max(row["created_at"] for row in body("activities.json")["data"])
+    assert counters.newest is not None
+    assert counters.newest.isoformat().startswith(newest[:19])
+```
+
+- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_denials.py -v`. Expected: collection ERROR, `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.compliance.denials'`.
+
+- [ ] **Step 3: Implement**:
+
+```python
+"""Reader A — denials, from the activity feed.
+
+A denied call produces no response and therefore no successor frame, so
+its pending record can only be completed by this reader or flushed on
+its deadline. Two things make the round trip worth it:
+
+* an activity exists **only when the block was honoured**. A shadow-mode
+  deny records nothing, so the feed is the authoritative record of what
+  was actually blocked and ``SLASHID_SHADOW_MODE`` stays out of the
+  correctness path.
+* the activity carries a real client user agent (``claude-cli/2.1.278``)
+  that no frame does.
+
+It has no ``model``, so that comes from the conversation's transcript
+when Reader B read one this tick, and ``"unknown"`` otherwise.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+import httpx
+from slashid_ai_forwarder_core.events import (
+    AIInvocationObservedV1,
+    AIModel,
+    AnthropicIdentityDetails,
+)
+
+from ..address import deny_address
+from ..config import Config
+from ..pending import push_if_ready
+from ..record import COMPLIANCE, Append, PARSED_AS_COMPLIANCE, open_fields
+from ..store import PendingStore, Seen
+from .checkpoint import ACTIVITIES, Cursors
+from .client import DENIED_ACTIVITY, ComplianceClient
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class DenialCounters:
+    handled: int = 0
+    completed: int = 0
+    emitted: int = 0
+    tombstoned: int = 0
+    skipped_not_a_denial: int = 0
+    skipped_other_org: int = 0
+    dropped_no_identity: int = 0
+    newest: datetime | None = None
+
+
+async def read_denials(
+    client: ComplianceClient,
+    *,
+    store: PendingStore,
+    cursors: Cursors,
+    config: Config,
+    http: httpx.AsyncClient,
+    models: Mapping[str, str],
+    now: datetime,
+) -> DenialCounters:
+    """One pass over the activity feed from the saved watermark."""
+    start = cursors.window_start(ACTIVITIES, now=now)
+    counters = DenialCounters()
+    newest = start
+    last_id: str | None = None
+    async for activity in client.iter_activities(since=start):
+        created = _created_at(activity)
+        if created:
+            newest = max(newest, created)
+        last_id = activity.get("id") or last_id
+        if activity.get("type") != DENIED_ACTIVITY:
+            # Our own reads land here as `compliance_api_accessed` — 48 of
+            # 68 rows in the measured window — alongside eight other types
+            # in the recorded one. Filtering by type keeps them all out
+            # without the reader needing to know its own api_key_id.
+            counters.skipped_not_a_denial += 1
+            continue
+        if activity.get("organization_uuid") != config.organization_uuid:
+            counters.skipped_other_org += 1
+            continue
+        await _handle(
+            activity,
+            store=store,
+            config=config,
+            http=http,
+            models=models,
+            counters=counters,
+        )
+    cursors.advance(ACTIVITIES, timestamp=newest, id=last_id, drained=True)
+    counters.newest = newest
+    return counters
+
+
+async def _handle(
+    activity: Mapping[str, Any],
+    *,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    models: Mapping[str, str],
+    counters: DenialCounters,
+) -> None:
+    request_id = activity.get("request_id")
+    if not isinstance(request_id, str):
+        return
+    counters.handled += 1
+    address = deny_address(request_id)
+    state = await store.seen(address)
+    if state is Seen.TOMBSTONED:
+        counters.tombstoned += 1
+        return
+    actor = activity.get("actor") or {}
+    if state is Seen.LIVE:
+        # The record already holds the content. This stamps what the feed
+        # alone attests — that the block actually happened — and the agent
+        # no frame carries. `contributed` is what turns the pushed event
+        # into `anthropic-joined`; without it `to_event` would still call
+        # a two-source record hook-sourced.
+        outcome = await store.complete(
+            address,
+            {
+                "event": {
+                    "stop_reason": "guardrail_intervened",
+                    "user_agent": actor.get("user_agent"),
+                },
+                "contributed": Append((COMPLIANCE,)),
+            },
+            (),
+        )
+        counters.completed += 1
+        await push_if_ready(address, outcome, store=store, config=config, client=http)
+        return
+    user_id = actor.get("user_id")
+    if not isinstance(user_id, str) or not user_id:
+        # The server rejects an Anthropic identity with no identifier.
+        counters.dropped_no_identity += 1
+        return
+    event = _standalone(activity, user_id=user_id, models=models)
+    # A real delivery id, so `webhook_ids` gets one: this is the same
+    # `webhook-id` the hook would have filed, and a later frame revealing
+    # the same delivery should land in the same list.
+    outcome = await store.upsert(
+        address,
+        open_fields(event, webhook_id=request_id, contributed=COMPLIANCE),
+        (),
+    )
+    counters.emitted += 1
+    # No expectations, so the record is born ready: this claims, pushes and
+    # retires, and the tombstone stops the next tick re-emitting it.
+    await push_if_ready(address, outcome, store=store, config=config, client=http)
+
+
+def _standalone(
+    activity: Mapping[str, Any], *, user_id: str, models: Mapping[str, str]
+) -> AIInvocationObservedV1:
+    """The event when the hook never recorded this delivery.
+
+    No surface carries the content of a denied call once the frame is
+    gone, so the activity is the whole record: who, which conversation,
+    which client, and that it was blocked.
+    """
+    actor = activity.get("actor") or {}
+    conversation_id = activity.get("conversation_id")
+    model = models.get(conversation_id or "", "unknown")
+    return AIInvocationObservedV1(
+        request_id=activity["request_id"],
+        timestamp=activity["created_at"],
+        identity_details=AnthropicIdentityDetails(user_id=user_id),
+        model=AIModel(
+            id=model,
+            provider="anthropic",
+            raw_model_id=None if model == "unknown" else model,
+        ),
+        # Overridden by `to_event` from `contributed`; set so the model
+        # validates here, where a mistake is cheap to see.
+        parsed_as=PARSED_AS_COMPLIANCE,
+        stop_reason="guardrail_intervened",
+        user_agent=actor.get("user_agent") or activity.get("surface"),
+        conversation_id=conversation_id,
+    )
+
+
+def _created_at(activity: Mapping[str, Any]) -> datetime | None:
+    raw = activity.get("created_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+```
+
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_denials.py -v && uv run ty check`. Expected: 7 passed. A failure on `anthropic-joined` means `contributed` did not append — check that the store's array transform ran, not the reader.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add anthropic/src/slashid_anthropic_forwarder/compliance/denials.py \
+        anthropic/tests/test_denials.py
+git commit -m "feat(anthropic): reader a completes denials from the activity feed"
+```
+
+### Task 7.9: `responses.py` — Reader B, and the two walks
 
 **Files:**
 - Create: `anthropic/src/slashid_anthropic_forwarder/compliance/responses.py`
 - Test: `anthropic/tests/test_responses.py`, `anthropic/tests/test_produced_runs.yaml`
 
-The reader with the rule that rebuilt the design. Two constraints govern every line of it.
+The reader with the rule that rebuilt the design.
 
-**One invocation per newly-produced assistant turn, identified by the `model` marker.** In the largest measured local session — 872 messages, 433 of them assistant — only **4 carried a `model`**; the other 429 were `client_asserted` replayed history. A reader keyed on the role would emit a hundred times the real traffic. `client_asserted`, `synthetic_marker` and `content_unavailable` turns are skipped, the last being a turn whose content the API will not return (`not_captured`, `client_aborted`, `cmek_key_revoked`, `retention_elapsed`, `oversize`); it never appeared in this tenant, which has no retention policy, but any customer with finite retention produces them and emitting one would create a contentless invocation. An unrecognized provenance is skipped, not rejected.
+**It may only touch a joinable run.** `joinable_address(run)` answers the run's first `tool_use.id`, or `None`. `None` is the end of the matter: there is no reader-side fallback key, because the fallback that suggests itself — a digest over the transcript prefix — is precisely what the measurement killed (200 keys frame-side, 302 reader-side, **zero** in common, and still zero with every text block removed). An unjoinable run is the hook's, filed under `hook:` + a delivery id no reader can compute, and emitting it here would be a second event that first-completed-wins counts twice rather than merges. `session_messages_3.json` is that case in the corpus: one tool-free assistant turn.
 
-**It may only touch a joinable run.** A run containing a `tool_use` id has an address both sources compute identically; a run without one does not, and a transcript-prefix digest cannot substitute — measured, 200 keys on the frame side, 302 on the reader side, **zero in common**, and still zero with every text block removed. An unjoinable run is owned by the hook. Emitting it would be a second event for an invocation the hook already reported under a different key, and first-completed-wins counts that twice rather than reconciling it. So: `invocation_address` returns the `inv:` fallback, and the reader stops.
+**A produced turn is not a role.** In a local session the marker is `model` with no `provenance`: `client_asserted` replays, the `synthetic_marker` the client never sent, and `content_unavailable` turns (`not_captured`, `client_aborted`, `cmek_key_revoked`, `retention_elapsed`, `oversize`) are all skipped, and so is an unrecognized provenance — the schema says to tolerate unknown `type` values, and a turn we cannot classify is not one to emit. In the largest measured session only 4 of 433 assistant messages carried a `model`; in the recorded corpus, which is six short sessions, nearly all of them do. Both are the same rule, and the yaml table is where it is pinned rather than in a ratio assertion the corpus would fail.
 
-Always ask `seen` first. **Live** → complete and settle. **Tombstoned** → skip, which is what stops a compliance-only deployment re-emitting every turn once per tick it stays in the lagging window. **Absent** → emit standalone as `upsert` + settle, the settle being the push and the `retire` that leaves the tombstone.
+**The chat walk is a different function.** A chat message has no `model` and no `provenance` — the model is on the chat object — and its `tool_result` blocks sit **inside** the assistant message. Feeding those to `AnthropicMessage`, the response-side union, raises a `ValidationError` that would take down the whole tick, so the answer is filtered to response-side blocks. Two consequences worth stating: the address still works, because `joinable_address` reads `tool_use` ids out of the request-side parse, and `used_tools` does not, because the spine attributes a round's results from the *next* user message and a chat keeps them in the same turn. That is a known gap, not an accident — the frame path is the one with the shape the attribution rule was written for.
 
-For a Live record the reader delivers its digests as `file_digests` and clears that expectation — the same name the record's `awaiting` set uses. It cannot send a whole `accessed_files` list, because it does not hold the frame's untruncated `tool_result` entries and merging a list replaces rather than unions. That is the chunk's **one named precondition on `pending.py`**, and Task 7.7 has already made it concrete rather than leaving it as an instruction: `apply_file_digests(fields)` is defined and tested there, and `pending.py` calls it once, on the mapping it is about to validate into `AIInvocationObservedV1`, immediately before that validation. One import and one line, with the behaviour — including what an empty visit means — pinned by tests this chunk owns. And a reader that finds nothing to add must still clear the expectation, or an attachment-bearing round whose listing never materializes waits out the full deadline for nothing.
+Everything else is the ownership rule: ask `seen` first. **Live** → deliver `file_digests`, clear the expectation, push if that made it ready. **Tombstoned** → skip, which is what stops a compliance-only deployment re-emitting every turn once per tick it stays in the lagging window. **Absent** → emit standalone, an `upsert` that leaves a ready record plus `push_if_ready`, whose `retire(PUSHED)` leaves the tombstone.
 
 - [ ] **Step 1: Write the failing tests** — `anthropic/tests/test_responses.py`:
 
 ```python
-"""Reader B: one event per newly-produced assistant turn, joinable only."""
+"""Reader B: one event per newly-produced turn, joinable only, two walks."""
 
 from __future__ import annotations
 
-import pathlib
+from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
+from slashid_anthropic_forwarder.address import joinable_address
 from slashid_anthropic_forwarder.compliance.checkpoint import CHATS, SESSIONS, Cursors
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
 from slashid_anthropic_forwarder.compliance.responses import (
+    chat_turns,
     produced_runs,
     read_responses,
-    run_address,
     to_anthropic,
 )
-from slashid_anthropic_forwarder.content_address import invocation_address
 from slashid_anthropic_forwarder.hook.frame import PromptFrame, split_transcript
 from slashid_anthropic_forwarder.store import Seen
-from tests.test_client import recorded
-from tests.test_cursors import LAG, NOW, _FakeStore
-from tests.test_denials import _FakeStore2, _recorder
+from tests.compliance_fixtures import PAIRED, body, transport
+from tests.test_cursors import LAG
+from tests.test_cursors import _FakeStore as FakeCheckpoints
+from tests.test_pending import Sink, a_store, config as a_config, seed
 
-FIXTURES = pathlib.Path(__file__).parent / "fixtures"
-
-
-def _messages() -> list[dict[str, Any]]:
-    return recorded("session_messages.json")["body"]["data"]
+NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)
+ORG = "11111111-1111-1111-1111-111111111111"
 
 
-def _session() -> dict[str, Any]:
-    return recorded("sessions_updated.json")["body"]["data"][0]
+def session_messages(n: int) -> list[dict[str, Any]]:
+    return body(f"session_messages_{n}.json")["data"]
 
 
-def _client(transcript: str = "session_messages.json"):  # noqa: ANN202
-    """Routed by path, not by call order: one pass touches four
-    endpoints, and `/apps/sessions/local` must not answer a chat."""
-    routes = {
-        "/apps/sessions/local": "sessions_updated.json",
-        "/messages": transcript,
-        "/apps/chats": "chats_updated.json",
-    }
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        name = next(
-            (fixture for suffix, fixture in routes.items() if suffix in path),
-            "sessions_updated.json",
-        )
-        entry = recorded(name)
-        return httpx.Response(entry["status"], json=entry["body"])
-
-    return ComplianceClient(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k"
-    )
+def addresses(n: int) -> list[str]:
+    return [
+        a
+        for a in (joinable_address(to_anthropic(run.messages)) for run in
+                  produced_runs(session_messages(n)))
+        if a is not None
+    ]
 
 
-def _cursors() -> Cursors:
-    return Cursors({SESSIONS: _FakeStore(), CHATS: _FakeStore()}, poll_lag_seconds=LAG)
+def a_reader(**cursor_stores: Any) -> tuple[ComplianceClient, Cursors, list]:
+    client, seen = transport()
+    stores = {SESSIONS: FakeCheckpoints(), CHATS: FakeCheckpoints(), **cursor_stores}
+    return ComplianceClient(client, api_key="k"), Cursors(stores, poll_lag_seconds=LAG), seen
 
 
-def _joinable_address(transcript: str = "session_messages.json") -> str:
-    """The first run in the fixture that both sources can address."""
-    messages = recorded(transcript)["body"]["data"]
-    return next(
-        address
-        for address in (run_address(run) for run in produced_runs(messages))
-        if not address.startswith("inv:")
+async def run(store, sink: Sink, cursors: Cursors | None = None, **over: Any):  # noqa: ANN001
+    client, built, _ = a_reader()
+    return await read_responses(
+        client,
+        store=store,
+        cursors=cursors or built,
+        config=a_config(
+            compliance_key="sk-ant-api01-x", organization_uuid=ORG, **over
+        ),
+        http=sink.client(),
+        now=NOW,
     )
 
 
@@ -8022,143 +8256,167 @@ def test_produced_runs(messages: list[dict[str, Any]], expected_models: list[str
     assert [run.model for run in produced_runs(messages)] == expected_models
 
 
-def test_only_a_handful_of_assistant_messages_are_produced_turns() -> None:
-    # The ratio is the point: the marker, not the role, is the anchor.
-    messages = _messages()
-    assistants = [m for m in messages if m.get("role") == "assistant"]
-    runs = produced_runs(messages)
-    assert 0 < len(runs) < len(assistants) / 4
+def test_the_recorded_synthetic_marker_is_not_a_turn() -> None:
+    # Every recorded transcript opens with one, on a *user* message.
+    first = session_messages(1)[0]
+    assert first["provenance"] == {"type": "synthetic_marker"}
+    assert all(run.index > 0 for run in produced_runs(session_messages(1)))
 
 
-def test_the_address_matches_the_hook_path_for_the_same_run() -> None:
-    # The load-bearing claim: a run's address computed from the stored
-    # transcript is byte-identical to the one computed from the frame.
-    frame = PromptFrame.model_validate_json((FIXTURES / "frame_tool_result.json").read_bytes())
-    from_frame = invocation_address(split_transcript(frame).assistant_run)
-    run = next(r for r in produced_runs(_messages()) if run_address(r) == from_frame)
-    assert run_address(run) == from_frame
-    assert not from_frame.startswith("inv:")
+def test_the_address_matches_the_hook_path_over_the_paired_corpus() -> None:
+    """The load-bearing claim, measured: a run's address computed from a
+    captured frame equals the one computed from the stored transcript."""
+    checked = 0
+    for path in sorted(PAIRED.glob("*.json")):
+        frame = PromptFrame.model_validate_json(path.read_bytes())
+        from_frame = joinable_address(split_transcript(frame).assistant_run)
+        if from_frame is None:
+            continue  # an opening prompt, or a tool-free run: nothing to join
+        session = int(path.name.split("_")[1])
+        assert from_frame in addresses(session), path.name
+        checked += 1
+    assert checked >= 6
 
 
-async def test_an_unjoinable_run_is_left_to_the_hook(config) -> None:  # noqa: ANN001
-    store, settled = _FakeStore2(), []
-    async with _client() as client:
-        counters = await read_responses(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), now=NOW,
-        )
-    assert counters.unjoinable > 0
-    # Not emitted, not enriched, not even looked up.
-    assert all(not a.startswith("inv:") for a, _ in store.upserts)
+def test_a_tool_free_run_has_no_address_at_all() -> None:
+    # session_messages_3 is one text-only turn. There is no reader-side
+    # digest to fall back on, and inventing one would reintroduce the key
+    # the 200/302/zero measurement ruled out.
+    runs = produced_runs(session_messages(3))
+    assert len(runs) == 1
+    assert joinable_address(to_anthropic(runs[0].messages)) is None
 
 
-async def test_a_live_record_is_enriched_and_the_expectation_cleared(config) -> None:  # noqa: ANN001
-    address = _joinable_address()
-    store = _FakeStore2({address: Seen.LIVE})
-    settled: list[str] = []
-    async with _client() as client:
-        await read_responses(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), now=NOW,
-        )
-    assert store.completions[0][0] == address
-    assert "file_digests" in store.completions[0][1]
-    assert store.upserts == []
-    assert settled == [address]
+async def test_an_unjoinable_run_is_left_to_the_hook() -> None:
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink)
+    assert counters.unjoinable >= 1
+    assert all(not rid.startswith("hook:") for rid in sink.request_ids)
 
 
-async def test_a_visit_that_finds_no_listing_still_clears_the_expectation(config) -> None:  # noqa: ANN001
-    # Otherwise the record waits out the whole deadline for a listing that
-    # is never coming.
-    address = _joinable_address(name="session_messages_no_files.json")
-    store = _FakeStore2({address: Seen.LIVE})
-    async with _client("session_messages_no_files.json") as client:
-        await read_responses(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder([]), now=NOW,
-        )
-    assert store.completions[0][1]["file_digests"] == []
+async def test_a_joinable_turn_the_hook_never_saw_is_emitted_and_tombstoned() -> None:
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink)
+    address = addresses(1)[0]
+    assert counters.emitted >= 1
+    assert address in sink.request_ids
+    pushed = next(e for b in sink.bodies for e in b["events"] if e["request_id"] == address)
+    assert pushed["parsed_as"] == "anthropic-compliance"
+    assert pushed["stop_reason"] in {"tool_use", "end_turn"}
+    assert pushed["tokens"]["input"] == 0
+    # Identity is on the listing item: a transcript message carries only
+    # type, id, role, created_at, provenance, model and content.
+    listed = body("sessions_list.json")["data"][0]["user"]["id"]
+    assert pushed["identity_details"]["user_id"] == listed
+    assert await store.seen(address) is Seen.TOMBSTONED
 
 
-async def test_a_tombstoned_run_is_not_re_emitted(config) -> None:  # noqa: ANN001
-    address = _joinable_address()
-    store = _FakeStore2({address: Seen.TOMBSTONED})
-    settled: list[str] = []
-    async with _client() as client:
-        await read_responses(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), now=NOW,
-        )
-    assert store.upserts == [] and store.completions == [] and settled == []
+async def test_a_live_record_is_enriched_rather_than_emitted() -> None:
+    store, sink = a_store(), Sink()
+    address = addresses(6)[0]
+    await seed(store, address, "file_digests")
+    counters = await run(store, sink)
+    assert counters.enriched >= 1
+    pushed = next(e for b in sink.bodies for e in b["events"] if e["request_id"] == address)
+    # `joined` is the proof it went through `complete` with a `contributed`
+    # append rather than being opened again as a reader-only record.
+    assert pushed["parsed_as"] == "anthropic-joined"
+    assert sink.request_ids.count(address) == 1
 
 
-async def test_a_standalone_emission_upserts_then_settles(config) -> None:  # noqa: ANN001
-    # upsert + retire is what leaves the tombstone the next tick honours;
-    # without it a compliance-only deployment re-emits every turn once per
-    # tick it stays inside the lagging window.
-    store, settled = _FakeStore2(), []
-    async with _client() as client:
-        await read_responses(
-            client, store=store, cursors=_cursors(), config=config,
-            settle=_recorder(settled), now=NOW,
-        )
-    address, fields = store.upserts[0]
-    assert settled == [a for a, _ in store.upserts]
-    assert fields["parsed_as"] == "anthropic-compliance"
-    assert fields["stop_reason"] in {"tool_use", "end_turn"}
-    assert fields["tokens"]["input"] == 0
-    # Identity comes from the listing item: a transcript message carries
-    # only type, id, role, created_at, provenance, model and content, so
-    # walking the messages for a user would find nothing and drop every
-    # event this reader emits.
-    assert fields["identity_details"]["user_id"] == _session()["user"]["id"]
-    assert fields["user_agent"] == _session()["product_surface"]
+async def test_a_tombstoned_run_is_not_re_emitted() -> None:
+    store, sink = a_store(), Sink()
+    address = addresses(1)[0]
+    await seed(store, address)
+    await store.retire(address, "pushed", now=NOW)
+    counters = await run(store, sink)
+    assert counters.tombstoned >= 1
+    assert address not in sink.request_ids
 
 
-async def test_a_truncated_drain_leaves_the_sessions_watermark_alone(config) -> None:  # noqa: ANN001
-    cursors = _cursors()
-    store = {SESSIONS: _FakeStore(), CHATS: _FakeStore()}
-    async with _client() as client:
-        await read_responses(
-            client, store=_FakeStore2(), cursors=Cursors(store, poll_lag_seconds=LAG),
-            config=config.model_copy(update={"max_sessions_per_tick": 1}),
-            settle=_recorder([]), now=NOW,
-        )
-    assert store[SESSIONS].saves == []
+async def test_the_chats_feed_emits_too() -> None:
+    # The walk that did not exist: a chat assistant turn carries its tool
+    # results inline and its model on the chat object, and nothing else in
+    # the suite would have caught either.
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink)
+    chat = body("chat_messages_2.json")
+    turns = chat_turns(chat)
+    assert turns and all(t.model == chat["model"] for t in turns)
+    joinable = [
+        a for a in (joinable_address(to_anthropic(t.messages)) for t in turns) if a
+    ]
+    assert joinable, "chat_messages_2 has tool calls; if not, the fixture changed"
+    assert counters.from_chats >= 1
+    assert any(rid in sink.request_ids for rid in joinable)
 
 
-async def test_content_unavailable_and_replayed_turns_are_skipped(config) -> None:  # noqa: ANN001
-    # Hand-written, not recorded: this tenant has no retention policy in
-    # force and produced none. A customer with finite retention does, and
-    # emitting one would create a contentless invocation.
+def test_an_inline_tool_result_never_reaches_the_response_union() -> None:
+    # Handing a chat assistant message's blocks to AnthropicMessage raises,
+    # and inside a tick that takes every reader behind it down.
+    chat = body("chat_messages_2.json")
+    turn = next(t for t in chat_turns(chat) if any(
+        block.get("type") == "tool_result"
+        for message in t.messages
+        for block in message["content"]
+    ))
+    from slashid_anthropic_forwarder.compliance.responses import response_blocks
+
+    kinds = {b["type"] for b in response_blocks(turn.messages[0]["content"])}
+    assert "tool_result" not in kinds
+    assert kinds <= {"text", "tool_use", "thinking"}
+
+
+async def test_a_truncated_drain_leaves_the_sessions_watermark_alone() -> None:
+    sessions, chats = FakeCheckpoints(), FakeCheckpoints()
+    cursors = Cursors({SESSIONS: sessions, CHATS: chats}, poll_lag_seconds=LAG)
+    await run(a_store(), Sink(), cursors, max_sessions_per_tick=1)
+    assert sessions.saves == []
+    # The ordered feed is unaffected: it resumes from its own watermark.
+    assert chats.saves != []
+
+
+async def test_another_organizations_conversation_is_skipped() -> None:
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink, organization_uuid="other")
+    assert counters.emitted == 0
+    assert counters.skipped_other_org == len(body("sessions_list.json")["data"]) + len(
+        body("chats_list.json")["data"]
+    )
+
+
+def test_content_unavailable_and_replayed_turns_are_skipped() -> None:
+    # Hand-written: this tenant has no retention policy in force and
+    # produced none. A customer with finite retention does, and emitting
+    # one would create a contentless invocation.
     messages = [
         {"role": "assistant", "model": "claude-opus-5",
          "provenance": {"type": "content_unavailable", "reason": "retention_elapsed"},
          "content": []},
         {"role": "assistant", "model": "claude-opus-5",
          "provenance": {"type": "client_asserted"}, "content": []},
-        {"role": "assistant", "model": "claude-opus-5",
-         "provenance": {"type": "synthetic_marker"}, "content": []},
     ]
     assert produced_runs(messages) == []
 
 
-def test_unknown_blocks_and_roles_survive_translation() -> None:
+def test_unknown_blocks_survive_translation() -> None:
     translated = to_anthropic(
         [{"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "future"}]}]
     )
     assert len(translated) == 1 and len(translated[0].content) >= 1
 ```
 
-`anthropic/tests/test_produced_runs.yaml` — the marker rule, in cases:
+`anthropic/tests/test_produced_runs.yaml`:
 
 ```yaml
-# The anchor. Only a newly-produced turn carries a model; 429 of 433
-# assistant messages in the measured session did not.
-id: only_marked_assistant_turns_are_runs
+# The anchor: a local-session turn is newly produced when it carries a
+# model and no provenance at all. Every recorded transcript looks like
+# this; the largest measured session had 4 such turns out of 433
+# assistant messages, and the rule is the same either way.
+id: a_marked_assistant_turn_with_no_provenance_is_a_run
 messages:
+  - {role: user, provenance: {type: synthetic_marker}, content: [{type: text, text: marker}]}
   - {role: user, content: [{type: text, text: hi}]}
-  - {role: assistant, content: [{type: text, text: replayed}]}
   - {role: assistant, model: claude-opus-5, content: [{type: text, text: fresh}]}
 expected_models: [claude-opus-5]
 ---
@@ -8170,38 +8428,43 @@ messages:
   - {role: assistant, content: [{type: tool_use, id: toolu_01A, name: Read, input: {}}]}
 expected_models: [claude-opus-5]
 ---
-# The synthetic marker the client never sent. It is one of the three
-# reasons a digest over the transcript prefix cannot join the two sources.
-id: the_synthetic_marker_is_not_a_turn
-messages:
-  - {role: assistant, model: claude-opus-5, provenance: {type: synthetic_marker}, content: []}
-expected_models: []
----
-# Replayed history is the overwhelming majority of what a transcript holds.
+# Replayed history is the overwhelming majority of what a long transcript
+# holds, and it is not traffic.
 id: client_asserted_history_is_not_a_turn
 messages:
   - {role: assistant, model: claude-opus-5, provenance: {type: client_asserted}, content: []}
 expected_models: []
 ---
-# The schema tells callers to tolerate unrecognized `type` values, so an
-# unknown provenance is skipped rather than rejected — and a turn we
-# cannot classify is not one we emit.
+# The synthetic marker the client never sent: one of the three reasons a
+# digest over the transcript prefix cannot join the two sources.
+id: the_synthetic_marker_is_not_a_turn
+messages:
+  - {role: assistant, model: claude-opus-5, provenance: {type: synthetic_marker}, content: []}
+expected_models: []
+---
+# Tolerate unrecognized `type` values, says the schema. A turn we cannot
+# classify is not one we emit.
 id: an_unknown_provenance_is_skipped_not_rejected
 messages:
   - {role: assistant, model: claude-opus-5, provenance: {type: future_kind}, content: []}
 expected_models: []
 ---
-# Two produced turns in one transcript, with replayed history between.
+# No marker at all: replayed history in a transcript whose turns predate
+# the model field.
+id: an_unmarked_assistant_message_is_not_a_turn
+messages:
+  - {role: assistant, content: [{type: text, text: replayed}]}
+expected_models: []
+---
+# Two produced turns in one transcript, which is what every recorded
+# local session looks like.
 id: two_produced_turns
 messages:
   - {role: assistant, model: claude-opus-5, content: [{type: text, text: one}]}
   - {role: user, content: [{type: text, text: next}]}
-  - {role: assistant, content: [{type: text, text: replayed}]}
   - {role: assistant, model: claude-sonnet-5, content: [{type: text, text: two}]}
 expected_models: [claude-opus-5, claude-sonnet-5]
 ```
-
-Recording note: `session_messages_no_files.json` is `session_messages.json` with the `files[]` arrays emptied — write it alongside the recorded one in Task 7.2 and say so in the recorder, so the pair stays in step.
 
 - [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_responses.py -v`. Expected: collection ERROR, `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.compliance.responses'`.
 
@@ -8210,33 +8473,37 @@ Recording note: `session_messages_no_files.json` is `session_messages.json` with
 ```python
 """Reader B — responses, from the stored transcripts.
 
-One invocation per **newly-produced assistant turn**, and the anchor is
-the ``model`` marker rather than the role: of 433 assistant messages in
-the largest measured session, 4 carried one and 429 were replayed
-``client_asserted`` history. Keying on the role would emit a hundred
-times the real traffic; keying on an ordinal would collide across the
-hundred-plus sub-conversations that share one ``session_id``.
+One invocation per newly-produced assistant turn, and **only for a
+joinable run**. ``joinable_address`` answers the run's first
+``tool_use.id`` or ``None``, and ``None`` ends it: the fallback that
+suggests itself — a digest over the transcript prefix — is exactly the
+key the measurement ruled out (200 keys frame-side, 302 here, zero in
+common, and still zero with every text block removed; the stored
+transcript prepends a synthetic marker, carries turns from before
+capture began, and includes sub-agent turns no frame shows). An
+unjoinable run belongs to the hook, which already reported it under a
+delivery id no reader can compute.
 
-**Only a joinable run may be touched.** A run containing a ``tool_use``
-id has an address both sources compute identically. A run without one
-does not, and no digest over the message sequence can substitute:
-measured over one session present in both corpora, transcript-prefix
-digests produced 200 keys on the frame side, 302 here, and **zero in
-common** — the stored transcript prepends a synthetic marker the client
-never sent, carries turns from before capture began, and includes
-sub-agent turns no frame shows. So an unjoinable run belongs to the
-hook, which already reported it under a different key, and emitting it
-here would be a second event that first-completed-wins counts twice.
+Two walks, because the feeds are different shapes:
+
+* a **local session** marks a produced turn with ``model`` and no
+  ``provenance``; its tool results arrive in the next user message.
+* a **chat** has no per-message model — the chat object carries it — and
+  keeps ``tool_result`` blocks *inside* the assistant message. Those
+  blocks are not in the response-side union, so handing them to
+  ``AnthropicMessage`` raises, and inside a tick that takes down every
+  reader behind it.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+import httpx
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     AIModel,
@@ -8255,26 +8522,25 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
 )
 from slashid_ai_forwarder_core.normalize.normalized.tools import build_tools_declared
 
+from ..address import joinable_address
 from ..config import Config
-from ..content_address import invocation_address
 # The accessed-files recipe is the spine's: a file a verdict allowed must
 # not be recorded under a different digest, so this imports the hook's
 # function rather than deriving a second one.
 from ..hook.envelope import accessed_files_for
+from ..pending import push_if_ready
+from ..record import COMPLIANCE, FILE_DIGESTS, Append, PARSED_AS_COMPLIANCE, event_fields
 from ..store import PendingStore, Seen
-from .attachments import files_from_listing, listed_files, replace_attachments
+from .attachments import files_from_listing, listed_files
 from .checkpoint import CHATS, SESSIONS, Cursors
-from .client import NOT_PRODUCED, ComplianceClient, decode_session_id, provenance_type
+from .client import ComplianceClient, decode_session_id, provenance_type
 
 log = logging.getLogger(__name__)
 
-PARSED_AS = "anthropic-compliance"
-# ``invocation_address`` answers the run's first tool_use id, or this
-# prefix plus a digest when the run has none. The prefix is how a reader
-# recognises a run it must not touch.
-UNJOINABLE = "inv:"
-
-Settle = Callable[[str], Awaitable[bool]]
+# Blocks an assistant turn may carry on the response side. A chat keeps
+# its tool_results in the same message, and AnthropicMessage will not
+# validate one.
+_RESPONSE_KINDS = frozenset({"text", "tool_use", "thinking"})
 
 
 @dataclass
@@ -8291,26 +8557,25 @@ class ResponseCounters:
     tombstoned: int = 0
     unjoinable: int = 0
     skipped_other_org: int = 0
+    from_chats: int = 0
+    dropped_no_identity: int = 0
     models: dict[str, str] = field(default_factory=dict)
 
 
 def produced_runs(messages: Sequence[Mapping[str, Any]]) -> list[ProducedRun]:
-    """One run per newly-produced assistant turn.
+    """Newly-produced turns in a **local session** transcript.
 
-    Skips ``client_asserted`` replays, the ``synthetic_marker`` the
-    client never sent, and ``content_unavailable`` turns — a turn whose
-    content the API will not return, which would otherwise become a
-    contentless invocation. An unrecognized provenance is skipped too:
-    the schema says to tolerate unknown ``type`` values, and a turn we
-    cannot classify is not one to emit.
+    The marker is ``model`` with no ``provenance``: a replayed
+    ``client_asserted`` turn, the ``synthetic_marker`` the client never
+    sent and a ``content_unavailable`` turn all carry one, and so does
+    anything Anthropic adds later — which is the right default, since a
+    turn we cannot classify is not one to emit.
     """
     runs: list[ProducedRun] = []
     for i, message in enumerate(messages):
         if message.get("role") != "assistant" or not message.get("model"):
             continue
         if provenance_type(message) is not None:
-            # Every provenance we know about marks a turn that is not
-            # newly produced, and an unknown one is not ours to guess at.
             continue
         run = [dict(message)]
         for follower in messages[i + 1 :]:
@@ -8328,13 +8593,42 @@ def produced_runs(messages: Sequence[Mapping[str, Any]]) -> list[ProducedRun]:
     return runs
 
 
+def chat_turns(chat: Mapping[str, Any]) -> list[ProducedRun]:
+    """Produced turns in a **chat**, which are simply its assistant turns.
+
+    A chat transcript is the canonical store rather than a client's
+    replay, so there is no history to filter and no per-message marker to
+    filter it with: no chat message carries ``model`` or ``provenance``,
+    and the model is on the chat object.
+    """
+    model = str(chat.get("model") or "unknown")
+    turns: list[ProducedRun] = []
+    for i, message in enumerate(chat.get("chat_messages") or []):
+        if message.get("role") == "assistant":
+            turns.append(ProducedRun(index=i, messages=[dict(message)], model=model))
+    return turns
+
+
+def response_blocks(blocks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The subset of an answer that the response-side union admits.
+
+    A chat's assistant message carries its ``tool_result`` blocks inline,
+    beside the ``tool_use`` that asked for them. ``AnthropicMessage`` does
+    not model that, so passing them through raises a ``ValidationError``
+    mid-tick. The results are not lost from the record — they are in the
+    transcript this run is attributed against — only from the *answer*.
+    """
+    return [dict(b) for b in blocks if b.get("type") in _RESPONSE_KINDS]
+
+
 def to_anthropic(messages: Sequence[Mapping[str, Any]]) -> list[AnthropicRequestMessage]:
     """Compliance messages → the canonical schema the spine speaks.
 
     The address must be byte-identical to the hook's for the same run, so
-    both sides hand ``invocation_address`` the same type. Blocks the
-    union does not model fall through as ``AnthropicUnknownBlock`` and
-    are skipped downstream, never rejected.
+    both sides hand ``joinable_address`` the same type. The request-side
+    union admits ``tool_result`` in either role, so a chat's inline
+    results survive here; blocks it does not model fall through as
+    ``AnthropicUnknownBlock`` and are skipped downstream, never rejected.
     """
     out: list[AnthropicRequestMessage] = []
     for message in messages:
@@ -8350,26 +8644,16 @@ def to_anthropic(messages: Sequence[Mapping[str, Any]]) -> list[AnthropicRequest
     return out
 
 
-def run_address(run: ProducedRun) -> str:
-    """The run's cross-source address, or an ``inv:`` key nobody agrees on."""
-    return invocation_address(to_anthropic(run.messages))
-
-
 async def read_responses(
     client: ComplianceClient,
     *,
     store: PendingStore,
     cursors: Cursors,
     config: Config,
-    settle: Settle,
+    http: httpx.AsyncClient,
     now: datetime,
 ) -> ResponseCounters:
-    """One pass over both conversation feeds.
-
-    Local sessions cannot be ordered, so that half drains the whole
-    lagging window and leans on the store's tombstones; chats are
-    ordered and resume from their watermark.
-    """
+    """One pass over both conversation feeds."""
     counters = ResponseCounters()
     lag = timedelta(seconds=config.poll_lag_seconds)
 
@@ -8381,66 +8665,67 @@ async def read_responses(
             counters.skipped_other_org += 1
             continue
         session_id = session.get("id", "")
+        messages = await client.session_messages(session_id)
         await _walk(
-            await client.session_messages(session_id),
+            produced_runs(messages),
+            messages=messages,
             conversation_id=decode_session_id(session_id) or session_id,
-            # A message carries only type, id, role, created_at,
-            # provenance, model and content — no user. Identity is on the
-            # listing item, so it is read once here and handed down.
+            # A message carries no user; the listing item does.
             user_id=_listed_user_id(session),
             surface=session.get("product_surface"),
             client=client,
             store=store,
             config=config,
-            settle=settle,
+            http=http,
             counters=counters,
         )
     # Only a finished drain may move a window bound whose listing is
     # newest-first: the tail a cap leaves is the oldest.
     cursors.advance(SESSIONS, timestamp=now - lag, drained=drain.complete)
 
-    async for chat in client.iter_chats(since=cursors.window_start(CHATS, now=now)):
-        if chat.get("organization_uuid") != config.organization_uuid:
+    async for listed in client.iter_chats(since=cursors.window_start(CHATS, now=now)):
+        if listed.get("organization_uuid") != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
-        chat_id = chat.get("uuid") or chat.get("id", "")
+        chat = await client.chat(listed.get("id", ""))
+        messages = list(chat.get("chat_messages") or [])
+        before = counters.emitted + counters.enriched
         await _walk(
-            await client.chat_messages(chat_id),
-            conversation_id=chat_id,
-            # The session listing's identity key is `user.id`; confirm the
-            # chat listing's against `chats_updated.json` before trusting
-            # it, because a None here drops every event from this feed
-            # rather than degrading one field.
-            user_id=_listed_user_id(chat),
-            surface=chat.get("product_surface"),
+            chat_turns(chat),
+            messages=messages,
+            conversation_id=str(chat.get("id") or ""),
+            user_id=_listed_user_id(chat) or _listed_user_id(listed),
+            surface="claude-ai",
             client=client,
             store=store,
             config=config,
-            settle=settle,
+            http=http,
             counters=counters,
         )
+        counters.from_chats += (counters.emitted + counters.enriched) - before
     cursors.advance(CHATS, timestamp=now - lag, drained=True)
     return counters
 
 
 async def _walk(
-    messages: Sequence[Mapping[str, Any]],
+    runs: Sequence[ProducedRun],
     *,
+    messages: Sequence[Mapping[str, Any]],
     conversation_id: str,
     user_id: str | None,
     surface: str | None,
     client: ComplianceClient,
     store: PendingStore,
     config: Config,
-    settle: Settle,
+    http: httpx.AsyncClient,
     counters: ResponseCounters,
 ) -> None:
-    for run in produced_runs(messages):
+    for run in runs:
         counters.models[conversation_id] = run.model
-        address = run_address(run)
-        if address.startswith(UNJOINABLE):
-            # Owned by the hook. Emitting it would be a second event for
-            # an invocation already reported under a different key.
+        address = joinable_address(to_anthropic(run.messages))
+        if address is None:
+            # Owned by the hook, under a key no reader can compute. There
+            # is no second-best address here on purpose.
             counters.unjoinable += 1
             continue
         state = await store.seen(address)
@@ -8449,17 +8734,16 @@ async def _walk(
             continue
         digests = await _digests(messages[: run.index], client=client, config=config)
         if state is Seen.LIVE:
-            # The record's own tool-result entries were hashed from an
-            # untruncated frame and must survive, so only the attachment
-            # group travels. A visit that found nothing still clears the
-            # expectation: otherwise the record waits out its deadline
-            # for a listing that is not coming.
-            await store.complete(
-                address, fields={"file_digests": [d.model_dump(mode="json") for d in digests]},
-                clears=("file_digests",),
+            outcome = await store.complete(
+                address,
+                {
+                    "file_digests": [d.model_dump(mode="json", exclude_none=True) for d in digests],
+                    "contributed": Append((COMPLIANCE,)),
+                },
+                (FILE_DIGESTS,),
             )
             counters.enriched += 1
-            await settle(address)
+            await push_if_ready(address, outcome, store=store, config=config, client=http)
             continue
         event = await _standalone(
             messages,
@@ -8472,24 +8756,24 @@ async def _walk(
             config=config,
         )
         if event is None:
+            counters.dropped_no_identity += 1
             continue
-        await store.upsert(address, fields=event.model_dump(mode="json"), expectations=())
+        # `event_fields`, not `open_fields`: there is no delivery id on
+        # this side, and `webhook_ids` is the list Reader A matches a
+        # denial against — putting a `clsm_` id in it would be a lie.
+        outcome = await store.upsert(
+            address, {**event_fields(event), "contributed": Append((COMPLIANCE,))}, ()
+        )
         counters.emitted += 1
-        # The retire inside `settle` is what leaves the tombstone: without
-        # it a compliance-only deployment re-emits this turn on every tick
-        # it stays inside the lagging window.
-        await settle(address)
+        # No expectations, so the record is born ready: this pushes it and
+        # the retire inside leaves the tombstone the next tick honours.
+        await push_if_ready(address, outcome, store=store, config=config, client=http)
 
 
 async def _digests(
     before: Sequence[Mapping[str, Any]], *, client: ComplianceClient, config: Config
 ) -> list[Any]:
-    """Listing-derived entries for the round the run consumed.
-
-    ``files[]`` hangs off the one user message that carried the upload,
-    so an attachment is reported once, on the invocation that consumed
-    it — the same consumption rule as everywhere else.
-    """
+    """Listing-derived entries for the round the run consumed."""
     entries = [f for message in _last_round(before) for f in listed_files(message)]
     return await files_from_listing(client, entries, config=config)
 
@@ -8514,16 +8798,18 @@ async def _standalone(
 ) -> AIInvocationObservedV1 | None:
     """The event for a joinable turn the hook never saw.
 
-    Unsampled under a partial rollout, or arriving while the receiver was
+    Unsampled under a partial rollout, arriving while the receiver was
     down, or a session's final round. Worse than a hook-emitted event —
     10 KB-capped tool blocks, no untruncated digests — and far better
-    than nothing. ``parsed_as`` says which it is.
+    than nothing; ``parsed_as`` says which it is.
     """
     if not user_id:
         # The server rejects an Anthropic identity with no identifier.
         return None
     before = to_anthropic(messages[: run.index])
-    answer = [block for message in run.messages for block in (message.get("content") or [])]
+    answer = response_blocks(
+        [block for message in run.messages for block in (message.get("content") or [])]
+    )
     response = AnthropicMessage.model_validate(
         {
             "type": "message",
@@ -8531,15 +8817,17 @@ async def _standalone(
             "content": answer,
             # No surface carries a stop reason, so it is inferred from
             # block shape — exactly as the hook path infers it.
-            "stop_reason": "tool_use" if _ends_in_tool_use(answer) else "end_turn",
+            "stop_reason": "tool_use" if answer and answer[-1]["type"] == "tool_use" else "end_turn",
         }
     )
     normalized = await message_to_normalized_invocation(
         AnthropicRequestBody(messages=before), response, config=config
     )
-    normalized.accessed_files = replace_attachments(
-        await accessed_files_for(before, config=config), list(digests)
-    )
+    files = await accessed_files_for(before, config=config)
+    normalized.accessed_files = [
+        *[f for f in files if f.provenance != "attachment"],
+        *digests,
+    ]
     names: dict[str, None] = {}
     for message in [*before, *to_anthropic(run.messages)]:
         for block in message.content:
@@ -8555,9 +8843,8 @@ async def _standalone(
             timestamp=str(run.messages[0].get("created_at") or ""),
             identity_details=AnthropicIdentityDetails(user_id=user_id),
             model=AIModel(id=run.model, provider="anthropic", raw_model_id=run.model),
-            parsed_as=PARSED_AS,
-            # The listing's `product_surface`, which is the closest this
-            # side has to the frame's `source.application`.
+            # Overridden by `to_event` from `contributed`.
+            parsed_as=PARSED_AS_COMPLIANCE,
             user_agent=surface,
             conversation_id=conversation_id,
         ),
@@ -8565,17 +8852,12 @@ async def _standalone(
     )
 
 
-def _ends_in_tool_use(blocks: Sequence[Mapping[str, Any]]) -> bool:
-    return bool(blocks) and blocks[-1].get("type") == "tool_use"
-
-
 def _listed_user_id(item: Mapping[str, Any]) -> str | None:
     """``user.id`` off a **listing item**, never off a message.
 
     A transcript message carries only ``type, id, role, created_at,
-    provenance, model, content`` — there is no identity in it — so the
-    session or chat item is where this comes from. That id is
-    byte-identical to the frame's ``actor.id``, which is what keeps a
+    provenance, model, content`` — there is no identity in it. That id is
+    byte-identical to the frame's ``actor.id``, which keeps a
     reader-emitted event and a hook-emitted one on one graph identity
     instead of forking the same human in two.
     """
@@ -8585,11 +8867,9 @@ def _listed_user_id(item: Mapping[str, Any]) -> str | None:
     return None
 ```
 
-- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_responses.py -v && uv run ty check`. Expected: 16 passed (6 yaml cases plus 10). If `test_the_address_matches_the_hook_path_for_the_same_run` fails, the cause is the translation and not the addressing: `to_anthropic` must hand `invocation_address` the same block objects the frame side does, and a dropped `tool_use` block changes the anchor.
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest tests/test_responses.py -v && uv run ty check`. Expected: 21 passed (7 yaml cases plus 14). Two failure modes worth recognising: a `ValidationError` naming `tool_result` means the chat answer reached `AnthropicMessage` unfiltered, and an address mismatch in the paired test is the translation, not the addressing — `to_anthropic` must hand `joinable_address` the same blocks the frame side does, and a dropped `tool_use` changes the anchor.
 
-- [ ] **Step 5: Run the whole suite** — `cd anthropic && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run ty check`. Expected: green, with the 62 tests this chunk adds on top of what Chunks 1–6 left.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add anthropic/src/slashid_anthropic_forwarder/compliance/responses.py \
@@ -8597,7 +8877,308 @@ git add anthropic/src/slashid_anthropic_forwarder/compliance/responses.py \
 git commit -m "feat(anthropic): reader b emits and enriches joinable runs only"
 ```
 
----
+### Task 7.10: wire the readers into `/tick`
+
+**Files:**
+- Create: `anthropic/src/slashid_anthropic_forwarder/compliance/readers.py`
+- Modify: `anthropic/src/slashid_anthropic_forwarder/main.py`
+- Test: `anthropic/tests/test_readers.py`, `anthropic/tests/test_main.py`
+
+Nothing so far constructs a `ComplianceClient`, the three checkpoint cursors, or runs anything: `POST /tick` calls `flush_due` and returns. This is the task that makes the chunk reachable, and it settles four things.
+
+**Order.** Reader B first, then Reader A, then the flush. B builds the `conversation_id → model` map that A's fallback needs, and both run before the flush because a reader's `complete` can make a record ready, and a record that became ready on this tick should go out on this tick rather than waiting for the next.
+
+**Isolation.** A reader failure is a log line, never a failed tick: the two readers are independent sources and a 429 on the activity feed must not cost the responses that already landed. Cloud Scheduler retries a failed tick, which would re-run a reader that already advanced its watermark, so failing the request is worse than useless.
+
+**The store is async and the checkpoints are not.** `CheckpointStore.load`/`save` came from `vertex/`, where everything is synchronous, and they stay that way — the alternative is an async protocol that only this service would use. That means six blocking single-document Firestore calls per tick, on a route with no latency budget: the verdict path never touches a checkpoint, and `/tick` is a scheduler job. If a tick ever does block long enough to matter, `asyncio.to_thread` around the two `Cursors` methods is the escape hatch, and it is one line in this module rather than a change to the promoted type.
+
+**Two clients, deliberately.** The compliance client shares the tick's `httpx.AsyncClient` — every header it sends is per request — while the checkpoints need a synchronous `firestore.Client` alongside the pending store's `AsyncClient`. Both point at the same named database and different collections.
+
+- [ ] **Step 1: Write the failing tests** — `anthropic/tests/test_readers.py`:
+
+```python
+"""The tick's reader pass: order, isolation, and the flush that follows."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from slashid_anthropic_forwarder.compliance import readers
+from slashid_anthropic_forwarder.compliance.checkpoint import FEEDS, Cursors
+from tests.compliance_fixtures import transport
+from tests.test_cursors import _FakeStore as FakeCheckpoints
+from tests.test_pending import Sink, a_store, config as a_config
+
+NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)
+ORG = "11111111-1111-1111-1111-111111111111"
+
+
+def cursors() -> Cursors:
+    return Cursors({feed: FakeCheckpoints() for feed in FEEDS}, poll_lag_seconds=120)
+
+
+def enabled(**over):  # noqa: ANN201, ANN003
+    return a_config(compliance_key="sk-ant-api01-x", organization_uuid=ORG, **over)
+
+
+async def test_without_a_key_the_readers_do_not_run() -> None:
+    client, seen = transport()
+    counters = await readers.run_readers(
+        store=a_store(), config=a_config(), http=client, cursors=cursors(), now=NOW
+    )
+    assert counters == {}
+    assert seen == []
+
+
+async def test_reader_b_runs_before_reader_a_and_feeds_it_the_models() -> None:
+    client, seen = transport()
+    counters = await readers.run_readers(
+        store=a_store(), config=enabled(), http=Sink().client(), cursors=cursors(), now=NOW,
+        compliance=client,
+    )
+    paths = [r.url.path for r in seen]
+    assert paths.index("/v1/compliance/apps/sessions/local") < paths.index(
+        "/v1/compliance/activities"
+    )
+    assert counters["denials_handled"] == 1
+    assert counters["responses_emitted"] >= 1
+
+
+async def test_a_failing_reader_b_does_not_stop_reader_a(monkeypatch) -> None:  # noqa: ANN001
+    async def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("429")
+
+    monkeypatch.setattr(readers, "read_responses", boom)
+    client, _ = transport()
+    counters = await readers.run_readers(
+        store=a_store(), config=enabled(), http=Sink().client(), cursors=cursors(), now=NOW,
+        compliance=client,
+    )
+    # Reader A still ran, with an empty model map — the documented "unknown".
+    assert counters["denials_handled"] == 1
+    assert "responses_emitted" not in counters
+
+
+async def test_a_failing_reader_a_does_not_fail_the_pass(monkeypatch) -> None:  # noqa: ANN001
+    async def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("429")
+
+    monkeypatch.setattr(readers, "read_denials", boom)
+    client, _ = transport()
+    counters = await readers.run_readers(
+        store=a_store(), config=enabled(), http=Sink().client(), cursors=cursors(), now=NOW,
+        compliance=client,
+    )
+    assert counters["responses_emitted"] >= 1
+```
+
+and in `anthropic/tests/test_main.py`, two cases on the route:
+
+```python
+async def test_tick_runs_the_readers_before_the_flush(monkeypatch) -> None:  # noqa: ANN001
+    order: list[str] = []
+
+    async def fake_readers(**kwargs):  # noqa: ANN003, ANN202
+        order.append("readers")
+        return {"responses_emitted": 2}
+
+    async def fake_flush(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        order.append("flush")
+        return 1
+
+    monkeypatch.setattr(main, "run_readers", fake_readers)
+    monkeypatch.setattr(main, "flush_due", fake_flush)
+    async with _client(store=a_store()) as client:
+        response = await client.post("/tick")
+    assert order == ["readers", "flush"]
+    assert response.json() == {"flushed": 1, "responses_emitted": 2}
+
+
+async def test_a_reader_failure_does_not_fail_the_tick(monkeypatch) -> None:  # noqa: ANN001
+    async def boom(**kwargs):  # noqa: ANN003, ANN202
+        raise RuntimeError("firestore down")
+
+    monkeypatch.setattr(main, "run_readers", boom)
+    async with _client(store=a_store()) as client:
+        response = await client.post("/tick")
+    # Cloud Scheduler retries a failed tick, which would re-run a reader
+    # that already moved its watermark. The flush still ran.
+    assert response.status_code == 200
+    assert response.json()["flushed"] == 0
+```
+
+- [ ] **Step 2: Run to verify they fail** — `cd anthropic && uv run pytest tests/test_readers.py tests/test_main.py -v`. Expected: `ModuleNotFoundError: No module named 'slashid_anthropic_forwarder.compliance.readers'`, and in `test_main.py` `AttributeError: <module 'slashid_anthropic_forwarder.main'> has no attribute 'run_readers'`.
+
+- [ ] **Step 3: Implement** `compliance/readers.py`:
+
+```python
+"""One reader pass, and what builds it.
+
+Reader B runs first: it reads the transcripts, which is where the model
+of a denied conversation is, and Reader A has no ``model`` of its own.
+Both run before the flush, because a reader's ``complete`` can make a
+record ready and a record that became ready on this tick should go out
+on this tick.
+
+Each reader is isolated. They are independent sources, a 429 on one feed
+must not cost what the other already landed, and Cloud Scheduler retries
+a failed tick — which would re-run a reader that already advanced its
+watermark. So a reader failure is a log line and a missing counter.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+
+import httpx
+
+from ..config import Config
+from ..store import PendingStore
+from .checkpoint import FEEDS, Cursors
+from .client import ComplianceClient
+from .denials import read_denials
+from .responses import read_responses
+
+log = logging.getLogger(__name__)
+
+
+def build_cursors(config: Config) -> Cursors:
+    """One checkpoint document per feed, in their own collection.
+
+    Synchronous, because the promoted ``CheckpointStore`` is: six
+    single-document reads and writes per tick, on a route with no latency
+    budget. ``asyncio.to_thread`` around the two ``Cursors`` methods is
+    the escape hatch if that ever stops being true.
+    """
+    from google.cloud import firestore
+
+    client = firestore.Client(
+        project=config.gcp_project_id, database=config.firestore_database
+    )
+    from slashid_ai_forwarder_core.checkpoint import FirestoreCheckpointStore
+
+    return Cursors(
+        {
+            feed: FirestoreCheckpointStore(
+                client=client, collection=config.checkpoint_collection, document=feed
+            )
+            for feed in FEEDS
+        },
+        poll_lag_seconds=config.poll_lag_seconds,
+    )
+
+
+async def run_readers(
+    *,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    cursors: Cursors | None = None,
+    compliance: httpx.AsyncClient | None = None,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Both readers, in order, each isolated. Counters for the tick's log.
+
+    ``compliance`` overrides the transport the API calls go over; by
+    default they share the tick's client, since every header this client
+    sends is per request.
+    """
+    if not config.compliance_enabled or not config.compliance_key:
+        return {}
+    moment = now or datetime.now(UTC)
+    client = ComplianceClient(compliance or http, api_key=config.compliance_key)
+    cursors = cursors or build_cursors(config)
+    counters: dict[str, int] = {}
+
+    models: dict[str, str] = {}
+    try:
+        responses = await read_responses(
+            client, store=store, cursors=cursors, config=config, http=http, now=moment
+        )
+    except Exception:
+        log.exception("compliance: reader B failed; reader A continues with no model map")
+    else:
+        models = responses.models
+        counters |= {
+            "responses_emitted": responses.emitted,
+            "responses_enriched": responses.enriched,
+            "responses_unjoinable": responses.unjoinable,
+        }
+
+    try:
+        denials = await read_denials(
+            client,
+            store=store,
+            cursors=cursors,
+            config=config,
+            http=http,
+            models=models,
+            now=moment,
+        )
+    except Exception:
+        log.exception("compliance: reader A failed")
+    else:
+        counters |= {
+            "denials_handled": denials.handled,
+            "denials_emitted": denials.emitted,
+            "denials_completed": denials.completed,
+        }
+    return counters
+```
+
+and in `main.py`, the import and the route:
+
+```python
+from .compliance.readers import run_readers
+```
+
+```python
+    @app.post("/tick")
+    async def tick(request: Request, background: BackgroundTasks) -> Response:
+        # Cloud Scheduler posts here with an OIDC token and no webhook
+        # headers, so the signature gate must not run — it would 401 every
+        # tick. A customer whose configured webhook URL happens to end in
+        # /tick is a real collision: Anthropic posts to whatever path the
+        # admin set and no suffix is reserved. A request carrying
+        # webhook-id is therefore the delivery it claims to be.
+        if "webhook-id" in request.headers:
+            return await handle_frame(request, background)
+        if store is None:
+            return JSONResponse({"flushed": 0})
+        counters: dict[str, int] = {}
+        try:
+            # Readers first: a `complete` here can make a record ready, and
+            # it should go out on this tick rather than the next.
+            counters = await run_readers(store=store, config=config, http=http())
+        except Exception:
+            # Never a failed tick. The scheduler would retry it, re-running
+            # a reader that already moved its watermark.
+            log.exception("tick: the reader pass failed; flushing anyway")
+        flushed = await flush_due(store, config=config, client=http())
+        return JSONResponse({"flushed": flushed, **counters})
+```
+
+- [ ] **Step 4: Run to verify they pass** — `cd anthropic && uv run ruff format . && uv run ruff check --fix . && uv run pytest -v && uv run ty check`. Expected: 4 passed in `test_readers.py`, `test_main.py` up by 2, and the whole subproject green.
+
+- [ ] **Step 5: Run every subproject the chunk touched**
+
+```bash
+cd anthropic && uv run ruff check . && uv run ruff format --check . && uv run ty check && uv run pytest -q
+cd ../shared && uv run ruff check . && uv run ty check && uv run pytest -q
+cd ../vertex && uv run ruff check . && uv run ty check && uv run pytest -q
+```
+
+Expected: `anthropic` green with the ~70 tests this chunk adds, `370 passed` in `shared` and `147 passed` in `vertex` — the counts Task 7.4 moved.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add anthropic/src/slashid_anthropic_forwarder/compliance/readers.py \
+        anthropic/src/slashid_anthropic_forwarder/main.py \
+        anthropic/tests/test_readers.py anthropic/tests/test_main.py
+git commit -m "feat(anthropic): run both readers on the tick, ahead of the flush"
+```
 
 ---
 
@@ -10163,6 +10744,14 @@ git commit -m "ci(anthropic): release the image to ghcr and run the member in ci
 ```
 
 ### Task 8.6: READMEs
+
+> **`anthropic/README.md` already exists and is not a blank page.** It carries a
+> "What we wish the provider gave us" section — eight measured limitations, each
+> with the measurement behind it — written while the plan was being reviewed.
+> Build the rest of the README **around** that section and do not rewrite or
+> summarize it. Its content overlaps Known limitations deliberately: that section
+> is the outward-facing ask, Known limitations is what a customer must live with.
+> If a measurement changes, both move together.
 
 `anthropic/README.md` in the shape of `vertex/README.md` — title, what it is, Scope, **Known limitations**, Development, Configuration, Release — plus a Prerequisites section, because this is the only forwarder whose prerequisites include a person with a specific role clicking something that cannot be undone or backdated.
 
