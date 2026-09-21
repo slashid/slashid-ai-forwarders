@@ -158,3 +158,53 @@ expected:
   composed_action: deny
   composed_source: policy
   calls: [policy, preflight]
+---
+id: a_configured_hash_denies
+policy: {body: {action: allow}}
+preflight: {body: {deny_reasons: []}}
+config_overrides: {mock_denied_hashes: x}
+frame_update: {}
+tail_kind: with_files
+body: "{}"
+expected: {action: deny, source: mock-hash}
+---
+id: an_unconfigured_hash_denies_nothing
+policy: {body: {action: allow}}
+preflight: {body: {deny_reasons: []}}
+config_overrides: {mock_denied_hashes: "deadbeef"}
+frame_update: {}
+tail_kind: with_files
+body: "{}"
+expected: {action: allow, source: none}
+---
+id: a_configured_hash_is_matched_case_insensitively
+# An operator pasting a digest from a tool that prints uppercase must not
+# be silently ignored; every source gives us lowercase hex.
+policy: {body: {action: allow}}
+preflight: {body: {deny_reasons: []}}
+config_overrides: {mock_denied_hashes: X}
+frame_update: {}
+tail_kind: with_files
+body: "{}"
+expected: {action: deny, source: mock-hash}
+---
+id: a_configured_hash_denies_when_no_other_check_can
+# The case the knob exists for: preflight has not shipped and no gate
+# route exists, so without this nothing could ever deny and the whole
+# denial path below the verdict would be unreachable.
+policy: null
+preflight: null
+config_overrides: {mock_denied_hashes: x, preflight_enabled: false, policy_url: null}
+frame_update: {}
+tail_kind: with_files
+body: "{}"
+expected: {action: deny, source: mock-hash, calls: []}
+---
+id: a_round_with_nothing_hashable_is_unaffected
+policy: {body: {action: allow}}
+preflight: {body: {deny_reasons: []}}
+config_overrides: {mock_denied_hashes: x}
+frame_update: {}
+tail_kind: without_files
+body: "{}"
+expected: {action: allow, source: none, calls: [policy]}

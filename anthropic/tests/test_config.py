@@ -110,3 +110,18 @@ def test_attachment_hashing_must_be_md5_or_full(monkeypatch: pytest.MonkeyPatch)
     _env(monkeypatch, SLASHID_ATTACHMENT_HASHING="sha256")
     with pytest.raises(ValidationError):
         Config()
+
+
+def test_mock_denied_hashes_default_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    assert Config().denied_hashes == ()
+
+
+def test_mock_denied_hashes_parse_like_the_signing_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One splitter, not two: same trimming and same empty-skipping as
+    SLASHID_HOOK_SIGNING_SECRET, and lowercased so a digest pasted from a
+    tool that prints uppercase still matches ours."""
+    _env(monkeypatch, SLASHID_MOCK_DENIED_HASHES=" ABC123 , ,def456 ")
+    assert Config().denied_hashes == ("abc123", "def456")

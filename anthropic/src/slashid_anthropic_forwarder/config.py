@@ -117,6 +117,24 @@ class Config(BaseConfig):
     # audience itself wherever the service is not public.
     tick_audience: str | None = None
 
+    # Hex digests that deny. Exists because on a fresh deployment nothing
+    # else can: preflight is off until that endpoint ships and POLICY_URL
+    # is unset until a gate route exists, so the composition, the deny
+    # reason, the guardrail stamp, the `deny:` address and Reader A's join
+    # onto it are all unreachable. Runs alongside preflight rather than
+    # instead of it, so enabling the real endpoint later changes nothing.
+    #
+    # Content-addressed, unlike CAPTURE_DENY_MARKER: a literal token is
+    # tripped by anyone who merely quotes it, which has wedged a working
+    # session before now. Test tenants only.
+    mock_denied_hashes: str = ""
+
+    @property
+    def denied_hashes(self) -> tuple[str, ...]:
+        """Lowercased, so a digest pasted from a tool that prints
+        uppercase still matches the lowercase hex every source gives us."""
+        return tuple(h.strip().lower() for h in self.mock_denied_hashes.split(",") if h.strip())
+
     @property
     def compliance_enabled(self) -> bool:
         return bool(self.compliance_key)

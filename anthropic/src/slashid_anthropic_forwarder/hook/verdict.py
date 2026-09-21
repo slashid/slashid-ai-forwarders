@@ -85,6 +85,24 @@ def _answer(config: Config, composed: Verdict) -> Decision:
     return Decision(composed=composed, answered=composed)
 
 
+def _denied_hash(tail_event: AIInvocationObservedV1 | None, config: Config) -> str | None:
+    """The name of the first file carrying a configured digest, or None.
+
+    Judges the same tail event preflight judges, so a test denial and a
+    real one are attributed to the same invocation. Pure local work over
+    content the frame already carried: it cannot fail, so unlike the two
+    remote checks it never interacts with the fail mode.
+    """
+    denied = config.denied_hashes
+    if not denied or tail_event is None or not tail_event.accessed_files:
+        return None
+    for entry in tail_event.accessed_files:
+        for value in (entry.content_hashes or {}).values():
+            if value.lower() in denied:
+                return entry.name or "A file in this request"
+    return None
+
+
 async def decide(
     frame: PromptFrame,
     *,
@@ -141,6 +159,14 @@ async def decide(
         )
 
     results: list[Verdict] = []
+    if (hit := _denied_hash(tail_event, config)) is not None:
+        results.append(
+            Verdict(
+                "deny",
+                deny_reason=f"{hit} is marked as not shareable with AI.",
+                source="mock-hash",
+            )
+        )
     if config.capture_deny_marker and config.capture_deny_marker.encode() in raw_body:
         results.append(
             Verdict(
