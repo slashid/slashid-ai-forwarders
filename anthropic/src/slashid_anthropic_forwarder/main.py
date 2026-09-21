@@ -70,8 +70,8 @@ def create_app(config: Config, *, capture: Capture | None = None) -> FastAPI:
                 "deny_reason": "Denied by the SlashID capture test marker.",
                 "reference_id": _reference_id(webhook_id),
             }
-            log.info("verdict for %s: %s (enforce=%s)", webhook_id, verdict, config.enforce)
-            if config.enforce:
+            log.info("verdict for %s: %s (shadow_mode=%s)", webhook_id, verdict, config.shadow_mode)
+            if not config.shadow_mode:
                 return JSONResponse(verdict, background=background)
         return JSONResponse(ALLOW, background=background)
 

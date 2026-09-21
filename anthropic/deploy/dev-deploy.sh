@@ -21,7 +21,7 @@ SA="${SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 REPO=slashid-anthropic
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/forwarder:$(git rev-parse --short HEAD)"
 CAPTURE_BUCKET="slashid-anthropic-capture-${PROJECT}"
-ENFORCE="${SLASHID_ENFORCE:-false}"
+SHADOW="${SLASHID_SHADOW_MODE:-true}"
 DENY_MARKER="${SLASHID_CAPTURE_DENY_MARKER:-SLASHID_DENY_ME}"
 
 cd "$(git rev-parse --show-toplevel)"
@@ -62,7 +62,7 @@ gcloud run deploy "$SERVICE" --image "$IMAGE" --region "$REGION" --project "$PRO
   --service-account "$SA" --allow-unauthenticated --ingress all \
   --min-instances 1 --max-instances 3 --concurrency 20 --cpu 1 --memory 512Mi \
   --no-cpu-throttling --timeout 30 \
-  --set-env-vars "SLASHID_ENDPOINT=https://api.slashid.com,SLASHID_CAPTURE_BUCKET=${CAPTURE_BUCKET},SLASHID_CAPTURE_DENY_MARKER=${DENY_MARKER},SLASHID_ENFORCE=${ENFORCE},SLASHID_PREFLIGHT_ENABLED=false,LOG_LEVEL=INFO" \
+  --set-env-vars "SLASHID_ENDPOINT=https://api.slashid.com,SLASHID_CAPTURE_BUCKET=${CAPTURE_BUCKET},SLASHID_CAPTURE_DENY_MARKER=${DENY_MARKER},SLASHID_SHADOW_MODE=${SHADOW},SLASHID_PREFLIGHT_ENABLED=false,LOG_LEVEL=INFO" \
   --set-secrets "SLASHID_HOOK_SIGNING_SECRET=slashid_anthropic_signing_secret:latest,SLASHID_PUSH_TOKEN=slashid_anthropic_push_token:latest" \
   --quiet
 

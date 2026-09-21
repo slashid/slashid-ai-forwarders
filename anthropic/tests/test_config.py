@@ -27,7 +27,7 @@ def test_signing_secrets_split_on_comma(monkeypatch: pytest.MonkeyPatch) -> None
 def test_defaults_are_observe_only_and_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     cfg = Config()
-    assert cfg.enforce is False
+    assert cfg.shadow_mode is True
     assert cfg.verdict_fail_mode == "allow"
     assert cfg.policy_url is None
     assert cfg.preflight_enabled is True
