@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from slashid_ai_forwarder_core.checkpoint import CheckpointStore
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 from slashid_anthropic_forwarder.address import joinable_address
-from slashid_anthropic_forwarder.compliance.checkpoint import CHATS, SESSIONS, Cursors
+from slashid_anthropic_forwarder.compliance.checkpoint import Cursors, FeedCursor
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
 from slashid_anthropic_forwarder.compliance.responses import (
     ResponseCounters,
@@ -18,6 +19,7 @@ from slashid_anthropic_forwarder.compliance.responses import (
     response_blocks,
     to_anthropic,
 )
+from slashid_anthropic_forwarder.compliance.schema import Chat, SessionMessage
 from slashid_anthropic_forwarder.hook.frame import PromptFrame, split_transcript
 from slashid_anthropic_forwarder.store import FirestorePendingStore, Retirement, Seen
 from tests.compliance_fixtures import PAIRED, body, transport
@@ -30,8 +32,8 @@ NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)
 ORG = "11111111-1111-1111-1111-111111111111"
 
 
-def session_messages(n: int) -> list[dict[str, Any]]:
-    return body(f"session_messages_{n}.json")["data"]
+def session_messages(n: int) -> list[SessionMessage]:
+    return [SessionMessage.model_validate(m) for m in body(f"session_messages_{n}.json")["data"]]
 
 
 def addresses(n: int) -> list[str]:
@@ -45,10 +47,15 @@ def addresses(n: int) -> list[str]:
     ]
 
 
+def _cursors(**stores: CheckpointStore) -> Cursors:
+    """Cursors for a test: every feed gets a fake unless one is named."""
+    made = {f: stores.get(f, FakeCheckpoints()) for f in ("activities", "chats", "sessions")}
+    return Cursors(**{f: FeedCursor(s, name=f, poll_lag_seconds=LAG) for f, s in made.items()})
+
+
 def a_reader() -> tuple[ComplianceClient, Cursors]:
     client, _ = transport()
-    stores = {SESSIONS: FakeCheckpoints(), CHATS: FakeCheckpoints()}
-    return ComplianceClient(client, api_key="k"), Cursors(stores, poll_lag_seconds=LAG)
+    return ComplianceClient(client, api_key="k"), _cursors()
 
 
 async def run(
@@ -72,13 +79,14 @@ async def run(
 
 @yaml_pytest(filename="test_produced_runs.yaml")
 def test_produced_runs(messages: list[dict[str, Any]], expected_models: list[str]) -> None:
-    assert [run.model for run in produced_runs(messages)] == expected_models
+    parsed = [SessionMessage.model_validate(m) for m in messages]
+    assert [run.model for run in produced_runs(parsed)] == expected_models
 
 
 def test_the_recorded_synthetic_marker_is_not_a_turn() -> None:
     # Every recorded transcript opens with one, on a *user* message.
     first = session_messages(1)[0]
-    assert first["provenance"] == {"type": "synthetic_marker"}
+    assert first.provenance is not None and first.provenance.type == "synthetic_marker"
     assert all(run.index > 0 for run in produced_runs(session_messages(1)))
 
 
@@ -165,9 +173,9 @@ async def test_the_chats_feed_emits_too() -> None:
     # the suite would have caught either.
     store, sink = a_store(), Sink()
     counters = await run(store, sink)
-    chat = body("chat_messages_2.json")
+    chat = Chat.model_validate(body("chat_messages_2.json"))
     turns = chat_turns(chat)
-    assert turns and all(t.model == chat["model"] for t in turns)
+    assert turns and all(t.model == chat.model for t in turns)
     joinable = [a for a in (joinable_address(to_anthropic(t.messages)) for t in turns) if a]
     assert joinable, "chat_messages_2 has tool calls; if not, the fixture changed"
     assert counters.from_chats >= 1
@@ -175,30 +183,27 @@ async def test_the_chats_feed_emits_too() -> None:
     # And its conversation is the uuid a frame would carry, not the
     # `claude_chat_…` id — the soft join's whole scope rests on it.
     pushed = next(e for b in sink.bodies for e in b["events"] if e["request_id"] in joinable)
-    assert pushed["conversation_id"] == chat["href"].rsplit("/", 1)[-1]
+    assert chat.href is not None
+    assert pushed["conversation_id"] == chat.href.rsplit("/", 1)[-1]
 
 
 def test_an_inline_tool_result_never_reaches_the_response_union() -> None:
     # Handing a chat assistant message's blocks to AnthropicMessage raises,
     # and inside a tick that takes every reader behind it down.
-    chat = body("chat_messages_2.json")
+    chat = Chat.model_validate(body("chat_messages_2.json"))
     turn = next(
         t
         for t in chat_turns(chat)
-        if any(
-            block.get("type") == "tool_result"
-            for message in t.messages
-            for block in message["content"]
-        )
+        if any(block.type == "tool_result" for message in t.messages for block in message.content)
     )
-    kinds = {b["type"] for b in response_blocks(turn.messages[0]["content"])}
+    kinds = {b.type for b in response_blocks(turn.messages[0].content)}
     assert "tool_result" not in kinds
     assert kinds <= {"text", "tool_use", "thinking"}
 
 
 async def test_a_truncated_drain_leaves_the_sessions_watermark_alone() -> None:
     sessions, chats = FakeCheckpoints(), FakeCheckpoints()
-    cursors = Cursors({SESSIONS: sessions, CHATS: chats}, poll_lag_seconds=LAG)
+    cursors = _cursors(sessions=sessions, chats=chats)
     await run(a_store(), Sink(), cursors, max_sessions_per_tick=1)
     assert sessions.saves == []
     # The ordered feed is unaffected: it resumes from its own watermark.
@@ -219,24 +224,31 @@ def test_content_unavailable_and_replayed_turns_are_skipped() -> None:
     # produced none. A customer with finite retention does, and emitting
     # one would create a contentless invocation.
     messages = [
-        {
-            "role": "assistant",
-            "model": "claude-opus-5",
-            "provenance": {"type": "content_unavailable", "reason": "retention_elapsed"},
-            "content": [],
-        },
-        {
-            "role": "assistant",
-            "model": "claude-opus-5",
-            "provenance": {"type": "client_asserted"},
-            "content": [],
-        },
+        SessionMessage.model_validate(m)
+        for m in (
+            {
+                "role": "assistant",
+                "model": "claude-opus-5",
+                "provenance": {"type": "content_unavailable", "reason": "retention_elapsed"},
+                "content": [],
+            },
+            {
+                "role": "assistant",
+                "model": "claude-opus-5",
+                "provenance": {"type": "client_asserted"},
+                "content": [],
+            },
+        )
     ]
     assert produced_runs(messages) == []
 
 
 def test_unknown_blocks_survive_translation() -> None:
     translated = to_anthropic(
-        [{"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "future"}]}]
+        [
+            SessionMessage.model_validate(
+                {"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "future"}]}
+            )
+        ]
     )
     assert len(translated) == 1 and len(translated[0].content) >= 1

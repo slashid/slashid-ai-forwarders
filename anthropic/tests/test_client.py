@@ -12,10 +12,9 @@ from slashid_anthropic_forwarder.compliance.client import (
     ComplianceClient,
     ComplianceError,
     chat_session_id,
-    created_at,
     decode_session_id,
-    provenance_type,
 )
+from slashid_anthropic_forwarder.compliance.schema import Activity, Chat, SessionMessage
 from tests.compliance_fixtures import MARIA_BYTES, MARIA_ID, body, cases, transport
 
 SINCE = datetime(2026, 9, 20, 12, 0, 0, tzinfo=UTC)
@@ -70,7 +69,7 @@ async def test_a_second_page_is_fetched_with_after_id() -> None:
         httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k"
     )
     rows = [row async for row in client.iter_activities(since=SINCE)]
-    assert [r["id"] for r in rows] == ["a", "b"]
+    assert [r.id for r in rows] == ["a", "b"]
     assert dict(seen[1].url.params)["after_id"] == "cursor-1"
 
 
@@ -106,35 +105,43 @@ def test_a_chats_session_id_is_the_uuid_its_href_ends_with() -> None:
     # measured on every claude.ai conversation in the tenant, a frame's
     # `session_id` is this uuid — three of three. It is NOT the
     # `claude_chat_…` id, which no frame carries.
-    for chat in body("chats_list.json")["data"]:
-        assert chat_session_id(chat) == chat["href"].rsplit("/", 1)[-1]
-        assert chat_session_id(chat) != chat["id"]
-    assert chat_session_id({}) is None
+    for row in body("chats_list.json")["data"]:
+        chat = Chat.model_validate(row)
+        assert chat_session_id(chat) == row["href"].rsplit("/", 1)[-1]
+        assert chat_session_id(chat) != row["id"]
+    assert chat_session_id(Chat()) is None
 
 
 def test_created_at_parses_both_recorded_spellings() -> None:
     # The feeds spell the same instant two ways — an activity's offset and
     # a message's `Z` — which is also why a timestamp comparison cannot be
     # left to string order.
-    activity = body("activities.json")["data"][0]
-    message = body("chat_messages_1.json")["chat_messages"][0]
-    assert created_at(activity) is not None
-    assert created_at(message) is not None
-    assert created_at({"created_at": "not a time"}) is None
-    assert created_at({}) is None
+    activity = Activity.model_validate(body("activities.json")["data"][0])
+    message = Chat.model_validate(body("chat_messages_1.json")).chat_messages[0]
+    assert activity.at is not None
+    assert message.at is not None
+    assert Activity.model_validate({"created_at": "not a time"}).at is None
+    assert Activity.model_validate({}).at is None
 
 
 def test_provenance_is_an_object_not_a_string() -> None:
-    assert provenance_type({"provenance": {"type": "client_asserted"}}) == "client_asserted"
-    assert provenance_type(
-        {"provenance": {"type": "content_unavailable", "reason": "oversize"}}
-    ) == ("content_unavailable")
+    def kind(raw: object) -> str | None:
+        message = SessionMessage.model_validate({"role": "assistant", "provenance": raw})
+        return message.provenance.type if message.provenance else None
+
+    assert kind({"type": "client_asserted"}) == "client_asserted"
+    unavailable = SessionMessage.model_validate(
+        {"role": "assistant", "provenance": {"type": "content_unavailable", "reason": "oversize"}}
+    )
+    assert unavailable.provenance is not None
+    assert unavailable.provenance.type == "content_unavailable"
+    assert unavailable.provenance.reason == "oversize"
     # Unknown values are tolerated by the schema and by us: skipped, never
     # rejected. A bare string was never the shape, and `None` is the shape
     # a produced local-session turn actually has.
-    assert provenance_type({"provenance": {"type": "future_kind"}}) == "future_kind"
-    assert provenance_type({"provenance": None}) is None
-    assert provenance_type({}) is None
+    assert kind({"type": "future_kind"}) == "future_kind"
+    assert kind(None) is None
+    assert SessionMessage.model_validate({"role": "assistant"}).provenance is None
 
 
 async def test_a_chat_transcript_lives_under_chat_messages_not_data() -> None:
@@ -143,8 +150,9 @@ async def test_a_chat_transcript_lives_under_chat_messages_not_data() -> None:
     client, _ = a_client()
     chat = body("chats_list.json")["data"][1]
     messages = await client.chat_messages(chat["id"])
+    recorded = body("chat_messages_2.json")["chat_messages"]
     assert messages
-    assert messages == body("chat_messages_2.json")["chat_messages"]
+    assert [m.id for m in messages] == [m["id"] for m in recorded]
 
 
 async def test_the_chat_object_is_available_for_its_model() -> None:
@@ -153,7 +161,7 @@ async def test_the_chat_object_is_available_for_its_model() -> None:
     client, _ = a_client()
     chat = body("chats_list.json")["data"][1]
     fetched = await client.chat(chat["id"])
-    assert fetched["model"] == body("chat_messages_2.json")["model"]
+    assert fetched.model == body("chat_messages_2.json")["model"]
 
 
 async def test_a_session_transcript_comes_back_whole() -> None:

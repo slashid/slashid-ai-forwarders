@@ -5,8 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from slashid_ai_forwarder_core.events import AIAccessedFile
+
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient, chat_session_id
 from slashid_anthropic_forwarder.compliance.responses import soft_join_uploads
+from slashid_anthropic_forwarder.compliance.schema import Chat
 from slashid_anthropic_forwarder.compliance.softjoin import SoftMatch, soft_join
 from slashid_anthropic_forwarder.record import (
     COMPLIANCE_SOFT,
@@ -25,23 +28,23 @@ from tests.test_pending import config as a_config
 NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)
 
 
-def a_chat(n: int) -> dict[str, Any]:
-    return body(f"chat_messages_{n}.json")
+def a_chat(n: int) -> Chat:
+    return Chat.model_validate(body(f"chat_messages_{n}.json"))
 
 
 async def seed_rounds(
-    store: FirestorePendingStore, chat: dict[str, Any], *, conversation: str | None = None
+    store: FirestorePendingStore, chat: Chat, *, conversation: str | None = None
 ) -> list[str]:
     """One live record per user message, timestamped as the frame that
     round would have carried. Left unpushed, so every one is a candidate."""
     addresses: list[str] = []
     key = conversation if conversation is not None else chat_session_id(chat)
-    for i, message in enumerate(chat["chat_messages"]):
-        if message["role"] != "user":
+    for i, message in enumerate(chat.chat_messages):
+        if message.role != "user":
             continue
-        address = f"hook:{chat['id']}-{i}"
+        address = f"hook:{chat.id}-{i}"
         event = an_event(address).model_copy(
-            update={"conversation_id": key, "timestamp": message["created_at"]}
+            update={"conversation_id": key, "timestamp": message.created_at}
         )
         await store.upsert(address, open_fields(event, webhook_id=f"msg_{i}", contributed=HOOK), ())
         addresses.append(address)
@@ -54,7 +57,7 @@ async def digests_on(store: FirestorePendingStore, address: str) -> list[dict[st
     return record.file_digests
 
 
-async def run(chat: dict[str, Any], store: Any, **over: Any) -> list[SoftMatch]:
+async def run(chat: Chat, store: Any, **over: Any) -> list[SoftMatch]:
     client, _ = transport()
     return await soft_join_uploads(
         chat,
@@ -119,7 +122,7 @@ async def test_a_soft_match_never_creates_a_record() -> None:
     before = set(fake(store).docs)
     assert await run(chat, store) == [SoftMatch.NONE]
     assert set(fake(store).docs) == before
-    assert await store.seen(chat["id"]) is Seen.ABSENT
+    assert await store.seen(chat.id) is Seen.ABSENT
 
 
 async def test_an_enriched_record_is_not_pushed_and_stays_live() -> None:
@@ -148,7 +151,7 @@ async def test_a_round_the_hard_path_covers_is_never_offered() -> None:
     # tool_use, so `_walk` already delivered its digests under the shared
     # address. Only the second round reaches the soft join.
     chat = a_chat(3)
-    uploads = [m for m in chat["chat_messages"] if m.get("files")]
+    uploads = [m for m in chat.chat_messages if m.files]
     assert len(uploads) == 2
     assert len(await run(chat, a_store())) == 1
 
@@ -186,7 +189,7 @@ async def test_the_target_protocol_is_the_bound() -> None:
         OnlyEnrich(),
         conversation_id="c",
         at=NOW,
-        digests=[{"name": "maria.txt", "provenance": "attachment"}],
+        digests=[AIAccessedFile(name="maria.txt", provenance="attachment")],
         window=timedelta(seconds=15),
     )
     assert match is SoftMatch.ENRICHED

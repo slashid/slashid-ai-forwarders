@@ -1,10 +1,37 @@
+"""Re-record the compliance fixtures under ``tests/fixtures/compliance``.
+
+The reader tests run against recorded responses rather than a live tenant,
+so this script is how those recordings are made. Run it when an endpoint's
+shape changes or when new traffic is needed; it overwrites every file it
+writes and prints what it recorded.
+
+Each fixture is one call: ``{request: {method, path, params}, status, body}``,
+so a test can assert the query vocabulary from the same file that carries
+the response. The rejections in ``filters_rejected.json`` are recorded
+deliberately: the three feeds disagree on how to filter and order, and a
+400 is the only proof of which spelling each one wants. Its last case is
+a 200, kept as the control the rejections are read against.
+``organizations.json`` is the odd one out and the only fixture whose cases
+carry a ``base``, because the two bases answer inverted paths.
+
+Two rules the fixtures depend on. Nothing from the working session is ever
+recorded: it is a real conversation, and it is excluded by uuid below.
+And every identifier is replaced, including the ones inside base64 — a
+``clls_`` session id decodes to JSON carrying the organization, project
+and session uuids, so scrubbing the text alone would leak all three.
+``tests/test_fixtures_scrubbed.py`` re-checks every byte and is the thing
+that actually enforces this.
+
+Needs ``gcloud`` authenticated against the project below, for the key.
+"""
+
 import base64
 import json
 import pathlib
 import re
 import subprocess
 
-K = subprocess.run(
+KEY = subprocess.run(
     [
         "gcloud",
         "secrets",
@@ -18,13 +45,15 @@ K = subprocess.run(
     capture_output=True,
     text=True,
 ).stdout.strip()
-B = "https://api.anthropic.com/v1/compliance"
-OUT = pathlib.Path("/home/paulo/slashid/slashid-ai-forwarder/anthropic/tests/fixtures/compliance")
-WORKING = "2fe4f004-d4ca-4dd8-a630-85cb8089a518"  # this conversation: never recorded
+BASE = "https://api.anthropic.com/v1/compliance"
+OUT = pathlib.Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "compliance"
+# The working session. Real conversation, never recorded, excluded by uuid.
+WORKING = "2fe4f004-d4ca-4dd8-a630-85cb8089a518"
 
 
 def call(path, params=""):
-    url = f"{B}{path}" + (("?" + params) if params else "")
+    """One recorded GET: the request that made it, its status, and its body."""
+    url = f"{BASE}{path}" + (("?" + params) if params else "")
     r = subprocess.run(
         [
             "curl",
@@ -33,7 +62,7 @@ def call(path, params=""):
             "\n%{http_code}",
             url,
             "-H",
-            f"x-api-key: {K}",
+            f"x-api-key: {KEY}",
             "-H",
             "anthropic-version: 2023-06-01",
         ],
@@ -48,6 +77,8 @@ def call(path, params=""):
     }
 
 
+# Applied to every string, in order. The path rules come first so the
+# username rule cannot mangle a path it is part of.
 SUB = [
     (r"/home/paulo/\.claude/jobs/[0-9a-f]+/tmp/fixtures-ws", "/workspace"),
     (r"/home/paulo/\.claude/jobs/[0-9a-f]+", "/workspace"),
@@ -60,7 +91,9 @@ SUB = [
     (r"\bpaulo\b", "user"),
     (r"4d621dc4-bee0-4c32-a825-f9770f17db47", "22222222-2222-2222-2222-222222222222"),
 ]
-SESS = {}  # real session uuid -> synthetic
+# Real session uuid -> synthetic. Filled below, in listing order, so the
+# same conversation gets the same placeholder across every fixture.
+SESS: dict[str, str] = {}
 
 
 def scrub_text(t):
@@ -72,6 +105,9 @@ def scrub_text(t):
 
 
 def scrub_clls(cid):
+    """Rewrite a ``clls_`` session id, which is base64 JSON carrying the
+    organization, project and session uuids. Scrubbing the surrounding
+    text would leave all three readable inside it."""
     raw = cid[5:]
     d = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
     d["o"] = "11111111-1111-1111-1111-111111111111"
@@ -96,7 +132,8 @@ def walk(o):
     return o
 
 
-# map real session uuids to synthetic ones, excluding the working session
+# Assign placeholders first: every later fixture is scrubbed against this
+# map, so it has to be complete before anything is written.
 raw = call("/apps/sessions/local", "limit=30")
 keep = []
 n = 0
@@ -120,7 +157,6 @@ for i, s in enumerate(keep, 1):
     print(f"  session_messages_{i}.json  {len(m['body'].get('data', []))} messages")
 
 for name, path, params in [
-    ("organizations_me", "/organizations/me", ""),
     ("chats_list", "/apps/chats", "limit=100"),
     ("activities", "/activities", "limit=1000&order=asc"),
 ]:
@@ -147,3 +183,45 @@ rej = [
 ]
 (OUT / "filters_rejected.json").write_text(json.dumps(walk({"cases": rej}), indent=2) + "\n")
 print("  filters_rejected.json:", [r["status"] for r in rej])
+
+
+def call_at(base, path):
+    """Like ``call``, but records which base answered — the only fixture
+    where that matters."""
+    out = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-w",
+            "\n%{http_code}",
+            f"https://api.anthropic.com/{base}{path}",
+            "-H",
+            f"x-api-key: {KEY}",
+            "-H",
+            "anthropic-version: 2023-06-01",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    body, code = out.stdout.rsplit("\n", 1)
+    return {
+        "request": {"method": "GET", "base": base, "path": path},
+        "status": int(code),
+        "body": json.loads(body),
+    }
+
+
+# The two bases answer inverted paths, so all four are recorded and none is
+# guessed: under v1/compliance it is /organizations that answers and
+# /organizations/me that 404s, and under plain v1 it is the other way round.
+organizations = {
+    "note": "The two bases answer inverted paths; both recorded so neither is guessed.",
+    "cases": [
+        call_at("v1/compliance", "/organizations"),
+        call_at("v1/compliance", "/organizations/me"),
+        call_at("v1", "/organizations"),
+        call_at("v1", "/organizations/me"),
+    ],
+}
+(OUT / "organizations.json").write_text(json.dumps(walk(organizations), indent=2) + "\n")
+print("  organizations.json:", [c["status"] for c in organizations["cases"]])

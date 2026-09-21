@@ -100,6 +100,9 @@ def hook_address(webhook_id: str) -> str:
     return f"hook:{webhook_id}"
 
 
+DENY_PREFIX = "deny:"
+
+
 def deny_address(webhook_id: str) -> str:
     """The address of a round whose deny was honoured: ``deny:`` + the delivery id.
 
@@ -108,7 +111,7 @@ def deny_address(webhook_id: str) -> str:
     *and* an honoured deny on its fresh round — two invocations, and
     ``hook:`` for both would merge them into one record.
     """
-    return f"deny:{webhook_id}"
+    return f"{DENY_PREFIX}{webhook_id}"
 
 
 def tail_address(transcript: Sequence[AnthropicRequestMessage], session_id: str | None) -> str:

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from slashid_anthropic_forwarder.compliance import readers
-from slashid_anthropic_forwarder.compliance.checkpoint import FEEDS, Cursors
+from slashid_anthropic_forwarder.compliance.checkpoint import Cursors, FeedCursor
 from tests.compliance_fixtures import transport
 from tests.test_cursors import _FakeStore as FakeCheckpoints
 from tests.test_pending import Sink, a_store
@@ -19,7 +19,12 @@ ORG = "11111111-1111-1111-1111-111111111111"
 
 
 def cursors() -> Cursors:
-    return Cursors({feed: FakeCheckpoints() for feed in FEEDS}, poll_lag_seconds=120)
+    return Cursors(
+        **{
+            f: FeedCursor(FakeCheckpoints(), name=f, poll_lag_seconds=120)
+            for f in ("activities", "chats", "sessions")
+        }
+    )
 
 
 def enabled(**over: Any) -> Any:

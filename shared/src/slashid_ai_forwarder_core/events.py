@@ -17,7 +17,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .content_utils import truncate_middle
 from .normalize.normalized.otel import extract_otel
@@ -235,7 +235,31 @@ class AnthropicIdentityDetails(_WireModel):
     """
 
     kind: Literal["anthropic"] = "anthropic"
-    user_id: str
+    # A service account's ``svac_…`` id. An identity in its own right and
+    # the highest-priority branch server-side: when a service account
+    # acted, it IS the principal rather than a stand-in for a human.
+    service_account_id: str | None = None
+    # The acting principal's stable ``user_01…`` handle. The hooks frame
+    # names it ``actor.id``; the denial activity names the same principal
+    # ``actor.user_id``. This is the only one this forwarder can observe.
+    user_id: str | None = None
+    # An API key's ``apikey_…`` id. A credential, not an identity, so it
+    # resolves indirectly — to whoever the key metadata records as creator.
+    api_key_id: str | None = None
+    # Lowercase sha256 of the RAW key, all an inline proxy can see, since
+    # raw keys never map back to an ``apikey_…``. Meters without naming a
+    # principal, so an event carrying only this resolves to no identity.
+    api_key_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_identifier(self) -> AnthropicIdentityDetails:
+        """No single producer observes all of these, so each is optional —
+        but a payload naming nobody is rejected. There is nothing to
+        resolve and nothing to meter, and the server rejects it too, so
+        failing here turns a silent server-side drop into a local error."""
+        if not (self.service_account_id or self.user_id or self.api_key_id or self.api_key_hash):
+            raise ValueError("anthropic identity carries no identifier")
+        return self
 
 
 IdentityDetails = Annotated[
