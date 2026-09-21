@@ -89,7 +89,7 @@ The hook spells the tool name `tool_name` where the Messages API spells it `name
 
 - **Size, and it is bimodal by surface.** Claude Code: median 664 KB, p90 1.64 MB, **max 1.86 MB** (a 561-message transcript). claude.ai: median 3.4 KB, max 14.8 KB. Receipt-to-response was 39–42 ms for the largest, so the verdict budget is entirely outbound calls. Chaining to the policy receiver re-uploads the whole frame, and that receiver's cap is 10 MiB.
 - **`webhook-id` is per delivery, not per invocation.** All 492 deliveries carried a distinct `webhook-id`, but they revealed only **239 invocations**: 284 frames carried a previous assistant run, and **43 invocations were revealed by more than one delivery**, 45 redundant deliveries in all. Keying events on the delivery would double-count 18% of invocations. The cause is structural — a transcript's trailing assistant run stays trailing until the model produces a new one.
-- **The content anchor is available for most invocations but not all.** Of the 239, **175 anchor on a `toolu_` id** and 64 fall back to the content hash, so roughly one invocation in four depends on the fallback recipe agreeing byte-for-byte across sources.
+- **The content anchor is available for most invocations but not all.** Of the 239, **175 anchor on a `toolu_` id** and 64 fall back to the content hash, so roughly one invocation in four depends on the fallback digest agreeing byte-for-byte across sources. That is the design's single load-bearing assumption and the tests measure it directly rather than asserting it.
 - **One `session_id` carries many conversations.** Alongside a main transcript reaching 231 assistant runs, 100-plus one-message frames arrived under the same id: Haiku status summaries, a `web_search` sub-request, deferred-tool probes. Any per-session ordinal collides.
 - **Consecutive user messages happen.** Deferred-tool loading appends a separate "Tool loaded." user message after a `tool_result`. Messages a user sends in quick succession are appended as extra *text blocks* to one message, not as new messages.
 - **Server tools are visible but unlabelled.** A `web_search` arrives as an ordinary `tool_use`/`tool_result` pair; nothing marks it server-executed, and its result is `[non-text content]` placeholders, so its content is outside any check.
@@ -125,80 +125,129 @@ There is no mode switch. Each source turns itself on when its credential is pres
 
 **Hook only** enforces, and emits untruncated events one round behind. **Compliance only** hosts nothing, configures nothing in claude.ai, cannot enforce, and sees every turn including the last. **Both** joins them.
 
-### The pending invocation
+### What can be joined, and what cannot
 
-The receiver never pushes directly. In every configuration it writes a **pending invocation** — an `AIInvocationObservedV1` built as far as the frame allows — and something later completes and pushes it. One code path throughout.
+**Only a model-minted `tool_use.id` agrees across the two sources.** This was measured, not reasoned. Taking one session present in both the captured frames and the stored transcript, a digest over the transcript prefix through each assistant run produced **200 keys on the frame side, 302 on the reader side, and zero in common** — and still zero after dropping `synthetic_marker` messages, and still zero with every text block removed so that only role and block ids contributed. The `toolu_` ids matched.
+
+The cause is structural, not a rounding problem. The stored transcript is a different projection of the conversation: it prepends a synthetic marker the client never sent, it carries turns from before capture began, and it includes sub-agent turns the frame never shows. No function of the message sequence can survive that. A `toolu_` id can, because it is an opaque token the model minted once and both surfaces carry verbatim.
+
+| | Frames | Transcript | Shared |
+| --- | --- | --- | --- |
+| Transcript-prefix digests | 200 | 302 | 0 |
+| `toolu_` anchors | 154 | 167 | 66 |
+
+So invocations divide into two classes, and the design turns on which one a run is in.
+
+- **Joinable** — the run contains a `tool_use` block. Its address is that first `toolu_` id. Both sources compute it, so a record can be opened by one and completed by the other. Measured: **194 of 284 trailing runs**, but only **6 of 14** on claude.ai.
+- **Unjoinable** — the run has none. No shared address exists, so the two sources can never agree and must not both emit. Its address is `hook:` plus the delivery id, which is unique and needs no agreement.
+
+**Three address spaces, not two.** One frame can carry an unjoinable previous run *and* an honoured denial on its fresh round, and both would otherwise key on the same delivery id, merging two unrelated invocations into one record. A denial is therefore `deny:` plus the delivery id. Reader A still looks it up directly, because the activity names that delivery, and the prefix keeps it clear of the run that happened to arrive on the same frame.
+
+### Ownership, not opportunistic joining
+
+Because the join covers two runs in three, the capabilities are divided by ownership rather than left to meet in the middle.
+
+- **The hook owns every invocation it sees.** Emit-previous: frame N carries the previous run's input and output both, so its record is complete on arrival. Its content is untruncated, which no reader's is.
+- **Reader B emits standalone only for joinable runs**, where it can ask `seen` first. An unjoinable run it cannot address is left alone, because emitting it would be a second event for an invocation the hook already reported under a different key, and first-completed-wins counts that twice rather than reconciling it.
+- **Reader B enriches only joinable records.** Attachment digests therefore reach **6 of 14** measured claude.ai rounds. The rest keep the extracted-text digest the frame supplied, which is exact for plain text and absent for processed documents.
+- **Reader A is unaffected.** A denial has no run at all and is keyed on its own delivery id, which the activity names directly.
+
+The cost is explicit and bounded: an **unjoinable run the hook never saw is never recorded**. That means a plain-text answer missed during a receiver outage, or skipped by a rollout percentage below 100. Tool-bearing runs, which are the ones that touch files and servers, are covered by both.
+
+### The tail record
+
+Emit-previous leaves the final round of a session with no successor to report it, and `accessed_files` are attributed to the round the model consumed, so a `Read` in that round would otherwise vanish. Every frame therefore writes a **tail record** holding its fresh round, input-only.
+
+Its address is `tail:` plus a digest of the frame's **whole** transcript. That digest is a hook-local key and needs no cross-source agreement, which is exactly the property the measurement above says it can have: intra-source it was **exact — 239 distinct keys from 284 deliveries, zero false merges and zero false splits** against the `toolu_` ids as ground truth.
+
+**The successor frame discards it.** Frame N+1 reconstructs frame N's transcript by dropping its own trailing assistant run and the round that follows it, computes the same `tail:` key, and discards that record unpushed — the fresh round is now covered properly by the run it fed. This needs no per-session pointer, which would have collided across the hundred-plus sub-conversations that share a `session_id`.
+
+If no successor arrives, the deadline flush emits the tail as it stands. It is written in every configuration, because the reader never emits unjoinable runs and so can never duplicate it.
+
+### Attribution runs one round behind
+
+The record names the **previous** run, so its fields come from that run's round, not from the fresh one.
+
+| Field | Comes from |
+| --- | --- |
+| `input` | the transcript up to and including the round the previous run consumed — **not** the fresh round |
+| `output` | the previous assistant run |
+| `used_tools`, `accessed_files` | the round that run consumed |
+| the verdict | the **fresh** round, which is what was judged, and which belongs to the tail record |
+
+Getting this wrong is easy and was caught in review: `after_last_assistant()` returns the *fresh* round and drives the verdict, but attribution needs the boundary one round earlier. Building the normalized invocation with the transcript truncated before the trailing run makes the shared helpers land on the right round by themselves, which is why the builder is handed a truncated transcript rather than the whole frame. An attachment in the fresh round belongs to the tail, never to the record being emitted.
+
+### The pending record
+
+The receiver never pushes from the request path. It writes a record and returns.
 
 | From the frame | Outstanding |
 | --- | --- |
-| `identity_details`, `model`, `timestamp`, `conversation_id` | `output`, `stop_reason`, `used_tools` |
-| `input` — untruncated hashes; text only under `include_raw_content` | |
-| `accessed_files` for tool results, untruncated | `accessed_files` attachment byte digests, on an attachment-bearing round |
-| `available_tools`, `available_tool_servers`, synthesized from observed names | |
-| our own verdict, so a flush can stamp it | |
+| `identity_details`, `model`, `timestamp`, `conversation_id` | |
+| `input`, and `output` from the trailing run | |
+| `accessed_files` and `used_tools`, both from the consumed round | attachment byte digests, on an attachment-bearing round |
+| `available_tools`, `available_tool_servers`, from observed names | |
+| the verdict actually answered, and the composed one | |
 
-**The stored document is the event object itself.** There is no parallel struct to keep in step with the wire type: the record is a partial `AIInvocationObservedV1`, serialized the way it will be pushed, with the fields nothing has supplied yet simply unset. Completing it is assigning those fields. Flushing it is pushing what is there. The table above is therefore not a mapping between two shapes, it is a list of which fields of one object are set on arrival.
+**A frame-built record is complete on arrival except for attachment digests.** That is the whole of what a record can wait for, so the expectation set has exactly one member and the common case never waits. Measured: 475 Claude Code frames carried zero attachment blocks and 16 of 17 claude.ai frames carried at least one, so waiting is confined to the surface that needs it.
 
-Beside the event sits a small control envelope that never reaches the wire:
+**The stored document is the event object itself**, as a serialized mapping rather than a validated model. `AIInvocationObservedV1` requires `parsed_as`, which depends on which sources end up contributing, and its base sets `extra="forbid"`, so the control envelope cannot ride inside it. Validation happens at push, on the one path that can log and retry. The 1 MiB document bound is enforced in the record module rather than the storage adapter, and dropping raw text sets an elision marker so the absence reads as elision rather than as an invocation that carried none.
 
-| Envelope field | Why it exists |
+The control envelope, which never reaches the wire:
+
+| Envelope field | Why |
 | --- | --- |
-| `webhook_id` | the delivery that created the record, so Reader A can join on the denial activity's `request_id` |
+| `webhook_ids` | every delivery that revealed this invocation — 43 of 239 were revealed by more than one — so Reader A can match a denial against any of them |
 | `deadline` | when the flush may push it |
-| `verdict` | the answer the receiver actually gave, so a flush stamps what happened rather than current configuration |
-| `awaiting` | which enabled capabilities are still expected to contribute; a reader's visit clears its own entry whether or not it found anything |
-| `tombstoned_at` | set after a successful push, retiring the record without deleting it |
+| `verdict` / `composed_verdict` | what was answered and what the checks decided. Under shadow mode they differ, and without the second the rollout has nothing to show an operator. |
+| `awaiting` | `file_digests`, or empty. Seeded **only when the round carries an attachment, compliance is enabled, and the run is joinable** — all three. The digests come from the compliance listing, so without a reader the expectation could never be cleared and the record would wait out the full deadline for nothing. |
+| `contributed` | which sources actually supplied a field, which is not the same as which visited. `parsed_as` reads joined only when this holds more than one. |
+| `attempts` / `tombstoned_at` | push failures, and retirement |
 
-The event half holds derived facts, a few kilobytes, never the 664 KB median Claude Code transcript. Its `accessed_files` are grouped by `provenance` so a reader can replace the `attachment` group without touching `tool_result`.
+### Where the record lives
 
-`parsed_as` lives on the event, not the envelope, and it is not decided until the push: it reads `anthropic-joined` as soon as a second source has contributed to the record, whatever order they arrived in.
+**Firestore, behind a port.** The choice follows `vertex/`, which already persists its polling watermark there, so the project has the database, the Terraform and the credentials path. It offers per-document atomic read-modify-write, a TTL policy and a query over an indexed field, which is what this needs and nothing more.
 
-**One size bound to assert rather than assume.** Firestore caps a document at 1 MiB. The event stays far below that unless `SLASHID_INCLUDE_RAW_CONTENT` is on, when `input` text runs to `SLASHID_MAX_CONTENT_SIZE`. The 100,000-character default is comfortably inside the cap, but the two settings are coupled, so the store checks the serialized size and drops `input` text rather than failing the write.
+| Operation | Signature | Contract |
+| --- | --- | --- |
+| `upsert` | `(address, fields, expectations) -> Outcome` | create or merge. Creating sets the deadline and seeds expectations. Merging never moves the deadline. On a tombstoned address it is a no-op and says so. Returns whether this call left the record ready to push. |
+| `complete` | `(address, fields, clears) -> Outcome` | merge and clear. No-op on a tombstoned address. Never creates: a record that does not exist was never opened by a frame, and inventing one here would resurrect a pushed invocation. |
+| `claim` | `(address, lease) -> Record \| None` | take the exclusive right to push, for a bounded lease, and **return the record as it is now**. Every pusher calls it, the flusher included. |
+| `due` | `(now, limit) -> list[Record]` | live records past their deadline whose claim is absent or expired, oldest first, bounded. |
+| `retire` | `(address, outcome)` | `pushed` tombstones; `failed` releases the claim and sets a next-attempt time; `superseded` tombstones without pushing, which is how a successor frame discards a tail. |
+| `seen` | `(address) -> Live \| Tombstoned \| Absent` | three states; absent is what lets a reader emit standalone. |
 
-**The record is addressed by content, not by delivery.** Three things complete a record, and only one of them holds a `webhook-id`: Reader A, which reads it off the denial activity. The next frame carries its own new delivery id, not the previous round's, and Reader B never sees a `webhook-id` at all. So the document id is the **content address** — the same value the event's `request_id` will carry — and `webhook-id` is an attribute. That also collapses the 18% of invocations revealed by two deliveries into one record, where keying on the delivery would leave two records to flush, race and duplicate.
+`claim` is the operation the earlier draft lacked, and three details of it are load-bearing.
 
-A tool-free run has no content address both sources agree on, so it is stored under its delivery id, is never joined, and flushes unenriched. That is the same limitation the addressing section states, surfaced here as a storage rule.
+**Readiness is a state, not a transition.** Asking "did this call empty the expectation set?" cannot arbitrate: a record born ready — which under emit-previous is most of them — has no transition at all and nobody would push it, while a flusher and a completer can both observe readiness and push twice. Under first-completed-wins that race decides whether the invocation lands with or without its digests. A compare-and-set on the claim settles it and the winner pushes.
 
-#### Where the record lives
+**The claim is a lease, not a flag.** A push that fails after a claim must not orphan the record. `retire(failed)` releases it, and `due` also returns records whose lease has expired, so a crash between claiming and pushing is recovered on a later tick rather than leaving a live record nothing will ever collect.
 
-**Firestore, behind a port.** The choice follows `vertex/`, which already persists its polling watermark there, so the project has the database, the Terraform to provision it and the credentials path. It gives per-document atomic read-modify-write, a TTL policy, and a query over an indexed field, which is exactly the three things this design needs and nothing more.
+**`claim` returns the record, and the pusher pushes what it returns.** Reading through `due` and pushing that snapshot would drop fields a completer merged in between — precisely the digests the wait exists for, and a push is a commitment that cannot be topped up.
 
-The design does not depend on that, and the store is a `Protocol` with a Firestore implementation beside it, the same shape `CheckpointStore` already uses. Five operations:
+`complete` reports readiness in its outcome for the same reason `upsert` does, so a completing writer knows to claim.
 
-| Operation | Contract |
-| --- | --- |
-| `upsert` | create the record under its address, or merge into the existing one. Creating sets the deadline; merging never moves it. |
-| `complete` | atomically merge supplied fields and clear one `awaiting` entry. Must be read-modify-write under contention, not last-write-wins. |
-| `due` | records whose deadline has passed and which are not tombstoned, bounded per call. |
-| `retire` | tombstone after a successful push. |
-| `seen` | whether an address is live or tombstoned, so a reader can tell a turn the receiver never saw from one it already emitted. |
+Everything backend-specific stays in the adapter: the 1 MiB cap, the TTL policy keyed off `tombstone_expires_at` and never applied to a live record, the named database, and the composite index behind `due`. Another cloud reimplements six methods and nothing above this line changes.
 
-`complete` is the one with teeth. The hook path writes from a background task on any autoscaled instance, and a reader tick writes from another, so two completions of one record genuinely race. Firestore transactions cover it. Any replacement backend must offer an equivalent, or it is not a candidate.
+**A frame-built record is better hashed than a reader-built one.** Its `input` and tool-result digests come from an untruncated transcript, while a reader sees tool blocks capped at 10 KB. The one thing no frame supplies is an attachment's bytes, which is why that is the only thing a record waits for.
 
-Everything backend-specific stays in the adapter and out of the design: the 1 MiB document cap, the TTL policy as a backstop, the named database, and the composite index that makes `due` cheap. A future deployment on another cloud reimplements those five methods and changes nothing above this line.
+**A flush emits whatever the record holds, and expiry pushes rather than deletes.** Two classes have no compliance counterpart at all — zero-data-retention organizations, and the sub-conversations that share a `session_id` — so a deleted record there would be a lost event. A tail record usually flushes input-only, but one waiting on digests already holds its `output`, and that flush must carry it.
 
-### One predicate decides when to push
+**A reader that finds nothing to add must still say so.** Digests are outstanding until a reader *visits* the message, not until it finds files, so a visit that turns up no listing clears the expectation and settles the record at once. Otherwise an attachment-bearing round whose listing never materializes waits the full deadline.
 
-**A record is pushed once nothing an *enabled* capability could still supply is outstanding, or the deadline expires.**
+The tombstone's lifetime must exceed the latest a reader can still arrive: `SLASHID_JOIN_WAIT_SECONDS` plus `SLASHID_POLL_LAG_SECONDS` plus one tick, plus any reader backlog. `SLASHID_TOMBSTONE_TTL_SECONDS` defaults to `7200`. If the reader falls further behind than that, its tombstones expire before it re-walks and it re-emits — harmless in the graph, noisy in detections — so the backlog alarm is tied to this value rather than left unquantified.
 
-- `output`, `stop_reason` and `used_tools` are supplied by the next frame, always, or by a reader when compliance is enabled.
-- Attachment byte digests are supplied by a reader only, and only when the round contains an attachment.
+**Push, then retire.** A crash between them re-pushes an event the terminal drops from the graph, though it still stores a raw event and re-runs detections. The reverse order loses the event outright. The ordering favours the duplicate because a missing audit record is the failure this product exists to prevent.
 
-With the hook alone nothing but the next frame can add anything, so a record settles the moment that frame arrives — the latency and content of plain emit-previous. With compliance also enabled, only an attachment-bearing round waits. Measured across the 492-frame corpus: **475 Claude Code frames contained zero attachment blocks; 16 of 17 claude.ai frames carried at least one**, several carrying three,, because Claude Code moves file contents through `Read`, which the frame already hashes untruncated. So most rounds never wait even with both capabilities on.
+**Reader B's standalone emissions leave a tombstone.** A turn the hook never saw has no record, so nothing would stop the next tick emitting it again — which in a compliance-only deployment is every turn, once per tick it stays in the lagging window. A standalone emission is therefore an `upsert` under the same key followed by `retire`.
 
-A frame-completed record is **better hashed** than a reader-completed one: its `input` and tool-result digests come from an untruncated transcript. The one thing no frame supplies is an attachment's bytes.
+**What the terminal actually does, measured against `ng-evangelion`.** Dedup is keyed on `{org}:{connection}:{request_id}` and is **first-completed-wins**: once a copy completes, a later copy with the same key is discarded whole, with no merge and no overwrite.
 
-**Expiry pushes rather than deletes**, and that is what keeps coverage at or above hook-only. Two classes have no compliance counterpart at all — zero-data-retention organizations, and the sub-conversations that share a `session_id` — and a deleted record there would be a lost event. A flush emits **whatever the record holds**. Usually that is input-only — identity, model, untruncated `input` and `accessed_files`, no `output` — because nothing ever completed it. But a record can already hold `output`, `stop_reason` and `used_tools` from a successor frame and still be waiting on attachment digests a reader never delivered. That flush must carry the output it has. Discarding it would make a waiting record strictly worse than a hook-only one, which inverts the reason the wait exists.
+- **A push is a commitment.** A record flushed without its digests cannot be topped up later. So `SLASHID_JOIN_WAIT_SECONDS` must sit beyond normal reader lag rather than being trimmed for latency.
+- **A duplicate is cheap in the graph and not elsewhere.** The dedup guards the graph and BigQuery writes only. Each delivery still stores a raw event and re-runs the detections engine, which is keyed per delivery, so duplicates can mean duplicate alerts.
+- **The window is 72 hours, sliding, and Redis-backed.** A replay after it is processed as new and double-counts usage and token totals.
 
-**A reader that finds nothing to add must still say so.** The digests are outstanding until a reader *visits* the message, not until it finds files, so a visit that turns up no listing clears the expectation and settles the record at once. Without that stamp an attachment-bearing round whose files never materialize sits for the full `SLASHID_JOIN_WAIT_SECONDS`, and the join degrades into an hour-long delay.
-
-**That flush is why the store exists, in every configuration including hooks alone.** `accessed_files` are attributed to the round the model consumed, so a `Read` in a session's final round belongs to the final invocation — the one no successor frame will ever report. Without the deadline flush, a user who reads a sensitive file and then closes the session produces **no audit record of that read at all**, which is the exact event this product exists to capture. The receiver is therefore not stateless, and the store is not optional: that was a design goal the measurements retired.
-
-**Exactly one push per record.** A pushed record is retired with a tombstone rather than deleted, so a reader arriving after a deadline flush does not mistake the turn for one the receiver never saw and emit a duplicate. The tombstone keeps the record's content address, since that is the only key a reader can look up.
-
-Its lifetime must exceed the latest a reader can still arrive: `SLASHID_JOIN_WAIT_SECONDS` plus `SLASHID_POLL_LAG_SECONDS` plus one tick. `SLASHID_TOMBSTONE_TTL_SECONDS` defaults to `7200`, comfortably above that sum at the default settings, and the Firestore TTL policy is a backstop that must never be set below it.
-
-**Push first, then tombstone.** A crash between the two re-pushes an event the terminal dedups on `request_id`; the reverse order loses it silently. Every rule in this section bends the same way, because a duplicate costs nothing and a missing audit record is the failure this product exists to prevent.
+A copy that failed before completing leaves no sentinel, so a genuine retry after a failure does the work. Dedup guards completed processing, not delivery.
 
 ### Denials
 
@@ -218,17 +267,6 @@ Under enforcement, denied content stays in the transcript and keeps being denied
 
 Scanning only the newest message would unwedge the session and is wrong: it would let the model read denied content as soon as one more message arrived.
 
-### `request_id` is content-addressed
-
-The event's `request_id` identifies an **invocation**, not a delivery.
-
-- Anchor on the assistant run's first `tool_use.id` (`toolu_…`) when present — model-minted, globally unique, and **identical on both sources**.
-- Otherwise `"hook:" + hex(sha256(session_id or "", assistant-run ordinal, text digest))[:32]`. The prefix keeps it disjoint from `toolu_` ids and from every frame id Anthropic mints, which include `req_…`, `msg_…` and `chatcompl_…`.
-
-Every re-reveal of a turn converges on one key, and the processor's terminal dedup drops the repeat. This is what makes two sources safe: both compute the same key for the same invocation. **For a tool-free run the fallback is source-dependent** — ordinals, truncation and the synthetic marker all differ — so such a run flushes unenriched rather than risking a wrong join.
-
-A **denial** record instead uses the frame's own `request_id` (the `webhook-id`), which is correct for the same reason: a denial is a delivery-level event, and two blocked attempts are two incidents.
-
 ### Verdict composition
 
 Two checks, concurrent, ANDed, each optional.
@@ -237,9 +275,9 @@ Two checks, concurrent, ANDed, each optional.
 
 **Preflight.** `POST {SLASHID_ENDPOINT}/ip/nhi/ai/preflight` with the connection push token: identity, model when present, and `accessed_files` with multi-algorithm hashes. Read `overall` only — `allowed: false, verified: true` denies with its `message`; `verified: false` applies the fail mode. Not called when the fresh round has nothing hashable, nor when `actor.id` is null. More than 100 files or a body over 1 MiB is treated as unverified.
 
-**Composition.** Any deny denies. The first denying check supplies `deny_reason`, to which the recovery sentence is appended, truncated to 500 characters. A transport failure or an unverified answer applies `SLASHID_VERDICT_FAIL_MODE` (default allow). A disabled check is skipped and does not count as unverified. `reference_id` is `hex(sha256(webhook-id))[:32]`, matching the Go receiver's recipe.
+**Composition.** Any deny denies. The first denying check supplies `deny_reason`, to which the recovery sentence is appended. The base is truncated to `500 - len(sentence)` **before** appending, never the joined string, or a long upstream reason would silently delete the one sentence the person needs. A transport failure or an unverified answer applies `SLASHID_VERDICT_FAIL_MODE` (default allow). A disabled check is skipped and does not count as unverified. `reference_id` is `hex(sha256(webhook-id))[:32]`, matching the Go receiver's recipe.
 
-**`config-test` frames and frames of unknown top-level `type` bypass both checks and answer allow.** The policy receiver denies unresolvable actors and non-`prompt` frames, so forwarding either would return an authoritative deny — the opposite of the protocol's forward-compatibility rule.
+**`config-test` frames and frames of unknown top-level `type` bypass both checks, answer allow, and write no record.** They carry no invocation; a pending record for one would have no successor frame and the flush would later push a console connection test as a real invocation against a real user. The policy receiver denies unresolvable actors and non-`prompt` frames, so forwarding either would return an authoritative deny — the opposite of the protocol's forward-compatibility rule.
 
 **`SLASHID_SHADOW_MODE=true`**, the default, runs every check, logs the composed verdict, and answers allow. It is deliberately the same word claude.ai uses, because it is the same idea one layer down — and the two are independent, so a request is blocked only when *neither* is shadowed. The receiver cannot see the org's setting (no frame reveals it), which is why it keeps its own.
 
@@ -254,6 +292,14 @@ Two checks, concurrent, ANDed, each optional.
 
 Checkpointed on `created_at`, polling `inference_hooks_request_denied` and filtering its own `compliance_api_accessed` noise. **`order=asc` is mandatory.** The feed defaults to newest-first, so a reader that resumes from its saved watermark without it pages steadily further into the past and never sees a new denial. Completes the pending record the activity's `request_id` names, or emits standalone from the activity when there is none: identity from `actor.user_id`, `conversation_id`, `surface`, and the real client user agent. **`model` is absent from the activity**, so it is taken from the conversation's transcript when one is available and `"unknown"` otherwise.
 
+### A run means two different things on the two sources
+
+Measured on the live tenant, structure only. In a **frame**, a tool result arrives in the *following user message*, so one invocation spans an assistant message and the user message after it. In a **chat transcript**, the whole cycle sits inside one assistant message: a real one reads `tool_use, tool_result, text, tool_use, tool_result`.
+
+That is why "run" has to be defined per source rather than assumed. On the hook side a run is a maximal sequence of consecutive assistant messages; on the chat side it is one message that may hold several tool cycles. Local session transcripts follow the frame's shape rather than the chat's, with tool results in user messages, so the reader cannot use one walk for both of its own feeds either.
+
+The address survives this, which is the point of anchoring on a `tool_use.id`: whichever shape the source uses, the first tool use identifier in the run is the same token. A digest over the message sequence would not have survived it, which is a second independent reason the measurement killed that option.
+
 ### Reader B — responses, from the Compliance API
 
 Polls local sessions and chats by `updated_at` with a lagging bound, filtered to `SLASHID_ORGANIZATION_UUID`. The two listings are separate feeds with separate watermarks, and **no two feeds share a query vocabulary**, so the client carries a small adapter per feed rather than one generic pager:
@@ -264,7 +310,11 @@ Polls local sessions and chats by `updated_at` with a lagging bound, filtered to
 | chats | `updated_at.gte`, rejected unless ordered | `order_by=updated_at` | `last_id` |
 | local sessions | `updated_at.gte` | **no ordering parameter exists**; returns newest-first | `next_page` |
 
-Local sessions being unorderable is the awkward one: the reader cannot stream forward from a watermark, so it drains the whole lagging window each tick and relies on the pending store's tombstones to suppress what it already emitted. That is affordable only because the window is bounded by `SLASHID_POLL_LAG_SECONDS` and the tick cadence. Emits one invocation **per newly-produced assistant turn**, skipping `client_asserted` history, `synthetic_marker` messages and `content_unavailable` turns — the last being a turn whose content the API will not return, with a `reason` of `not_captured`, `client_aborted`, `cmek_key_revoked`, `retention_elapsed` or `oversize`. It never appeared in this tenant, which has no retention policy in force, but any customer with finite retention produces them, and emitting one would create a contentless invocation. The schema also tells callers to tolerate unrecognized `type` values, so an unknown provenance is skipped rather than rejected. Fills `output`, `used_tools` and `stop_reason` — **inferred from block shape**, exactly as the hook path infers it, because no surface supplies it.
+Local sessions being unorderable is the awkward one: the reader cannot stream forward from a watermark, so it drains the whole lagging window each tick and relies on the pending store's tombstones to suppress what it already emitted. That is affordable only because the window is bounded by `SLASHID_POLL_LAG_SECONDS` and the tick cadence.
+
+**A truncated drain must not advance the watermark.** `SLASHID_MAX_SESSIONS_PER_TICK` cuts the listing at the newest sessions, so the untouched tail is the oldest. Advancing past it would lose those sessions permanently, hardest on the busiest tenants and immediately after any outage. So the watermark moves only on a drain that completed, and a tick that hits the cap logs how far behind it is. The failure mode that leaves is the opposite one: if arrivals exceed the cap every tick the reader never catches up and the window grows without bound. That is why the cap is a bound on *sessions* and the alert is on window age, not on tick duration.
+
+**The first tick after a credential is added does not backfill.** `CheckpointStore.load()` answers an empty checkpoint on a cold start, and the vertex semantics for that are "fetch everything up to the batch bound" — here that would re-emit the whole retention window as standalone events. The initial watermark is `now - SLASHID_POLL_LAG_SECONDS` instead, and a backfill is an explicit opt-in rather than what happens by accident. Emits one invocation **per newly-produced assistant turn**, skipping `client_asserted` history, `synthetic_marker` messages and `content_unavailable` turns — the last being a turn whose content the API will not return, with a `reason` of `not_captured`, `client_aborted`, `cmek_key_revoked`, `retention_elapsed` or `oversize`. It never appeared in this tenant, which has no retention policy in force, but any customer with finite retention produces them, and emitting one would create a contentless invocation. The schema also tells callers to tolerate unrecognized `type` values, so an unknown provenance is skipped rather than rejected. Fills `output`, `used_tools` and `stop_reason` — **inferred from block shape**, exactly as the hook path infers it, because no surface supplies it.
 
 **The hook goes first and the reader covers whatever it did not.** A turn the hook saw has a pending record the reader enriches. A turn the hook never saw — unsampled under a partial rollout, arriving while the receiver was down, or a session's final round — has none, and the reader emits it standalone with whatever the transcript gives: 10 KB-capped tool blocks, no untruncated digests, `model` only where the message carries one. Worse than a hook-emitted event, far better than nothing, and `parsed_as` says which it is.
 
@@ -311,12 +361,12 @@ Per the standing convention that the server ignores unknown fields, this ships c
 
 | Envelope field | Source |
 | --- | --- |
-| `request_id` | content-addressed; the frame's own on a denial |
+| `request_id` | the completed run's first `tool_use.id`, else the `inv:` digest over that run; the frame's `webhook-id` on an answered denial and on a tail record |
 | `identity_details` | `{kind: "anthropic", user_id: actor.id}`. A null `actor.id` drops the event — the server rejects an identity with no identifier. |
 | `timestamp` | the attested `webhook-timestamp`, or the message's `created_at` on a reader-emitted event |
 | `conversation_id` | `session_id` |
 | `model` | `AIModel(id=model or "unknown", provider="anthropic", raw_model_id=model)`. `shared.model_catalog` is Bedrock-only and unused. |
-| `input` / `output` | per the completion predicate above |
+| `input` / `output` | per the attribution rule above: `input` ends before the trailing run, `output` is that run |
 | `available_tools` / `available_tool_servers` | synthesized from observed `tool_use` names via `build_tools_declared`; the frame carries no definitions |
 | `used_tools` | the consumed round's `tool_result` blocks joined to their `tool_use` |
 | `accessed_files` | per `provenance` above |
@@ -337,7 +387,7 @@ anthropic/
 ├── src/slashid_anthropic_forwarder/
 │   ├── config.py                        # one Config; capabilities derived from the credentials present
 │   ├── main.py                          # FastAPI: POST /{path} is the hook, POST /tick drives readers and flushes
-│   ├── pending.py                       # the record, the completion predicate, the flush
+│   ├── pending.py                       # the record, readiness, the flush, tail supersession
 │   ├── store.py                         # PendingStore protocol + FirestorePendingStore
 │   ├── hook/
 │   │   ├── signature.py                 # wraps the standardwebhooks reference library
@@ -355,7 +405,9 @@ anthropic/
 └── deploy/terraform/
 ```
 
-Two things belong in the spine rather than either package: `content_request_id`, a pure function over `(first toolu id | None, session_id, ordinal, text)` so both sources compute byte-identical keys, and the event assembly they share. `CheckpointStore` should be promoted from `vertex/` into `shared/` rather than copied, and its `Checkpoint(timestamp, id)` type carries over unchanged: every compliance feed accepts a timestamp lower bound, so the same watermark works here. Two changes come with the move. The store must take a **cursor name**, because `vertex/` writes one fixed document and this service keeps three independent watermarks. And the watermark is persisted as a timestamp, never as one of the feeds' opaque page tokens, which the API documents as format-unstable; those tokens paginate within a tick and are then discarded.
+Two things belong in the spine rather than either package: `invocation_address`, a pure function over a completed assistant run that returns its first `tool_use.id` or an `inv:` digest of the run, so both sources compute byte-identical keys. It takes no ordinal: per-session ordinals collide across the sub-conversations that share a `session_id`. Its canonical encoding — field separators, UTF-8 normalization, message boundaries — is part of the function's contract, since two independently written call sites must agree byte-for-byte, and the event assembly they share. `CheckpointStore` should be promoted from `vertex/` into `shared/` rather than copied, and its `Checkpoint(timestamp, id)` type carries over unchanged. Per-cursor naming needs no work: `vertex/` already constructs one store per source with a distinct `document=`, one per region plus an audit-only document, so the constructor takes what this service needs. The real migration cost is that `Checkpoint` is defined in `vertex/`'s `event_source.py` beside BigQuery-specific types, so promoting it means extracting a type out of a Vertex-specific module and re-pointing vertex's own imports and tests.
+
+Two cautions the move must carry with it. The watermark is persisted as a **timestamp, never as one of the feeds' opaque page tokens**, which the API documents as format-unstable; those tokens paginate within a tick and are then discarded. And a `(timestamp, id)` watermark is a resumable cursor only on the two ordered feeds — on local sessions it is a *window bound*, so `save()` after a partial drain is unsafe, as above.
 
 ### Reused from `shared/`
 
@@ -369,7 +421,7 @@ Two things belong in the spine rather than either package: `content_request_id`,
 | `sink.py` | the push, batching, retry classification |
 | `config_base.py` | `SLASHID_ENDPOINT` / `_PUSH_TOKEN` / `_INCLUDE_RAW_CONTENT` / `_MAX_CONTENT_SIZE` |
 
-Four shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union; `AnthropicToolUseBlock.name` gaining `AliasChoices("name", "tool_name")`; an `AnthropicAttachmentBlock` translating to `kind="document"`; and `AIAccessedFile.provenance`. `parse_media_type` also needs fixing — it claims to reject unregistered types but never does, so an unregistered `media_type` currently raises instead of falling back to `None`.
+Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union; `AnthropicToolUseBlock.name` gaining `AliasChoices("name", "tool_name")`; an `AnthropicAttachmentBlock` translating to `kind="document"`; `AIAccessedFile.provenance`; and `conversation_id` on `EventEnvelope`, which today has no such field, so `build_event_from_normalized` cannot populate the one the field mapping requires on every event. Adding it there rather than patching the built event keeps the other forwarders' path identical. `parse_media_type` also needs fixing — it claims to reject unregistered types but never does, so an unregistered `media_type` currently raises instead of falling back to `None`.
 
 ## Configuration
 
@@ -387,7 +439,8 @@ Four shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | `SLASHID_MAX_BODY_BYTES` | `33554432` | Cloud Run's HTTP/1 limit |
 | `SLASHID_JOIN_WAIT_SECONDS` | `3600` | deadline before an unsettled record is pushed as it stands |
 | `SLASHID_TOMBSTONE_TTL_SECONDS` | `7200` | how long a pushed record's tombstone suppresses a late reader's duplicate; must exceed `JOIN_WAIT` + `POLL_LAG` + one tick |
-| `SLASHID_FIRESTORE_DATABASE` | `(default)` | the named database, as `vertex/` does |
+| `SLASHID_GCP_PROJECT_ID` | required with the store | the project holding Firestore; `vertex/` has the same field and the anthropic `Config` does not yet |
+| `SLASHID_FIRESTORE_DATABASE` | `slashid-anthropic` | the named database. `vertex/` names its own `slashid-vertex` rather than using `(default)`, and this follows that. |
 | `SLASHID_PENDING_COLLECTION` | `anthropic_pending` | collection holding pending records and their tombstones |
 | `SLASHID_MAX_FLUSHES_PER_TICK` | `500` | bounds `due` so one tick cannot stall behind a backlog |
 | `SLASHID_PUSH_BUDGET_MS` | `2000` | bounds the push task; the sink's own retries are inert under it |
@@ -415,11 +468,11 @@ Fixture-driven, matching the house pattern, with `yaml_pytest` case tables over 
 - `test_frame.py` — unknown block type, unknown `source.application`, unknown `actor.type`, unknown top-level `type`, null `session_id`/`model`; the transcript split, including a consumed round spanning two user messages and a merged assistant run.
 - `test_policy.py` / `test_preflight.py` — raw bytes and headers forwarded unchanged; deny with reason; non-200 and timeout raise; `overall` rows map to allow, deny and unverified; caps treated as unverified.
 - `test_verdict.py` — both allow; each deny wins with its reason; transport failure and unverified honour the fail mode; budget exceeded; `config-test` and unknown type bypass; observe-only allows while still evaluating; the recovery sentence is appended; `reference_id` charset.
-- `test_pending.py` — a record is written rather than pushed in every configuration, the hook alone included; the next frame settles a no-attachment round immediately; an attachment-bearing round waits; a reader's visit that finds no listing settles it too; **a record past the deadline is pushed, not deleted**; a flush carries whatever the record holds, including `output` a successor frame already supplied; a pushed record leaves a tombstone; a tool-free run flushes rather than joining on ordinal.
+- `test_pending.py` — a record is written rather than pushed in every configuration, the hook alone included; the next frame settles a no-attachment round immediately; an attachment-bearing round waits; a reader's visit that finds no listing settles it too; **a record past the deadline is pushed, not deleted**; a flush carries whatever the record holds, including `output` a successor frame already supplied; a pushed record leaves a tombstone; a tail record is written when the hook runs alone and **not** written when compliance is enabled; `claim` lets exactly one of a completing writer and the deadline sweep push.
 - `test_store.py` — against a fake and, when credentials allow, the Firestore emulator: `upsert` twice does not move the deadline; two concurrent `complete` calls both land, neither lost; `due` excludes tombstoned records and honours its bound; `seen` distinguishes live, tombstoned and absent; an oversized `input` is dropped rather than failing the write.
-- `test_event_envelope.py` — content address anchors on `toolu_` and falls back with the `hook:` prefix; stability across two frames revealing one turn; consumption attribution; `cat -n` stripped; null `actor.id` drops.
+- `test_event_envelope.py` — the key is identical when computed from the frame that creates a record and from the frame that completes it, and when computed by a reader from the stored transcript; it survives a tool block truncated at 10 KB; it never changes once set; consumption attribution; `cat -n` stripped; null `actor.id` drops.
 - `test_client.py` — `clls_` decode yields the frame's `session_id`; synthetic and `client_asserted` messages are skipped; truncation surfaced; own `compliance_api_accessed` filtered; a session outside the bound organization skipped.
-- `test_denials.py` / `test_responses.py` — an activity completes or emits standalone; `model` falls back; one event per blocked attempt; a newly-produced turn's content address is **byte-identical to the hook path's for the same run**.
+- `test_denials.py` / `test_responses.py` — an activity completes or emits standalone; `model` falls back; one event per blocked attempt; a newly-produced turn's address is **byte-identical to the hook path's for the same run**, computed from the frame and from the stored transcript over the captured corpus, and a standalone emission leaves a tombstone that the next tick honours.
 - `test_attachments.py` — `md5` takes the listing digest and makes no request; `full` downloads and its md5 equals the listing's; a file over `MAX_ATTACHMENT_FETCH_BYTES` is never requested and keeps the listing's md5 alone; a listing with no md5 yields an entry with no digest; `attachment` entries are replaced and `tool_result` entries preserved.
 - `test_main.py` — a sink failure still returns 200 with the correct verdict (**rule 1**); a slow sink does not delay the response; oversized body; unsigned gets 401.
 
@@ -428,10 +481,11 @@ Fixture-driven, matching the house pattern, with `yaml_pytest` case tables over 
 Cloud Run, one Terraform module attached to the release, mirroring `vertex/deploy/terraform` in shape.
 
 - The release workflow builds the image with `uv`, pushes it to GHCR, and the module pulls it through an Artifact Registry remote repository proxying `ghcr.io` (credentials required while the repo is private).
-- **One service, two routes.** `POST /{path}` is the hook; `POST /tick` drives the readers and the deadline flush, fired by Cloud Scheduler with an OIDC token, concurrency 1 so checkpoint writes cannot race.
+- **One service, two routes.** `POST /{path}` is the hook; `POST /tick` drives the readers and the deadline flush, fired by Cloud Scheduler with an OIDC token. Cloud Run's per-instance concurrency does **not** serialize ticks — a second concurrent request gets a second instance — and Scheduler retries on timeout without suppressing overlap, so overlapping ticks are the steady state under load rather than an edge case. A tick therefore takes a **Firestore lease** before doing any work and exits immediately if another holds it.
+- **The tick cadence is a declared input, not only a cron string**, because `SLASHID_TOMBSTONE_TTL_SECONDS` must exceed `JOIN_WAIT` + `POLL_LAG` + one tick and the service cannot check an inequality against a number it never sees. Note the default `JOIN_WAIT` of 3600 plus `POLL_LAG` of 120 leaves only 3480 s of tick interval under a 7200 s tombstone, so the hook-only "slow tick" cannot be hourly. Startup asserts the inequality and refuses to run if it fails.
 - **Hook only**: `min_instance_count = 1`, since a cold start inside the verdict budget risks a webhook failure and enough of those trip the circuit breaker. Needs the pending store and a slow tick to fire flushes; no compliance polling.
 - **Compliance only**: no public endpoint, no certificate, no minimum instance — a scheduler, a checkpoint store and two secrets.
-- Secret Manager holds the push token, the signing secret and the compliance key. Firestore holds the pending store and checkpoints, in a named database as `vertex/` does, behind the port above. Its TTL policy is a backstop only: flushing must emit, so it is the tick's job, not the TTL's, and the policy must never be set below `SLASHID_TOMBSTONE_TTL_SECONDS`. The module also provisions the composite index `due` needs.
+- Secret Manager holds the push token, the signing secret and the compliance key. Firestore holds the pending store and checkpoints, in a named database as `vertex/` does, behind the port above. Its TTL policy keys off **`tombstone_expires_at`**, a separate field, and never applies to a live record. Firestore deletes when the nominated instant is *past*, so pointing the policy at `tombstoned_at` would collect every tombstone the moment it was written and give it no lifetime at all. `retire` writes `tombstone_expires_at = now + SLASHID_TOMBSTONE_TTL_SECONDS` on a successful push and leaves it unset on a failure, so a record still being retried is never collected. `tombstoned_at` keeps its own meaning, which every readiness check tests for presence. Keying it off creation time instead — the obvious implementation given the 7200 default — would delete a record that had been failing to push for two hours before it was ever emitted, which is precisely the loss the store exists to prevent. Flushing must emit, so it is the tick's job, not the TTL's. The module also provisions the composite index `due` needs.
 - Cloud Run caps HTTP/1 bodies at 32 MiB, under the protocol's 64 MiB ceiling.
 
 ## Rollout
@@ -450,6 +504,8 @@ Anthropic provides staged rollout server-side, so use it: shadow mode, then a ro
 - **Sticky denials** wedge a session permanently.
 - **`conversation_id` merges sub-conversations**, since Haiku status frames and `web_search` sub-requests share the main session's id.
 - **Reader-emitted events are 10 KB-capped** per tool block.
+- **Two sources can only be joined on a `tool_use` id.** Measured on one session present in both: transcript-prefix digests produced 200 frame keys and 302 reader keys with **zero in common**, because the stored transcript is a different projection — a prepended synthetic marker, turns from before capture, sub-agent turns. So a run with no tool call is owned by the hook alone, and one the hook never saw is never recorded. Tool-bearing runs, the ones that touch files and servers, are covered twice.
+- **Attachment digests reach fewer rounds than attachments.** Enrichment needs a joinable run, and only **6 of 14** measured claude.ai rounds had one. The rest keep the frame's extracted-text digest, exact for plain text and absent for processed documents.
 - **The local-sessions listing cannot be ordered**, so Reader B re-walks its whole lagging window every tick instead of resuming from a cursor. Dedup absorbs the repeats; a long outage still means a long re-walk.
 - **Cloud Run's 32 MiB body cap** is below the protocol's ceiling; observed frames peak at 1.86 MB.
 
@@ -457,7 +513,7 @@ Anthropic provides staged rollout server-side, so use it: shadow mode, then a ro
 
 1. **Does `actor.id` resolve against what the `anthropic` adapter stores for org members**, so `ResolveAIInvocationIdentity` succeeds on the first invocation rather than never?
 2. **Should a seat-authenticated `actor.type: user` on an interactive surface set `HumanDriven`?** Decided yes; it needs a new `Reason` value server-side, batched with the schema sync.
-3. **Should `reference_id` carry which check denied** — `slashid:preflight:…` against `slashid:policy:…` — now that the activity's own `request_id` makes it redundant as a join key? It would diverge from the Go receiver's recipe, so it is a deliberate decision rather than a tidy-up.
+3. **Closed.** `reference_id` was a candidate join key. It is not one: measured against `ng-evangelion`, the gate's `reference_id` is generated per decision, returned in the verdict, handed to an audit callback and written to a log line. Nothing persists it, nothing indexes it, and nothing correlates it to an invocation row. Gate decisions and observed invocations are not joined anywhere in that repo. Keeping the Go receiver's recipe therefore costs nothing and changing it gains nothing, so the recipe stays and the join is the denial activity's own `request_id`.
 4. **When should `generated_files` be enriched?** Deferred, deliberately. They are field-identical to `files[]` apart from `created_at`, so the enrichment itself is nearly free, but the frame never reveals that a tool wrote a file. Covering them means waiting on every round from a file-capable surface instead of every attachment-bearing round, and that cost is not worth paying before the feature has a user. Revisit when a customer runs claude.ai file creation in anger. `provenance` reserves the `generated` value for that day and ships without it.
 5. **Should artifact content be fetched into `output`?** It is the one way to close the artifact gap in Known limitations, at one request per artifact version. It wants its own knob, not a fold into file enrichment.
 
