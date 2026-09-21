@@ -156,6 +156,20 @@ Because the join covers two runs in three, the capabilities are divided by owner
 
 The cost is explicit, bounded and temporary: an **unaddressable run the hook never saw is never recorded**. That means a plain-text answer missed during a receiver outage, or skipped by a rollout percentage below 100. Tool-bearing runs, which are the ones that touch files and servers, are covered by both.
 
+### The soft join, for file digests only
+
+The `toolu_` anchor leaves attachment enrichment thin: measured, only **1 of 4** attachment-bearing rounds had a joinable run. A second, weaker join closes most of that gap without touching the addressing scheme.
+
+**The conversation half is not soft at all.** Measured on every claude.ai conversation in the tenant: a frame's `session_id` **is** the chat's own identifier, the one its `href` ends with. Three of three matched exactly. So a reader holding a chat can scope candidate records to that one conversation for free, and every ambiguity that remains is ambiguity *within* a conversation.
+
+**The timestamp half discriminates well, and says so when it does not.** Against each frame, the nearest user message was 0.3–6.9 s away and the next candidate at least 6.1 s further. But proximity alone is not enough: one measured chat had three frames inside 15 s of two messages, so "nearest" would have picked confidently and wrongly.
+
+**The rule is therefore unanimity, not nearness.** A reader enriching a message's files counts the candidate records within `SLASHID_SOFT_JOIN_WINDOW_SECONDS` of it in the same conversation. **Exactly one candidate enriches; zero or several abstain.** Measured on the corpus, that lifts attachment coverage from 1 of 4 rounds to 3 of 4, and correctly declines the ambiguous one. The window is a knob because it matters: at ±15 s three rounds resolve uniquely, at ±60 s one of them gains a second candidate and abstains.
+
+**A soft match may enrich and may never emit.** It adds digests to a record that already exists; it never creates one, never pushes one, and never decides an address. That is what bounds the damage of a wrong match to wrong hashes on one event, rather than a duplicated or misattributed invocation — which is the failure the whole addressing scheme exists to avoid. The `contributed` set records that compliance touched the record, so a reviewer can still tell a soft-joined event from a hard-joined one.
+
+Everything above is scoped to `accessed_files`. Nothing else is enriched this way, because nothing else is worth a probabilistic match.
+
 ### The tail record
 
 Emit-previous leaves the final round of a session with no successor to report it, and `accessed_files` are attributed to the round the model consumed, so a `Read` in that round would otherwise vanish. Every frame therefore writes a **tail record** holding its fresh round, input-only.
