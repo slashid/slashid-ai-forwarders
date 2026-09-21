@@ -13,6 +13,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
         "SLASHID_ENDPOINT": "https://api.slashid.com",
         "SLASHID_PUSH_TOKEN": "token",
         "SLASHID_HOOK_SIGNING_SECRET": "whsec_AAA",
+        "SLASHID_GCP_PROJECT_ID": "proj",
     }
     base.update(overrides)
     for k, v in base.items():
@@ -56,5 +57,38 @@ def test_unsigned_with_policy_url_is_rejected(monkeypatch: pytest.MonkeyPatch) -
     _env(
         monkeypatch, SLASHID_HOOK_ALLOW_UNSIGNED="true", SLASHID_POLICY_URL="https://x/ai-access/a"
     )
+    with pytest.raises(ValidationError):
+        Config()
+
+
+def test_compliance_is_off_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    assert Config().compliance_enabled is False
+
+
+def test_a_compliance_key_turns_the_readers_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x")
+    assert Config().compliance_enabled is True
+
+
+def test_the_store_knobs_have_the_designed_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    config = Config()
+    assert config.join_wait_seconds == 3600
+    assert config.tombstone_ttl_seconds == 7200
+    assert config.pending_collection == "anthropic_pending"
+    assert config.firestore_database == "slashid-anthropic"
+    assert config.max_flushes_per_tick == 500
+    assert config.gcp_project_id == "proj"
+    # Fail closed: with no scheduler identity named, every tick is refused.
+    assert config.tick_service_account is None
+    assert config.tick_audience is None
+
+
+def test_the_project_id_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Firestore client built with ``project=None`` fails on the first
+    write, in a background task whose exception reaches no response."""
+    _env(monkeypatch)
+    monkeypatch.delenv("SLASHID_GCP_PROJECT_ID")
     with pytest.raises(ValidationError):
         Config()

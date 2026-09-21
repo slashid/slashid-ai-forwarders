@@ -58,6 +58,7 @@ def config(**overrides: Any) -> Config:
         "endpoint": "https://api.slashid.example",
         "push_token": "t",
         "hook_signing_secret": SECRET,
+        "gcp_project_id": "proj",
         "shadow_mode": False,
         "preflight_enabled": True,
         "policy_url": POLICY,

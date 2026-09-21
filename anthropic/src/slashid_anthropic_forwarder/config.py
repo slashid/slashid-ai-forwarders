@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import cache
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from slashid_ai_forwarder_core.config_base import BaseConfig
 
 
@@ -49,6 +49,43 @@ class Config(BaseConfig):
     # When set and found in a frame's raw body, the frame is denied. Lets a
     # test tenant observe what a post-denial round looks like.
     capture_deny_marker: str | None = None
+    # sk-ant-api01-…. Setting it enables the compliance readers; the
+    # readers chunk adds the rest of their configuration. It is read on
+    # the request path for one reason: a record may only wait for
+    # attachment digests when something exists to deliver them.
+    compliance_key: str | None = None
+    # The project holding Firestore; vertex/ has the same field. Required:
+    # this chunk builds the client, and ``project=None`` is a client that
+    # talks to nothing.
+    gcp_project_id: str = Field(..., min_length=1)
+    # The named database, as vertex/ names its own slashid-vertex rather
+    # than using (default).
+    firestore_database: str = "slashid-anthropic"
+    # Collection holding pending records and their tombstones.
+    pending_collection: str = "anthropic_pending"
+    # Deadline before an unsettled record is pushed as it stands.
+    join_wait_seconds: int = 3_600
+    # How long a pushed record's tombstone suppresses a late reader's
+    # duplicate. Must exceed JOIN_WAIT + POLL_LAG + one tick; the
+    # assertion lands with the tick cadence in the deploy chunk.
+    tombstone_ttl_seconds: int = 7_200
+    # Bounds `due` so one tick cannot stall behind a backlog.
+    max_flushes_per_tick: int = 500
+    # The service account whose OIDC token POST /tick accepts. Unset
+    # refuses every tick, which is the right way round: Cloud Run cannot
+    # scope an invoker to one path, so on a service the hook can reach,
+    # this check is the only thing guarding the route.
+    tick_service_account: str | None = None
+    # The audience that token must carry, when the deployment can name it.
+    # The service's own URI is not available to the Terraform that sets
+    # this service's environment, so it may be left unset: the signature
+    # and the service account still authorize, and Cloud Run enforces the
+    # audience itself wherever the service is not public.
+    tick_audience: str | None = None
+
+    @property
+    def compliance_enabled(self) -> bool:
+        return bool(self.compliance_key)
 
     @property
     def signing_secrets(self) -> list[str]:
