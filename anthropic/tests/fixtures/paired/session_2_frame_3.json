@@ -1,0 +1,90 @@
+{
+  "type": "prompt",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "session_id": "00000002-0000-4000-8000-000000000000",
+  "request_id": "msg_011CfG8BXExaA29F3cxswDw9",
+  "model": "claude-opus-5",
+  "actor": {
+    "type": "user",
+    "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+    "email_address": "alice@example.com"
+  },
+  "source": {
+    "application": "claude-code"
+  },
+  "metadata": {},
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# userEmail\nThe user's email address is alice@example.com. Use it only to identify the user, such as for authorship, attribution, or filtering their own work. Never send it to an unrelated service, such as in a request header, URL, or payload, unless the user explicitly asks.\n\nIMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.\n</system-reminder>"
+        },
+        {
+          "type": "text",
+          "text": "<system-reminder>\nAttribution for git commits and pull requests you create from here on (this replaces Claude Code's own earlier attribution guidance, such as a previous copy of this reminder; the user's own instructions about these lines, such as a CLAUDE.md or memory rule, take precedence over this reminder, but do not add attribution lines this reminder leaves out):\n- End git commit messages with:\nCo-Authored-By: Claude Opus 5 (1M context) <alice@example.com>\n- End pull request descriptions with:\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n</system-reminder>\n"
+        },
+        {
+          "type": "text",
+          "text": "Read the file does-not-exist-here.txt and tell me what happened.\n"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll try reading it."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_01G8v1L2hGBfy8RHLs1b15Ly",
+          "tool_name": "Read",
+          "input": {
+            "file_path": "/workspace/does-not-exist-here.txt"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01G8v1L2hGBfy8RHLs1b15Ly",
+          "tool_name": "Read",
+          "content": "File does not exist. Note: your current working directory is /workspace.",
+          "is_error": true
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01QXedXmPfGQt62ys22mkxKB",
+          "tool_name": "Bash",
+          "input": {
+            "command": "ls -la /workspace",
+            "description": "List files in the working directory"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01QXedXmPfGQt62ys22mkxKB",
+          "tool_name": "Bash",
+          "content": "total 8\ndrwxrwxr-x 1 user user  36 set 21 03:37 .\ndrwxrwxr-x 1 user user 342 set 21 03:37 ..\n-rw-rw-r-- 1 user user  46 set 21 03:37 notes.txt\n-rw-rw-r-- 1 user user  27 set 21 03:37 stock.csv",
+          "is_error": false
+        }
+      ]
+    }
+  ]
+}

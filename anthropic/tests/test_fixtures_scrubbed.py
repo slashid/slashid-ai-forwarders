@@ -16,7 +16,10 @@ from pathlib import Path
 
 import pytest
 
-FIXTURES = Path(__file__).parent / "fixtures" / "compliance"
+FIXTURE_DIRS = (
+    Path(__file__).parent / "fixtures" / "compliance",
+    Path(__file__).parent / "fixtures" / "paired",
+)
 
 # Values that exist in the real tenant and must never appear.
 FORBIDDEN = (
@@ -33,11 +36,11 @@ CLLS = re.compile(r"clls_[A-Za-z0-9_-]+")
 
 
 def _files() -> list[Path]:
-    return sorted(FIXTURES.glob("*.json"))
+    return sorted(p for d in FIXTURE_DIRS for p in d.glob("*.json"))
 
 
 def test_fixtures_exist() -> None:
-    assert _files(), f"no compliance fixtures under {FIXTURES}"
+    assert _files(), f"no fixtures under {FIXTURE_DIRS}"
 
 
 @pytest.mark.parametrize("path", _files(), ids=lambda p: p.name)
@@ -74,4 +77,7 @@ def test_nothing_forbidden_hides_in_base64(path: Path) -> None:
 @pytest.mark.parametrize("path", _files(), ids=lambda p: p.name)
 def test_every_fixture_is_a_recorded_exchange(path: Path) -> None:
     body = json.loads(path.read_text())
+    if path.parent.name == "paired":
+        assert body.get("type") == "prompt", f"{path.name} is not a captured frame"
+        return
     assert "request" in body or "cases" in body, f"{path.name} is not a recorded call"
