@@ -24,7 +24,13 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
 from slashid_ai_forwarder_core.normalize.turn import after_last_assistant
 from slashid_ai_forwarder_core.sink import push_invocations
 
-from .address import deny_address, hook_address, joinable_address, tail_address
+from .address import (
+    DENY_PREFIX,
+    deny_address,
+    hook_address,
+    joinable_address,
+    tail_address,
+)
 from .config import Config
 from .hook.checks import Decision
 from .hook.envelope import partial_event
@@ -135,6 +141,20 @@ async def push_if_ready(
     return await push_claimed(record, store=store, config=config, client=client)
 
 
+def _unconfirmed_denial(record: PendingRecord, config: Config) -> bool:
+    """A denial still waiting on an activity that a reader would have found.
+
+    Only when compliance is enabled: with no reader there is nothing to
+    confirm against, the operator's setting is all there is, and the
+    denial must still be reported.
+    """
+    return (
+        config.compliance_enabled
+        and record.address.startswith(DENY_PREFIX)
+        and DENIAL_ACTIVITY in record.awaiting
+    )
+
+
 async def flush_due(
     store: PendingStore,
     *,
@@ -159,6 +179,24 @@ async def flush_due(
         # a commitment that cannot be topped up later.
         record = await store.claim(stale.address, LEASE, owner=SWEEP, now=moment)
         if record is None:
+            continue
+        if _unconfirmed_denial(record, config):
+            # Measured in production: our shadow mode off, claude.ai's on.
+            # We answer deny, claude.ai ignores it, the model reads the
+            # file, and no activity is ever recorded — the feed carries
+            # only blocks that actually happened. Pushing this would
+            # assert a block that did not occur, beside the real
+            # content-addressed record for the very same turn.
+            #
+            # So the feed's silence past the poll lag is evidence, and the
+            # record is discarded. Nothing is lost: the invocation itself
+            # is reported truthfully by its own record, and only the false
+            # claim goes. This is the one place here where silence beats a
+            # record; everywhere else a missing event is the worse failure.
+            log.warning(
+                "discarding %s: denied, but the feed never confirmed the block", record.address
+            )
+            await store.retire(record.address, Retirement.SUPERSEDED)
             continue
         if await push_claimed(record, store=store, config=config, client=client):
             pushed += 1

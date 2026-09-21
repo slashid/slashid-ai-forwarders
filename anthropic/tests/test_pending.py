@@ -18,7 +18,7 @@ from slashid_ai_forwarder_core.events import (
 from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestMessage
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
-from slashid_anthropic_forwarder.address import tail_address
+from slashid_anthropic_forwarder.address import deny_address, tail_address
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.hook.checks import Decision, Verdict
 from slashid_anthropic_forwarder.hook.frame import PromptFrame
@@ -497,3 +497,41 @@ async def test_a_tail_is_never_pushed_on_arrival() -> None:
     key = tail_address(list(f.messages), f.session_id)
     assert await store.seen(key) is Seen.LIVE
     assert sink.request_ids == [ADDRESS]
+
+
+async def test_a_denial_the_feed_never_confirms_is_discarded_not_flushed() -> None:
+    """Measured in production: our shadow mode off, claude.ai's shadow mode
+    on. We answer deny, claude.ai ignores it, the model reads the file, and
+    no activity is ever recorded — activities exist only for blocks that
+    actually happened. Flushing that record would assert a block that did
+    not occur, beside the real invocation record for the same turn.
+
+    The feed is authoritative and its silence past the poll lag is
+    evidence, so the record is discarded. Nothing is lost: the invocation
+    is reported truthfully by its own content-addressed record."""
+    store, sink = a_store(), Sink()
+    address = deny_address("msg_phantom")
+    await seed(store, address, DENIAL_ACTIVITY)
+    past_deadline = datetime.now(UTC) + JOIN_WAIT * 2
+    async with sink.client() as client:
+        flushed = await flush_due(
+            store,
+            config=config(compliance_key="sk-ant-x", organization_uuid="org-1"),
+            client=client,
+            now=past_deadline,
+        )
+    assert flushed == 0
+    assert sink.bodies == []  # nothing claimed a block that never happened
+    assert await store.seen(address) is Seen.TOMBSTONED  # retired, not left to retry
+
+
+async def test_without_a_reader_a_denial_still_flushes() -> None:
+    """Hook only: there is no feed to confirm anything, so the operator's
+    setting is all there is and the denial must still be reported."""
+    store, sink = a_store(), Sink()
+    address = deny_address("msg_hookonly")
+    await seed(store, address)
+    past_deadline = datetime.now(UTC) + JOIN_WAIT * 2
+    async with sink.client() as client:
+        assert await flush_due(store, config=config(), client=client, now=past_deadline) == 1
+    assert sink.request_ids == [address]
