@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from slashid_ai_forwarder_core.checkpoint import CheckpointStore
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 from slashid_anthropic_forwarder.address import joinable_address
@@ -45,7 +46,7 @@ def addresses(n: int) -> list[str]:
     ]
 
 
-def _cursors(**stores: object) -> Cursors:
+def _cursors(**stores: CheckpointStore) -> Cursors:
     """Cursors for a test: every feed gets a fake unless one is named."""
     made = {f: stores.get(f, FakeCheckpoints()) for f in ("activities", "chats", "sessions")}
     return Cursors(**{f: FeedCursor(s, name=f, poll_lag_seconds=LAG) for f, s in made.items()})
