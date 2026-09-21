@@ -264,8 +264,9 @@ def create_app(
             try:
                 counters = await run_readers(store=store, config=config, http=http())
             except Exception:
-                # Never a failed tick. The scheduler would retry it,
-                # re-running a reader that already moved its watermark.
+                # Never a failed tick. The scheduler does not retry
+                # (retry_count = 0); the next cron fire re-runs the pass
+                # from its watermark.
                 log.exception("tick: the reader pass failed; flushing anyway")
             flushed = await flush_due(store, config=config, client=http())
         finally:
