@@ -1,0 +1,97 @@
+# The trailing run holds a tool_use, so both sources can address it. Nothing
+# in the attributed round is an upload, so it waits for nothing and is
+# pushed on the spot.
+id: a_joinable_run_is_addressed_on_its_tool_use_id
+fixture: frame_tool_result
+append: []
+decision: allow
+compliance: true
+expected: {record: toolu_01Dqhr2d1w2UCUqbXhCSGutC, tail: true}
+---
+# No previous run to name. Its fresh round is not lost: that is the tail.
+id: a_first_turn_writes_only_a_tail
+fixture: frame_first_turn
+append: []
+decision: allow
+compliance: true
+expected: {record: null, tail: true}
+---
+id: an_unjoinable_run_falls_back_to_the_delivery_id
+fixture: frame_after_shadow_deny
+append: []
+decision: allow
+compliance: true
+expected: {record: "hook:msg_1", tail: true}
+---
+# The attachments are in the attributed round, the run that consumed them
+# is joinable, and a reader exists: all three, so the digests are awaited.
+id: an_attachment_bearing_joinable_round_waits_for_digests
+fixture: frame_attachment
+append:
+  - {role: assistant, content: [{type: tool_use, id: toolu_09, tool_name: Read, input: {}}]}
+  - {role: user, content: [{type: tool_result, tool_use_id: toolu_09, content: ok}]}
+decision: allow
+compliance: true
+expected: {record: toolu_09, tail: true, awaiting: [file_digests]}
+---
+# The same round with no reader configured. Seeding here would make the
+# record wait out the full JOIN_WAIT and then flush exactly what it held.
+id: without_compliance_an_attachment_round_waits_for_nothing
+fixture: frame_attachment
+append:
+  - {role: assistant, content: [{type: tool_use, id: toolu_09, tool_name: Read, input: {}}]}
+  - {role: user, content: [{type: tool_result, tool_use_id: toolu_09, content: ok}]}
+decision: allow
+compliance: false
+expected: {record: toolu_09, tail: true}
+---
+# An unjoinable run has no address a reader could look it up by, so its
+# attachment digests can never arrive however many readers are configured.
+id: an_unjoinable_attachment_round_waits_for_nothing
+fixture: frame_attachment
+append:
+  - {role: assistant, content: [{type: text, text: "that is a PDF about ferries"}]}
+  - {role: user, content: [{type: text, text: thanks}]}
+decision: allow
+compliance: true
+expected: {record: "hook:msg_1", tail: true}
+---
+# The attachment is in the *fresh* round, which belongs to the tail. The
+# record being emitted names a run that never saw the file — here there is
+# no previous run at all, so there is no record to stamp it on.
+id: a_fresh_attachment_does_not_make_the_record_wait
+fixture: frame_attachment
+append: []
+decision: allow
+compliance: true
+expected: {record: null, tail: true}
+---
+# An honoured deny produces no response and so no successor frame: nothing
+# would ever supersede a tail, so the fresh round is recorded as the denial.
+# With a reader configured it waits for the activity that confirms the
+# block and carries the client's real user agent.
+id: an_honoured_deny_replaces_the_tail
+fixture: frame_tool_result
+append: []
+decision: blocked
+compliance: true
+expected:
+  {record: toolu_01Dqhr2d1w2UCUqbXhCSGutC, tail: false, deny: true,
+   deny_awaiting: [denial_activity]}
+---
+# Hook only: no reader will ever complete it, so waiting would buy a full
+# JOIN_WAIT of delay and flush exactly what was already held.
+id: without_compliance_a_denial_waits_for_nothing
+fixture: frame_tool_result
+append: []
+decision: blocked
+compliance: false
+expected: {record: toolu_01Dqhr2d1w2UCUqbXhCSGutC, tail: false, deny: true}
+---
+# Shadow mode leaves the correctness path entirely.
+id: a_shadow_deny_writes_an_ordinary_tail
+fixture: frame_tool_result
+append: []
+decision: shadow_deny
+compliance: true
+expected: {record: toolu_01Dqhr2d1w2UCUqbXhCSGutC, tail: true}
