@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import AliasChoices, Field, JsonValue
 from pydantic.json_schema import JsonSchemaValue
 
 from .._base import _LenientModel
@@ -35,7 +35,11 @@ class AnthropicTextBlock(_LenientModel):
 class AnthropicToolUseBlock(_LenientModel):
     type: Literal["tool_use"]
     id: str
-    name: str
+    # The Messages API spells it ``name``; the Inference hooks frame
+    # ``tool_name``. Without both spellings the block misses this class,
+    # smart-unions to AnthropicUnknownBlock and is dropped by
+    # ``_translate_request_content``.
+    name: str = Field(validation_alias=AliasChoices("name", "tool_name"))
     input: JsonValue = None  # absent on stream start, filled by input_json_delta
 
 
@@ -226,11 +230,28 @@ class AnthropicToolResultBlock(_LenientModel):
     is_error: bool = False
 
 
+class AnthropicAttachmentBlock(_LenientModel):
+    """Inference hooks attachment: metadata plus extracted text, never bytes.
+
+    Every field but ``type`` can be null — an image arrives with no name
+    and no text, a PDF with text but no name. ``size_bytes`` describes
+    the upload, not the extracted text, and disagrees with it whenever
+    the stored copy was processed; it is metadata, not a hash input.
+    """
+
+    type: Literal["attachment"]
+    file_name: str | None = None
+    media_type: str | None = None
+    size_bytes: int | None = None
+    text: str | None = None
+
+
 AnthropicRequestContentBlock = (
     AnthropicTextBlock
     | AnthropicToolUseBlock
     | AnthropicThinkingBlock
     | AnthropicToolResultBlock
+    | AnthropicAttachmentBlock
     | AnthropicUnknownBlock
 )
 # Superset of the response-side content-block union: adds

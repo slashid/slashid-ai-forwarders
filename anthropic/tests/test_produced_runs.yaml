@@ -1,0 +1,55 @@
+# The anchor: a local-session turn is newly produced when it carries a
+# model and no provenance at all. Every recorded transcript looks like
+# this; the largest measured session had 4 such turns out of 433
+# assistant messages, and the rule is the same either way.
+id: a_marked_assistant_turn_with_no_provenance_is_a_run
+messages:
+  - {role: user, provenance: {type: synthetic_marker}, content: [{type: text, text: marker}]}
+  - {role: user, content: [{type: text, text: hi}]}
+  - {role: assistant, model: claude-opus-5, content: [{type: text, text: fresh}]}
+expected_models: [claude-opus-5]
+---
+# One answer delivered in pieces is one run: a follower joins only when it
+# carries neither a marker of its own nor a provenance.
+id: an_answer_split_across_messages_is_one_run
+messages:
+  - {role: assistant, model: claude-opus-5, content: [{type: text, text: part one}]}
+  - {role: assistant, content: [{type: tool_use, id: toolu_01A, name: Read, input: {}}]}
+expected_models: [claude-opus-5]
+---
+# Replayed history is the overwhelming majority of what a long transcript
+# holds, and it is not traffic.
+id: client_asserted_history_is_not_a_turn
+messages:
+  - {role: assistant, model: claude-opus-5, provenance: {type: client_asserted}, content: []}
+expected_models: []
+---
+# The synthetic marker the client never sent: one of the three reasons a
+# digest over the transcript prefix cannot join the two sources.
+id: the_synthetic_marker_is_not_a_turn
+messages:
+  - {role: assistant, model: claude-opus-5, provenance: {type: synthetic_marker}, content: []}
+expected_models: []
+---
+# Tolerate unrecognized `type` values, says the schema. A turn we cannot
+# classify is not one we emit.
+id: an_unknown_provenance_is_skipped_not_rejected
+messages:
+  - {role: assistant, model: claude-opus-5, provenance: {type: future_kind}, content: []}
+expected_models: []
+---
+# No marker at all: replayed history in a transcript whose turns predate
+# the model field.
+id: an_unmarked_assistant_message_is_not_a_turn
+messages:
+  - {role: assistant, content: [{type: text, text: replayed}]}
+expected_models: []
+---
+# Two produced turns in one transcript, which is what every recorded
+# local session looks like.
+id: two_produced_turns
+messages:
+  - {role: assistant, model: claude-opus-5, content: [{type: text, text: one}]}
+  - {role: user, content: [{type: text, text: next}]}
+  - {role: assistant, model: claude-sonnet-5, content: [{type: text, text: two}]}
+expected_models: [claude-opus-5, claude-sonnet-5]

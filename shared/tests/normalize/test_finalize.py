@@ -211,3 +211,29 @@ def test_finalize_stubs_dedupe_by_name_but_not_against_hashed() -> None:
     finalize(n, config=_config())
     # 3 → 2: stubs collapse, hashed entry stays.
     assert len(n.accessed_files) == 2
+
+
+def test_finalize_stamps_tool_result_provenance() -> None:
+    n = _invocation_with_read("/tmp/x.txt", "hello world")
+    finalize(n, config=_config())
+    assert n.accessed_files[0].provenance == "tool_result"
+
+
+def test_finalize_dedup_ignores_provenance_and_keeps_first_seen() -> None:
+    """The dedup key is (name, alg, value) — provenance is not part of it.
+    A vendor attachment entry comes first and survives with its own
+    provenance; the colliding tool-result entry is dropped, not merged."""
+    import hashlib as _h
+
+    n = _invocation_with_read("/tmp/x.txt", "hello")
+    n.accessed_files.append(
+        AIAccessedFile(
+            name="/tmp/x.txt",
+            content_hashes={"sha256": _h.sha256(b"hello").hexdigest()},
+            byte_length=5,
+            provenance="attachment",
+        )
+    )
+    finalize(n, config=_config())
+    assert len(n.accessed_files) == 1
+    assert n.accessed_files[0].provenance == "attachment"

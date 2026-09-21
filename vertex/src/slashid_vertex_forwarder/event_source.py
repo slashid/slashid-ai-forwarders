@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
+from slashid_ai_forwarder_core.checkpoint import Checkpoint, CheckpointStore
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     GCPCredential,
@@ -37,7 +38,6 @@ from slashid_ai_forwarder_core.normalize.gemini.schema import (
 from .audit_source import AuditEntry, _credential_chain
 
 if TYPE_CHECKING:
-    from .checkpoint_store import CheckpointStore
     from .config import Config
 
 log = logging.getLogger(__name__)
@@ -161,19 +161,6 @@ def _resolve_user_agent(row: Entry, audit_entries: list[AuditEntry]) -> str | No
     correlation window) disagreement collapses to ``None`` rather than
     attributing one caller's client to another's invocation."""
     return _consensus({a.user_agent for a in _audit_candidates(row, audit_entries)})
-
-
-@dataclass(frozen=True)
-class Checkpoint:
-    """The polling watermark — ``(timestamp, id)`` of the last processed
-    entry. Universal across event sources.
-
-    ``timestamp = None`` means "no entries seen yet"; the source fetches
-    every entry up to its batch bound.
-    """
-
-    timestamp: datetime | None
-    id: str | None
 
 
 @dataclass

@@ -15,9 +15,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from slashid_ai_forwarder_core.checkpoint import Checkpoint
 
 from slashid_vertex_forwarder.config import Config
-from slashid_vertex_forwarder.event_source import BqEventSource, Checkpoint
+from slashid_vertex_forwarder.event_source import BqEventSource
 
 
 def _config() -> Config:

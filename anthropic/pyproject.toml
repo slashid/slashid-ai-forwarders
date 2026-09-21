@@ -1,0 +1,56 @@
+[project]
+name = "slashid-anthropic-forwarder"
+version = "0.1.0"
+description = "Receives Claude Enterprise Inference Hooks, returns allow/deny verdicts, forwards AI invocations to SlashID NHI"
+requires-python = ">=3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "SlashID" }]
+dependencies = [
+    "slashid-ai-forwarder-core",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "standardwebhooks>=1.1",
+    "google-cloud-storage>=2.18",
+    "google-cloud-firestore>=2.16",
+]
+
+[tool.uv.sources]
+slashid-ai-forwarder-core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slashid_anthropic_forwarder"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
+]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"

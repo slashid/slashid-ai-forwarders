@@ -1,0 +1,52 @@
+{
+  "type": "prompt",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "session_id": "00000006-0000-4000-8000-000000000000",
+  "request_id": "chatcompl_011CfFY1XX5Q391ncpUjHeDE",
+  "model": "claude-sonnet-5",
+  "actor": {
+    "type": "user",
+    "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+    "email_address": "alice@example.com"
+  },
+  "source": {
+    "application": "claude-ai"
+  },
+  "metadata": {},
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<uploaded_files>\n<file_path>/mnt/user-data/uploads/guiaSADT.pdf</file_path>\n<file_path>/mnt/user-data/uploads/WhatsApp_Image_2026-09-02_at_17_07_21.jpeg</file_path>\n<file_path>/mnt/user-data/uploads/maria.txt</file_path>\n</uploaded_files>\n\n"
+        },
+        {
+          "type": "attachment",
+          "media_type": "text/plain",
+          "size_bytes": null,
+          "file_name": "maria.txt",
+          "text": "Maria tinha um carneirinho\n"
+        },
+        {
+          "type": "attachment",
+          "media_type": "image/jpeg",
+          "size_bytes": 70657,
+          "file_name": null,
+          "text": null
+        },
+        {
+          "type": "attachment",
+          "media_type": "application/pdf",
+          "size_bytes": null,
+          "file_name": null,
+          "text": "Extracted document text\r\nline two\r\nline three\r\n"
+        },
+        {
+          "type": "text",
+          "text": "Este é um teste usando claude.ai e enviando anexos (txt, PDF e PNG)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Builds the receiver image from the repository root and pushes it to
+# Artifact Registry. Substitute _IMAGE with the full image reference.
+#
+#   gcloud builds submit --config anthropic/deploy/cloudbuild.yaml \
+#     --substitutions _IMAGE=us-central1-docker.pkg.dev/PROJECT/slashid-anthropic/forwarder:dev .
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "anthropic/Dockerfile", "-t", "${_IMAGE}", "."]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY

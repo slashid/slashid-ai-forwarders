@@ -17,3 +17,19 @@ expected: null
 id: none
 raw: null
 expected: null
+---
+id: unregistered_shorthand
+# Real value seen in a compliance file listing: a bare extension, not a
+# media type. Must degrade to None, not raise at the model boundary.
+raw: txt
+expected: null
+---
+id: unregistered_well_formed
+raw: not/a-real-type
+expected: null
+---
+id: registered_uppercase_canonicalizes
+# MimeType._validate looks up case-insensitively and returns the
+# registry's own casing.
+raw: TEXT/PLAIN
+expected: text/plain

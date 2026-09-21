@@ -1,0 +1,68 @@
+# Three secrets, each created only when the capability that needs it is
+# configured. The push token is unconditional: both capabilities push.
+
+resource "google_secret_manager_secret" "push_token" {
+  secret_id = "slashid_anthropic_push_token"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret_version" "push_token" {
+  secret      = google_secret_manager_secret.push_token.id
+  secret_data = var.slashid_push_token
+}
+
+resource "google_secret_manager_secret" "signing_secret" {
+  count     = local.signing_secret_set ? 1 : 0
+  secret_id = "slashid_anthropic_signing_secret"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret_version" "signing_secret" {
+  count       = local.signing_secret_set ? 1 : 0
+  secret      = google_secret_manager_secret.signing_secret[0].id
+  secret_data = var.hook_signing_secret
+}
+
+resource "google_secret_manager_secret" "compliance_key" {
+  count     = local.compliance_enabled ? 1 : 0
+  secret_id = "slashid_anthropic_compliance_key"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret_version" "compliance_key" {
+  count       = local.compliance_enabled ? 1 : 0
+  secret      = google_secret_manager_secret.compliance_key[0].id
+  secret_data = var.compliance_key
+}
+
+resource "google_secret_manager_secret" "ghcr_token" {
+  count     = var.ghcr_username == "" ? 0 : 1
+  secret_id = "slashid_anthropic_ghcr_token"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_secret_manager_secret_version" "ghcr_token" {
+  count       = var.ghcr_username == "" ? 0 : 1
+  secret      = google_secret_manager_secret.ghcr_token[0].id
+  secret_data = var.ghcr_token
+}

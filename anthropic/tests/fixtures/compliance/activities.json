@@ -1,0 +1,482 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/activities",
+    "params": "limit=1000&order=asc"
+  },
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "compliance_api_enabled": true,
+        "compliance_api_logging_enabled": true,
+        "created_at": "2026-09-21T01:41:57.039607Z",
+        "id": "activity_01LwHSAQJR5WGxgb9tq4KHCQ",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "org_compliance_api_settings_updated",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "created_at": "2026-09-21T01:42:01.755748Z",
+        "current_value": true,
+        "id": "activity_01WVFS3bchzjdwojvprp7ADM",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "previous_value": false,
+        "type": "org_analytics_api_capability_updated",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "claude-cli/2.1.278 (external, sdk-cli)",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "conversation_id": "00000006-0000-4000-8000-000000000000",
+        "created_at": "2026-09-21T01:52:50.586107Z",
+        "id": "activity_01PU8fTXJo5NCv2rpQFZqH2H",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "reference_id": "fd1fed7f6374db99a4e8a00f29a3297f",
+        "request_id": "msg_011CfFkQ3SvakJAYcNSwkBWN",
+        "surface": "claude-code",
+        "type": "inference_hooks_request_denied",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "created_at": "2026-09-21T01:56:28.257019Z",
+        "deny_message": null,
+        "deny_message_enabled": true,
+        "enabled": true,
+        "enforcement_mode": "prompt_only",
+        "extra_header_names": null,
+        "fail_mode": "fail_closed",
+        "final_verdict_timeout_ms": 5000,
+        "id": "activity_018DuWN9wQ26jjSKm2ic2YZv",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "prompt_verdict_timeout_ms": 5000,
+        "reset_circuit_breaker": false,
+        "rollout_percentage": null,
+        "shadow_mode": true,
+        "type": "inference_hooks_config_updated",
+        "webhook_url": "https://slashid-anthropic-forwarder-365112665646.us-central1.run.app",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "created_at": "2026-09-21T02:01:09.419477Z",
+        "deny_message": null,
+        "deny_message_enabled": true,
+        "enabled": true,
+        "enforcement_mode": "prompt_only",
+        "extra_header_names": null,
+        "fail_mode": "fail_closed",
+        "final_verdict_timeout_ms": 5000,
+        "id": "activity_01Nu23XAKTzTepYTizFEWzDH",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "prompt_verdict_timeout_ms": 5000,
+        "reset_circuit_breaker": false,
+        "rollout_percentage": null,
+        "shadow_mode": false,
+        "type": "inference_hooks_config_updated",
+        "webhook_url": "https://slashid-anthropic-forwarder-365112665646.us-central1.run.app",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "amount": 15000,
+        "created_at": "2026-09-21T03:02:08.839501Z",
+        "id": "activity_0132BERuC8aipH1tDF5AsdDo",
+        "is_enabled": true,
+        "limit_type": "member",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "spend_limit_id": "spl_011CfFqga2xQBAapQsA9wKtV",
+        "type": "extra_usage_spend_limit_created",
+        "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": null,
+        "claude_file_id": "claude_file_01LsMUPXQwHVZcDHXpkETAAv",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:12.609122Z",
+        "filename": "output.gif",
+        "id": "activity_01CbmQZRHRJUwJ6ZUujrwrxm",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_uploaded",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_file_id": "claude_file_01LsMUPXQwHVZcDHXpkETAAv",
+        "created_at": "2026-09-21T04:02:13.623907Z",
+        "filename": "output.gif",
+        "id": "activity_01YATZR3g7G7ppsxZcou4L6P",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_deleted",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_file_id": "claude_file_013DAgNTqHRhmU7a7Bo1J54j",
+        "created_at": "2026-09-21T04:02:13.632136Z",
+        "filename": "output.gif",
+        "id": "activity_01S5Aj9WMBGfmJggESLsLNLE",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_deleted",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": null,
+        "claude_file_id": "claude_file_018z95ZvZFNTwboY1QuN8q1h",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:18.890819Z",
+        "filename": "image30.png",
+        "id": "activity_01AqWeprXVEyKu7r9qjDKRqz",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_uploaded",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": "claude_chat_012XPDTHkcRigZefqq2de4yY",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:24.622080Z",
+        "id": "activity_011CfFvH7buq5psCF8Dkjm4S",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_chat_created",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": null,
+        "claude_file_id": "claude_file_01HZ2Wr5zNRXkmb2npA22WmC",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:28.794369Z",
+        "filename": null,
+        "id": "activity_011CfFvHRSU47aJbTUDYTojW",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_uploaded",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": null,
+        "claude_file_id": "claude_file_014QJivnKm6wT3V8AyyqVCPF",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:30.556541Z",
+        "filename": "image30.png",
+        "id": "activity_01J3jKfVm3iyNqKryYaN2r8Y",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_uploaded",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_018z95ZvZFNTwboY1QuN8q1h",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:33.717430Z",
+        "filename": null,
+        "id": "activity_01JdptJLxXWjVixzVqCvvKWr",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_01HZ2Wr5zNRXkmb2npA22WmC",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:33.729629Z",
+        "filename": null,
+        "id": "activity_01KL4bHDZY8HhCyZLKzmKWfT",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": "claude_chat_012XPDTHkcRigZefqq2de4yY",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:33.731135Z",
+        "id": "activity_01KF3rxg6MZUgJEB1fknkYfX",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_chat_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_014QJivnKm6wT3V8AyyqVCPF",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:39.802534Z",
+        "filename": null,
+        "id": "activity_01HVaYuvG4AiiczFPUxssj6u",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_018z95ZvZFNTwboY1QuN8q1h",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:39.821338Z",
+        "filename": null,
+        "id": "activity_01TRSMRAGrLQnMZLqzhiuDLn",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_01HZ2Wr5zNRXkmb2npA22WmC",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:39.830771Z",
+        "filename": null,
+        "id": "activity_01QmBfufMSiV9wHutsv5b3nQ",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": "claude_chat_012XPDTHkcRigZefqq2de4yY",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T04:02:39.833598Z",
+        "id": "activity_01WSQWKuXqsdcjfFvTay3G2Z",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_chat_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_014QJivnKm6wT3V8AyyqVCPF",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T06:34:16.761026Z",
+        "filename": null,
+        "id": "activity_01DCs8fyQVG75hEcFaWHYs8N",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_018z95ZvZFNTwboY1QuN8q1h",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T06:34:16.769404Z",
+        "filename": null,
+        "id": "activity_01H4ptsj3SCJSBPTDkvBw4E7",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_01HZ2Wr5zNRXkmb2npA22WmC",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T06:34:16.770625Z",
+        "filename": null,
+        "id": "activity_01BKQMqCDEAvdQ8XQw2sqgp4",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": "claude_chat_012XPDTHkcRigZefqq2de4yY",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T06:34:16.771606Z",
+        "id": "activity_01AE5CEDsn5BtpWvFjiz186p",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_chat_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_artifact_id": null,
+        "claude_file_id": "claude_file_01RTUzy5RWABq8Qu1xSCbvvm",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T06:34:18.162455Z",
+        "filename": null,
+        "id": "activity_01Lio33iR9RGQEaiPPAAKQSv",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_file_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      },
+      {
+        "actor": {
+          "email_address": "alice@example.com",
+          "ip_address": "2001:db8::1",
+          "type": "user_actor",
+          "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+          "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"
+        },
+        "claude_chat_id": "claude_chat_01E2Erig8LwCmfXnF3zGsCYG",
+        "claude_project_id": null,
+        "created_at": "2026-09-21T06:34:18.190476Z",
+        "id": "activity_01AaCpnboNh6Kbhy5SGAE3LV",
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "type": "claude_chat_viewed",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111"
+      }
+    ],
+    "has_more": false,
+    "first_id": "eyJpZCI6ICJhY3Rpdml0eV8wMUx3SFNBUUpSNVdHeGdiOXRxNEtIQ1EiLCAiY3JlYXRlZF9hdCI6ICIyMDI2LTA5LTIxVDAxOjQxOjU3LjAzOTYwNyswMDowMCJ9",
+    "last_id": "eyJpZCI6ICJhY3Rpdml0eV8wMUVLM05pUzdHanhCQnNReGJjZTVNaWciLCAiY3JlYXRlZF9hdCI6ICIyMDI2LTA5LTIxVDA2OjQ0OjUyLjYzOTY0OSswMDowMCJ9"
+  }
+}

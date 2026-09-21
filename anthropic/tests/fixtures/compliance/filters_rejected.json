@@ -1,0 +1,115 @@
+{
+  "cases": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/apps/chats",
+        "params": "limit=3&updated_at.gte=2026-09-20T00:00:00Z"
+      },
+      "status": 400,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "updated_at filters on org-wide queries require order_by=updated_at.",
+          "details": {
+            "error_visibility": "user_facing"
+          }
+        },
+        "request_id": "req_011CfG8hSn9V64bMojo4P553"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/apps/sessions/local",
+        "params": "limit=3&order=asc"
+      },
+      "status": 400,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "Unknown query parameter: 'order'.",
+          "details": {
+            "error_visibility": "user_facing"
+          }
+        },
+        "request_id": "req_011CfG8hUNe7rjZMgRX3hAJv"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/apps/sessions/local",
+        "params": "limit=3&order_by=updated_at"
+      },
+      "status": 400,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "Unknown query parameter: 'order_by'.",
+          "details": {
+            "error_visibility": "user_facing"
+          }
+        },
+        "request_id": "req_011CfG8hVUcupdHJrhUwQtaF"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/activities",
+        "params": "limit=3&created_at%5Bgte%5D=2026-09-21T04:00:00Z"
+      },
+      "status": 400,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "Unknown query parameter: 'created_at[gte]'. Did you mean 'created_at.gte'?"
+        },
+        "request_id": "req_011CfG8hWoVYoYNinuaiDPff"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/apps/chats",
+        "params": "limit=3&organization_uuid=11111111-1111-1111-1111-111111111111"
+      },
+      "status": 400,
+      "body": {
+        "type": "error",
+        "error": {
+          "type": "invalid_request_error",
+          "message": "Unknown query parameter: 'organization_uuid'.",
+          "details": {
+            "error_visibility": "user_facing"
+          }
+        },
+        "request_id": "req_011CfG8hXxCXSfyuM3xqwPob"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/organizations",
+        "params": ""
+      },
+      "status": 200,
+      "body": {
+        "data": [
+          {
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "name": "Slashid",
+            "created_at": "2026-09-19T00:15:29.046373+00:00"
+          }
+        ],
+        "has_more": false,
+        "next_page": null
+      }
+    }
+  ]
+}

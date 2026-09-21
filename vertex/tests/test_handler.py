@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from slashid_ai_forwarder_core.checkpoint import Checkpoint
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     AIInvocationTokens,
@@ -22,7 +23,6 @@ from slashid_ai_forwarder_core.events import (
 
 from slashid_vertex_forwarder import handler
 from slashid_vertex_forwarder.config import Config
-from slashid_vertex_forwarder.event_source import Checkpoint
 
 
 def _config() -> Config:

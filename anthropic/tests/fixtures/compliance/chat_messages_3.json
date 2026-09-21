@@ -1,0 +1,130 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/apps/chats/claude_chat_012XPDTHkcRigZefqq2de4yY/messages",
+    "params": ""
+  },
+  "status": 200,
+  "body": {
+    "id": "claude_chat_012XPDTHkcRigZefqq2de4yY",
+    "name": "Image analysis request",
+    "created_at": "2026-09-21T04:02:24.576013Z",
+    "updated_at": "2026-09-21T04:02:39.253290Z",
+    "deleted_at": null,
+    "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+    "organization_uuid": "11111111-1111-1111-1111-111111111111",
+    "project_id": null,
+    "model": "claude-sonnet-5",
+    "user": {
+      "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+      "email_address": "alice@example.com"
+    },
+    "chat_messages": [
+      {
+        "id": "claude_chat_msg_011CfFvH6MW4iSma2j9BbJNZ",
+        "role": "user",
+        "created_at": "2026-09-21T04:02:26.003157Z",
+        "content": [
+          {
+            "type": "text",
+            "text": "O que tem nessa imagem?",
+            "truncated": false,
+            "thinking_redacted": false
+          }
+        ],
+        "files": [
+          {
+            "id": "claude_file_018z95ZvZFNTwboY1QuN8q1h",
+            "filename": "image30.png",
+            "mime_type": "image/jpeg",
+            "size_bytes": 1483,
+            "md5": "8e59c59a8ded21fc48cb46ab86c7a21c",
+            "created_at": "2026-09-21T04:02:18.819580Z"
+          }
+        ],
+        "generated_files": null,
+        "artifacts": null
+      },
+      {
+        "id": "claude_chat_msg_011CfFvH6MWUE4fHhzc2rWef",
+        "role": "assistant",
+        "created_at": "2026-09-21T04:02:33.173506Z",
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "toolu_01HMYYook5Tz7rmxn7jWpvPm",
+            "name": "view",
+            "input": "{\"description\":\"Ver a imagem enviada pelo usu\u00e1rio\",\"path\":\"/mnt/user-data/uploads/image30.png\"}",
+            "truncated": false,
+            "integration_name": "File Creation",
+            "mcp_server_url": null
+          },
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_01HMYYook5Tz7rmxn7jWpvPm",
+            "name": "view",
+            "is_error": false,
+            "integration_name": "File Creation",
+            "mcp_server_url": null,
+            "content": [],
+            "truncated": false
+          },
+          {
+            "type": "text",
+            "text": "Essa imagem mostra o logotipo do **CytoNCA**, um plugin/aplicativo para o software Cytoscape (usado em biologia/bioinform\u00e1tica para an\u00e1lise e visualiza\u00e7\u00e3o de redes de intera\u00e7\u00e3o, como redes de prote\u00ednas).\n\nO logo cont\u00e9m:\n- O texto **\"CytoNCA\"** em fonte estilizada, com \"Cyto\" em preto e \"NCA\" em azul.\n- Um \u00edcone gr\u00e1fico \u00e0 esquerda, parecendo uma forma abstrata/org\u00e2nica em tons de cinza e azul, possivelmente representando um n\u00f3 de rede ou estrutura molecular estilizada.\n\nO CytoNCA \u00e9 conhecido por ser uma ferramenta usada para calcular medidas de centralidade em redes biol\u00f3gicas (como grau, centralidade de proximidade, centralidade de intermedia\u00e7\u00e3o, etc.), \u00fateis para identificar genes ou prote\u00ednas \"hub\" (mais importantes/conectados) em redes de intera\u00e7\u00e3o.",
+            "truncated": false,
+            "thinking_redacted": false
+          }
+        ],
+        "files": null,
+        "generated_files": null,
+        "artifacts": null
+      },
+      {
+        "id": "claude_chat_msg_011CfFvHrv9x7bkFQoCkjcar",
+        "role": "user",
+        "created_at": "2026-09-21T04:02:36.055960Z",
+        "content": [
+          {
+            "type": "text",
+            "text": "E nesta?",
+            "truncated": false,
+            "thinking_redacted": false
+          }
+        ],
+        "files": [
+          {
+            "id": "claude_file_014QJivnKm6wT3V8AyyqVCPF",
+            "filename": "image30.png",
+            "mime_type": "image/jpeg",
+            "size_bytes": 1483,
+            "md5": "8e59c59a8ded21fc48cb46ab86c7a21c",
+            "created_at": "2026-09-21T04:02:30.482296Z"
+          }
+        ],
+        "generated_files": null,
+        "artifacts": null
+      },
+      {
+        "id": "claude_chat_msg_011CfFvHrvADfoDMJPBRbhCY",
+        "role": "assistant",
+        "created_at": "2026-09-21T04:02:39.253290Z",
+        "content": [
+          {
+            "type": "text",
+            "text": "\u00c9 a mesma imagem que voc\u00ea enviou antes: o logotipo do **CytoNCA**.\n\nEle mostra:\n- O nome **\"CytoNCA\"** escrito com \"Cyto\" em preto e \"NCA\" em azul.\n- Um s\u00edmbolo gr\u00e1fico ao lado esquerdo, com uma forma abstrata em tons de cinza e azul, lembrando um n\u00f3 ou estrutura de rede estilizada.\n\nComo mencionei antes, o CytoNCA \u00e9 um plugin do Cytoscape usado para calcular medidas de centralidade em redes biol\u00f3gicas (grau, proximidade, intermedia\u00e7\u00e3o, etc.), ajudando a identificar genes/prote\u00ednas mais centrais (\"hubs\") em redes de intera\u00e7\u00e3o. Se voc\u00ea tiver uma imagem diferente para enviar, pode subir novamente \u2014 \u00e0s vezes o upload duplica o mesmo arquivo.",
+            "truncated": false,
+            "thinking_redacted": false
+          }
+        ],
+        "files": null,
+        "generated_files": null,
+        "artifacts": null
+      }
+    ],
+    "href": "https://claude.ai/chat/0c57245e-310e-42db-98de-7f3d146cfbe3",
+    "has_more": false,
+    "first_id": "eyJtc2dfdXVpZCI6ICIwMWEwYzIyMS0xOWNhLTcwMWQtYWFjNS1iMDIxNDI0OTczMzYifQ==",
+    "last_id": "eyJtc2dfdXVpZCI6ICIwMWEwYzIyMS00MjgxLTdmZjItYjIwZS00YTI5YmFjYjBiNGQifQ=="
+  }
+}

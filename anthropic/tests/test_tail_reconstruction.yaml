@@ -1,0 +1,16 @@
+# [user, assistant, user] — the predecessor was the opening prompt alone.
+id: the_opening_prompt_is_the_first_tail
+fixture: frame_tool_result
+predecessor_messages: 1
+---
+# [user, assistant, user, assistant, user] — the predecessor ended on the
+# round that fed the run this frame reports.
+id: a_mid_session_round
+fixture: frame_subagent_child
+predecessor_messages: 3
+---
+# Deferred-tool loading: the predecessor's consumed round spanned two user
+# messages, so `before` has to keep both or the key moves.
+id: a_predecessor_whose_round_spanned_two_user_messages
+fixture: frame_mcp_tool
+predecessor_messages: 4

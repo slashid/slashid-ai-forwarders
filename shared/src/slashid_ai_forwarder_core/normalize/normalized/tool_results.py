@@ -190,4 +190,5 @@ def _build_accessed_file(
         media_type=media_type,
         byte_length=byte_length,
         redacted_content=redacted,
+        provenance="tool_result",
     )

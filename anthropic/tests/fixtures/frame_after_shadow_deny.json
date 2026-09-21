@@ -1,0 +1,53 @@
+{
+  "type": "prompt",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "session_id": "00000007-0000-4000-8000-000000000000",
+  "request_id": "msg_011CfFY5o3qw6T9McLDb6Zqm",
+  "model": "claude-opus-5",
+  "actor": {
+    "type": "user",
+    "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+    "email_address": "alice@example.com"
+  },
+  "source": {
+    "application": "claude-code"
+  },
+  "metadata": {},
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<system-reminder>\ninjected client context, 533 chars in the original\n</system-reminder>"
+        },
+        {
+          "type": "text",
+          "text": "<system-reminder>\ninjected client context, 591 chars in the original\n</system-reminder>"
+        },
+        {
+          "type": "text",
+          "text": "SLASHID_DENY_ME — reply with exactly: pong-F1"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "pong-F1"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Now reply with exactly: pong-F2"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Local state + provider cache — populated by ``terraform init``.
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+*.tfvars.json

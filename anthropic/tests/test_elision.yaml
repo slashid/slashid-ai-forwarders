@@ -1,0 +1,36 @@
+# The common case by a mile: 475 of 492 measured frames fit with room to
+# spare, and nothing is copied or rewritten on this path.
+id: a_small_event_is_untouched
+input_chars: 5000
+output_chars: 500
+file_chars: 500
+elided: false
+surviving: [input, output, file]
+---
+# The largest measured transcript was 1.86 MB. Its input goes and nothing
+# else has to.
+id: a_large_transcript_loses_its_input_only
+input_chars: 1500000
+output_chars: 500
+file_chars: 500
+elided: true
+surviving: [output, file]
+---
+# The steps run in size order and stop at the first fit, so the output is
+# only reached when the input alone was not enough — which needs an output
+# that still breaks the bound on its own.
+id: a_large_answer_too_and_the_output_follows
+input_chars: 1200000
+output_chars: 1200000
+file_chars: 500
+elided: true
+surviving: [file]
+---
+# Three oversized fields: everything raw goes and the event is still a
+# writable record of the invocation, hashes intact.
+id: everything_raw_goes_before_the_write_fails
+input_chars: 1200000
+output_chars: 1200000
+file_chars: 1200000
+elided: true
+surviving: []

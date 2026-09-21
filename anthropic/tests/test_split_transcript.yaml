@@ -1,0 +1,79 @@
+# No assistant message at all: the whole transcript is fresh, and there is
+# no previous run for a record to name.
+id: first_turn_is_all_fresh
+fixture: frame_first_turn
+take: null
+append: []
+before: 0
+assistant_run: 0
+fresh: 1
+---
+id: prompt_answer_result
+fixture: frame_tool_result
+take: null
+append: []
+before: 1
+assistant_run: 1
+fresh: 1
+---
+id: five_messages_take_only_the_last_assistant_run
+fixture: frame_subagent_child
+take: null
+append: []
+before: 3
+assistant_run: 1
+fresh: 1
+---
+# Deferred-tool loading: a tool_result message, then a separate "Tool loaded."
+# user message, one round for the invocation this frame feeds. Truncated to
+# the first four messages, which is exactly the frame that round produced.
+id: a_fresh_round_can_span_two_user_messages
+fixture: frame_mcp_tool
+take: 4
+append: []
+before: 1
+assistant_run: 1
+fresh: 2
+---
+# The same two user messages, one round later: they sit in `before` now, and
+# they are the round the record this frame emits is attributed to.
+id: the_same_two_user_messages_fall_into_before
+fixture: frame_mcp_tool
+take: null
+append: []
+before: 4
+assistant_run: 1
+fresh: 1
+---
+id: consecutive_assistant_messages_are_one_run
+fixture: frame_first_turn
+take: null
+append:
+  - {role: assistant, content: [{type: text, text: first}]}
+  - {role: assistant, content: [{type: text, text: second}]}
+  - {role: user, content: [{type: text, text: go on}]}
+before: 1
+assistant_run: 2
+fresh: 1
+---
+# Shadow mode let the denied request run, so the assistant answered and the
+# transcript is ordinary. No special case is needed for it.
+id: a_shadow_denial_looks_like_any_other_turn
+fixture: frame_after_shadow_deny
+take: null
+append: []
+before: 1
+assistant_run: 1
+fresh: 1
+---
+# Under enforcement the denial prevents the assistant turn, so the next
+# delivery shows two consecutive user-role runs and a two-message fresh
+# round that keeps re-including the offending content.
+id: an_enforced_denial_leaves_two_user_runs
+fixture: frame_after_shadow_deny
+take: null
+append:
+  - {role: user, content: [{type: text, text: "and now: pong-F3"}]}
+before: 1
+assistant_run: 1
+fresh: 2

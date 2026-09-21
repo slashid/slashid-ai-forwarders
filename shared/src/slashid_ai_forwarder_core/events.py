@@ -221,8 +221,25 @@ class GCPIdentityDetails(_WireModel):
     credential_chain: list[GCPCredential] | None = None
 
 
+class AnthropicIdentityDetails(_WireModel):
+    """Anthropic-source shape of ``AIInvocationObservedV1.identity_details``.
+
+    The Inference hooks frame names the acting principal as ``actor.id``,
+    a ``user_01…`` identifier stable across requests; the compliance
+    denial activity names the same principal as ``actor.user_id``.
+
+    Required, not optional: the server's resolver rejects a payload with
+    no identifier, so a frame whose actor id is null is dropped by the
+    envelope constructor rather than turned into an unusable event.
+    ``kind`` is a client-side discriminator; the server ignores it.
+    """
+
+    kind: Literal["anthropic"] = "anthropic"
+    user_id: str
+
+
 IdentityDetails = Annotated[
-    AWSIdentityDetails | GCPIdentityDetails,
+    AWSIdentityDetails | GCPIdentityDetails | AnthropicIdentityDetails,
     Field(discriminator="kind"),
 ]
 
@@ -265,6 +282,13 @@ class AIAccessedFile(_WireModel):
     media_type: str | None = None
     byte_length: int | None = None
     redacted_content: str | None = None
+    # How the file entered the conversation. A compliance reader rebuilds
+    # ``attachment`` entries from the provider's own listing and must never
+    # touch ``tool_result`` ones, which a flat list cannot express.
+    # ``generated`` is reserved for files a tool wrote and is not emitted:
+    # nothing produces it yet, and advertising an unset value is worse than
+    # adding the member later.
+    provenance: Literal["tool_result", "attachment"] | None = None
 
 
 class AIInvocationObservedV1(_WireModel):
@@ -334,6 +358,11 @@ class EventEnvelope(_WireModel):
     # request, not the principal — and it's cross-cloud, whereas the
     # identity shapes are vendor-specific.
     user_agent: str | None = None
+    # The vendor's own identifier for the multi-turn conversation this
+    # invocation belongs to. Set by sources that have one; Bedrock and
+    # Vertex leave it unset. It is what groups a denial incident, since
+    # one sticky denial produces an event per subsequent turn.
+    conversation_id: str | None = None
     # True when the vendor recorded a server-side error for the request
     # (non-zero gRPC status on Cloud Audit Logs, non-2xx HTTP status on
     # BQ payload rows, ``error`` set on Bedrock/Converse). When True the
@@ -547,6 +576,7 @@ async def build_event_from_normalized(
         tokens=envelope.tokens,
         parsed_as=envelope.parsed_as,
         user_agent=envelope.user_agent,
+        conversation_id=envelope.conversation_id,
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
@@ -596,5 +626,6 @@ def build_sparse_event(
         tokens=envelope.tokens,
         parsed_as=envelope.parsed_as,
         user_agent=envelope.user_agent,
+        conversation_id=envelope.conversation_id,
         stop_reason="error" if envelope.is_error else None,
     )
