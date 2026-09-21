@@ -1735,6 +1735,11 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pyyaml" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
@@ -1745,6 +1750,9 @@ requires-dist = [
     { name = "slashid-ai-forwarder-core", editable = "shared" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "slashid-bedrock-forwarder"
