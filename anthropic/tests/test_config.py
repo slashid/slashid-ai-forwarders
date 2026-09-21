@@ -125,3 +125,30 @@ def test_mock_denied_hashes_parse_like_the_signing_secrets(
     tool that prints uppercase still matches ours."""
     _env(monkeypatch, SLASHID_MOCK_DENIED_HASHES=" ABC123 , ,def456 ")
     assert Config().denied_hashes == ("abc123", "def456")
+
+
+def test_the_tick_interval_has_the_designed_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declared as a number because the startup assertion has to compare it
+    against the tombstone TTL, and a cron string will not do."""
+    _env(monkeypatch)
+    assert Config().tick_interval_seconds == 300
+
+
+def test_empty_strings_from_terraform_mean_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The module always sets every env var it manages, ``""`` for the ones a
+    deployment leaves out. An empty compliance key must not switch the
+    readers on."""
+    _env(
+        monkeypatch,
+        SLASHID_POLICY_URL="",
+        SLASHID_COMPLIANCE_KEY="",
+        SLASHID_ORGANIZATION_UUID="",
+        SLASHID_CAPTURE_BUCKET="",
+        SLASHID_CAPTURE_DENY_MARKER="",
+    )
+    cfg = Config()
+    assert cfg.policy_url is None
+    assert cfg.compliance_key is None
+    assert cfg.organization_uuid is None
+    assert cfg.capture_bucket is None
+    assert cfg.capture_deny_marker is None

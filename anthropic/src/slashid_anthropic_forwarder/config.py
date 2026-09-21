@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import cache
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from slashid_ai_forwarder_core.config_base import BaseConfig
 
 
@@ -116,6 +116,11 @@ class Config(BaseConfig):
     # and the service account still authorize, and Cloud Run enforces the
     # audience itself wherever the service is not public.
     tick_audience: str | None = None
+    # The Cloud Scheduler cadence, declared here as a number: the cron
+    # string in Terraform is not something this process can compare
+    # against ``tombstone_ttl_seconds``. The module derives the cron from
+    # it, so this is the input and the cron is the derivation.
+    tick_interval_seconds: int = 300
 
     # Hex digests that deny. Exists because on a fresh deployment nothing
     # else can: preflight is off until that endpoint ships and POLICY_URL
@@ -128,6 +133,23 @@ class Config(BaseConfig):
     # tripped by anyone who merely quotes it, which has wedged a working
     # session before now. Test tenants only.
     mock_denied_hashes: str = ""
+
+    @field_validator(
+        "policy_url",
+        "compliance_key",
+        "organization_uuid",
+        "capture_bucket",
+        "capture_deny_marker",
+        mode="before",
+    )
+    @classmethod
+    def _empty_is_none(cls, v: object) -> object:
+        # Terraform sets every env var it manages, ``""`` where a
+        # deployment left it out, and pydantic-settings does not treat
+        # ``""`` as unset. ``capture_bucket`` and ``capture_deny_marker``
+        # are not module variables — they are here because a hand-edited
+        # revision can leave them empty just as easily.
+        return v or None
 
     @property
     def denied_hashes(self) -> tuple[str, ...]:
