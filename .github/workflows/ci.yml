@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        subproject: [shared, bedrock, vertex]
+        subproject: [shared, bedrock, vertex, anthropic]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +21,11 @@ jobs:
           enable-cache: true
 
       - name: Sync workspace
-        # Workspace-wide sync so bedrock can resolve its shared dep.
-        run: uv sync --all-groups
+        # Workspace-wide sync so each member can resolve its shared dep.
+        # --locked: a plain sync silently rewrites a stale uv.lock, and
+        # the anthropic Dockerfile runs ``uv sync --frozen``, so a stale
+        # lock would fail the release build instead of this job.
+        run: uv sync --all-groups --locked
 
       - name: Ruff (lint)
         working-directory: ${{ matrix.subproject }}
@@ -42,6 +45,13 @@ jobs:
 
   terraform:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [vertex/deploy/terraform, anthropic/deploy/terraform]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,12 +62,9 @@ jobs:
 
       - name: Terraform fmt (recursive)
         run: terraform fmt -check -recursive
-        working-directory: vertex/deploy/terraform
 
       - name: Terraform init (no backend)
         run: terraform init -backend=false
-        working-directory: vertex/deploy/terraform
 
       - name: Terraform validate
         run: terraform validate
-        working-directory: vertex/deploy/terraform

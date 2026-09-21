@@ -1,0 +1,66 @@
+name: Release Anthropic
+
+on:
+  push:
+    tags: ["anthropic-v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve and verify version
+        # The tag triggers the release; anthropic/pyproject.toml is the
+        # source of truth for the number. Refuse on mismatch so a
+        # fat-fingered tag cannot ship a wrong-numbered image.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#anthropic-v}"
+          FILE_VERSION="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("anthropic/pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME expects version $TAG_VERSION but anthropic/pyproject.toml has $FILE_VERSION"
+            exit 1
+          fi
+          echo "VERSION=$FILE_VERSION" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          if [[ "${VERSION}" == *-* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/build-push-action@v6
+        with:
+          # The build context is the repository root: the image needs
+          # both shared/ and anthropic/ from the uv workspace.
+          context: .
+          file: anthropic/Dockerfile
+          push: true
+          # One immutable tag per release. Terraform pins by version, so
+          # no floating tag exists for a pre-release to move under a
+          # customer.
+          tags: ghcr.io/slashid/slashid-anthropic-forwarder:${{ env.VERSION }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          body: |
+            Image: `ghcr.io/slashid/slashid-anthropic-forwarder:${{ env.VERSION }}`
+
+            Terraform: `source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=${{ github.ref_name }}"`
