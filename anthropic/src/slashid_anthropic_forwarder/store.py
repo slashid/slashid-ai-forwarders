@@ -22,10 +22,11 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
-from google.api_core.exceptions import AlreadyExists
+from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
+from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.transforms import ArrayRemove, ArrayUnion
 
-from .record import Append, PendingRecord
+from .record import Append, PendingRecord, from_document
 
 
 class Seen(StrEnum):
@@ -128,11 +129,17 @@ class FirestorePendingStore:
         collection: str,
         join_wait: timedelta,
         retry_backoff: timedelta = timedelta(seconds=60),
+        # How long a tombstone suppresses a late reader's duplicate. It must
+        # exceed JOIN_WAIT + POLL_LAG + one tick; the startup assertion that
+        # enforces the inequality lands with the tick cadence in the deploy
+        # chunk, and the default matches SLASHID_TOMBSTONE_TTL_SECONDS.
+        tombstone_ttl: timedelta = timedelta(hours=2),
     ) -> None:
         self._client = client
         self._collection = client.collection(collection)
         self._join_wait = join_wait
         self._retry_backoff = retry_backoff
+        self._tombstone_ttl = tombstone_ttl
 
     def _ref(self, address: str) -> Any:
         return self._collection.document(address)
@@ -204,6 +211,117 @@ class FirestorePendingStore:
         await self._ref(address).set(merge, merge=True)
         after = (await self._ref(address).get()).to_dict() or {}
         return Outcome(stored=True, ready=not after.get("awaiting"))
+
+    async def claim(
+        self,
+        address: str,
+        lease: timedelta,
+        *,
+        owner: str,
+        now: datetime | None = None,
+    ) -> PendingRecord | None:
+        """Take the exclusive right to push, and return the record as it is.
+
+        Compare-and-set on the snapshot's ``update_time``: any write between
+        the read and the claim — another claimer, or a completer merging
+        digests — invalidates the precondition and this caller backs off.
+        Readiness is deliberately not checked here: the deadline sweep
+        claims records that will never become ready, and flushing emits
+        whatever the record holds.
+        """
+        now = now or datetime.now(UTC)
+        snapshot = await self._ref(address).get()
+        if not snapshot.exists:
+            return None
+        data = snapshot.to_dict() or {}
+        if data.get("tombstoned_at") is not None:
+            return None
+        held = data.get("claim_expires_at")
+        if held is not None and held > now:
+            return None
+        expires = now + lease
+        try:
+            await self._ref(address).update(
+                {
+                    "claim_owner": owner,
+                    "claim_expires_at": expires,
+                    # The lease IS the next-attempt time: a crash before
+                    # `retire` leaves the record collectable at `expires`
+                    # rather than orphaned.
+                    "next_attempt_at": expires,
+                },
+                option=self._client.write_option(last_update_time=snapshot.update_time),
+            )
+        except (FailedPrecondition, NotFound):
+            return None
+        return from_document(
+            address,
+            {
+                **data,
+                "claim_owner": owner,
+                "claim_expires_at": expires,
+                "next_attempt_at": expires,
+            },
+        )
+
+    async def due(self, now: datetime, limit: int) -> list[PendingRecord]:
+        """Live records ready for a pusher, oldest first, bounded.
+
+        One inequality, because ``next_attempt_at`` already folds in the
+        lease and the backoff. The composite index this needs is
+        ``tombstoned_at`` ASC, ``next_attempt_at`` ASC; the Terraform
+        provisions it.
+        """
+        query = (
+            self._collection.where(filter=FieldFilter("tombstoned_at", "==", None))
+            .where(filter=FieldFilter("next_attempt_at", "<=", now))
+            .order_by("next_attempt_at")
+            .limit(limit)
+        )
+        return [
+            from_document(snapshot.id, snapshot.to_dict() or {})
+            async for snapshot in query.stream()
+        ]
+
+    async def retire(
+        self, address: str, outcome: Retirement | str, *, now: datetime | None = None
+    ) -> None:
+        """Close a record out. ``FAILED`` is the only outcome that keeps it
+        alive, and it releases the lease so a later tick can collect it."""
+        now = now or datetime.now(UTC)
+        if Retirement(outcome) is not Retirement.FAILED:
+            # Push, then retire: a crash between them re-pushes an event the
+            # terminal dedups, where the reverse order loses it outright.
+            #
+            # ``tombstone_expires_at`` is what the TTL policy keys on, and it
+            # holds the expiry instant rather than the moment of tombstoning:
+            # Firestore deletes once the nominated field is in the past, so a
+            # policy pointed at ``tombstoned_at`` would collect every
+            # tombstone as it was written. No live record carries the field,
+            # so the policy cannot reach one.
+            await self._ref(address).set(
+                {
+                    "tombstoned_at": now,
+                    "tombstone_expires_at": now + self._tombstone_ttl,
+                    "claim_owner": None,
+                    "claim_expires_at": None,
+                },
+                merge=True,
+            )
+            return
+        snapshot = await self._ref(address).get()
+        if not snapshot.exists:
+            return
+        attempts = int((snapshot.to_dict() or {}).get("attempts") or 0) + 1
+        await self._ref(address).set(
+            {
+                "attempts": attempts,
+                "claim_owner": None,
+                "claim_expires_at": None,
+                "next_attempt_at": now + self._retry_backoff * attempts,
+            },
+            merge=True,
+        )
 
     async def seen(self, address: str) -> Seen:
         snapshot = await self._ref(address).get()
