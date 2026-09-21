@@ -113,6 +113,19 @@ class PendingStore(Protocol):
         expired, oldest first, bounded."""
         ...
 
+    async def nearby(
+        self,
+        conversation_id: str,
+        *,
+        at: datetime,
+        window: timedelta,
+        limit: int = 25,
+    ) -> list[PendingRecord]:
+        """Live records of one conversation whose event timestamp is within
+        ``window`` of ``at``. The soft join's candidate set, and the only
+        read here that is not keyed on an address."""
+        ...
+
     async def retire(
         self, address: str, outcome: Retirement | str, *, now: datetime | None = None
     ) -> None: ...
@@ -284,6 +297,37 @@ class FirestorePendingStore:
             async for snapshot in query.stream()
         ]
 
+    async def nearby(
+        self,
+        conversation_id: str,
+        *,
+        at: datetime,
+        window: timedelta,
+        limit: int = 25,
+    ) -> list[PendingRecord]:
+        """Two equality filters and no ordering, which Firestore serves
+        from the single-field indexes it maintains by itself.
+
+        The time bound is applied here rather than in the query:
+        ``event.timestamp`` is the wire string, and the two sources spell
+        one instant differently (``+00:00`` against ``Z``), so it does not
+        compare lexicographically. ``limit`` bounds the read; a
+        conversation holding more simultaneously-live records than that is
+        one whose count is ambiguous anyway.
+        """
+        query = (
+            self._collection.where(filter=FieldFilter("tombstoned_at", "==", None))
+            .where(filter=FieldFilter("event.conversation_id", "==", conversation_id))
+            .limit(limit)
+        )
+        out: list[PendingRecord] = []
+        async for snapshot in query.stream():
+            record = from_document(snapshot.id, snapshot.to_dict() or {})
+            when = _event_time(record)
+            if when is not None and abs(when - at) <= window:
+                out.append(record)
+        return out
+
     async def retire(
         self, address: str, outcome: Retirement | str, *, now: datetime | None = None
     ) -> None:
@@ -387,6 +431,18 @@ class TickLease:
                 {"tick_expires_at": None},
                 option=self._client.write_option(last_update_time=snapshot.update_time),
             )
+
+
+def _event_time(record: PendingRecord) -> datetime | None:
+    """The stored event's timestamp, which is a wire string."""
+    raw = record.event.get("timestamp")
+    if not isinstance(raw, str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _transforms(fields: dict[str, Any]) -> dict[str, Any]:

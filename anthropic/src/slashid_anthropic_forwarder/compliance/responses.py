@@ -67,7 +67,14 @@ from ..record import COMPLIANCE, FILE_DIGESTS, PARSED_AS_COMPLIANCE, Append, eve
 from ..store import PendingStore, Seen
 from .attachments import files_from_listing, listed_files
 from .checkpoint import CHATS, SESSIONS, Cursors
-from .client import ComplianceClient, chat_session_id, decode_session_id, provenance_type
+from .client import (
+    ComplianceClient,
+    chat_session_id,
+    created_at,
+    decode_session_id,
+    provenance_type,
+)
+from .softjoin import DigestTarget, SoftMatch, soft_join
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +100,11 @@ class ResponseCounters:
     skipped_other_org: int = 0
     from_chats: int = 0
     dropped_no_identity: int = 0
+    # The soft join's own tally, kept apart from `enriched`: one is a
+    # match on an id both sources minted, the other on a conversation and
+    # a clock.
+    soft_enriched: int = 0
+    soft_abstained: int = 0
     models: dict[str, str] = field(default_factory=dict)
 
 
@@ -241,6 +253,11 @@ async def read_responses(
             counters=counters,
         )
         counters.from_chats += (counters.emitted + counters.enriched) - before
+        for match in await soft_join_uploads(chat, client=client, store=store, config=config):
+            if match is SoftMatch.ENRICHED:
+                counters.soft_enriched += 1
+            else:
+                counters.soft_abstained += 1
     cursors.advance(CHATS, timestamp=now - lag, drained=True)
     return counters
 
@@ -308,6 +325,56 @@ async def _walk(
         # No expectations, so the record is born ready: this pushes it and
         # the retire inside leaves the tombstone the next tick honours.
         await push_if_ready(address, outcome, store=store, config=config, client=http)
+
+
+async def soft_join_uploads(
+    chat: Mapping[str, Any],
+    *,
+    client: ComplianceClient,
+    store: DigestTarget,
+    config: Config,
+) -> list[SoftMatch]:
+    """Soft-join every upload in this chat the hard path cannot reach.
+
+    Chats only: a local-session message carries no ``files[]``, so there
+    is nothing there to join softly. ``store`` is typed as the two-method
+    target rather than as the store, so this walk cannot emit either.
+    """
+    window = timedelta(seconds=config.soft_join_window_seconds)
+    conversation = chat_session_id(chat) or ""
+    messages = list(chat.get("chat_messages") or [])
+    out: list[SoftMatch] = []
+    for i, message in enumerate(messages):
+        entries = listed_files(message)
+        at = created_at(message)
+        if not entries or at is None or _hard_covered(messages, i):
+            continue
+        digests = await files_from_listing(client, entries, config=config)
+        out.append(
+            await soft_join(
+                store,
+                conversation_id=conversation,
+                at=at,
+                digests=[d.model_dump(mode="json", exclude_none=True) for d in digests],
+                window=window,
+            )
+        )
+    return out
+
+
+def _hard_covered(messages: Sequence[Mapping[str, Any]], index: int) -> bool:
+    """Has an addressable run already claimed this message's uploads?
+
+    ``_walk`` attributes a round's files to the run that answered it, so
+    the answer is whether the next assistant turn has an address. No tool
+    test: this asks ``joinable_address``, like everything else, and the
+    branch empties itself the day a common id ships.
+    """
+    for message in messages[index + 1 :]:
+        if message.get("role") != "assistant":
+            continue
+        return joinable_address(to_anthropic([message])) is not None
+    return False
 
 
 async def _digests(

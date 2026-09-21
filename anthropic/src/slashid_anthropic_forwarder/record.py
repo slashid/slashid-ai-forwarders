@@ -38,6 +38,10 @@ ELISION = "[slashid: elided — the pending record exceeded 1 MiB]"
 # not the same as which visited.
 HOOK = "hook"
 COMPLIANCE = "compliance"
+# A soft match — the same source, and worth telling apart in the stored
+# record: these digests were matched on a conversation and a clock rather
+# than on an id both sources minted.
+COMPLIANCE_SOFT = "compliance-soft"
 
 # The two members the expectation set can hold, both cleared by a reader.
 # A frame-built record is complete on arrival except for attachment byte
@@ -146,7 +150,7 @@ def parsed_as(contributed: list[str]) -> str:
     sources = set(contributed)
     if len(sources) > 1:
         return PARSED_AS_JOINED
-    if sources == {COMPLIANCE}:
+    if sources and sources <= {COMPLIANCE, COMPLIANCE_SOFT}:
         return PARSED_AS_COMPLIANCE
     return PARSED_AS_HOOK
 

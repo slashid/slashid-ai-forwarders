@@ -127,11 +127,22 @@ class FakeQuery:
             if path.startswith(prefix)
         ]
         for field_path, op, value in self._predicates:
-            rows = [row for row in rows if _matches(row[1].get(field_path), op, value)]
+            rows = [row for row in rows if _matches(_field_value(row[1], field_path), op, value)]
         if self._order:
             rows.sort(key=lambda row: row[1][self._order])
         for row in rows[: self._bound] if self._bound else rows:
             yield FakeSnapshot(row[0], row[1], row[2])
+
+
+def _field_value(data: dict[str, Any], path: str) -> Any:
+    """``event.conversation_id`` the way Firestore reads it: a dotted path
+    walks into nested maps rather than naming a key with dots in it."""
+    value: Any = data
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(part)
+    return value
 
 
 def _matches(actual: Any, op: Any, value: Any) -> bool:
