@@ -282,6 +282,13 @@ class AIAccessedFile(_WireModel):
     media_type: str | None = None
     byte_length: int | None = None
     redacted_content: str | None = None
+    # How the file entered the conversation. A compliance reader rebuilds
+    # ``attachment`` entries from the provider's own listing and must never
+    # touch ``tool_result`` ones, which a flat list cannot express.
+    # ``generated`` is reserved for files a tool wrote and is not emitted:
+    # nothing produces it yet, and advertising an unset value is worse than
+    # adding the member later.
+    provenance: Literal["tool_result", "attachment"] | None = None
 
 
 class AIInvocationObservedV1(_WireModel):

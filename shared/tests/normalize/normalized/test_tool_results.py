@@ -32,6 +32,7 @@ def test_extract_tool_result_files(
     out = extract_tool_result_files(messages, config=_config())
     assert len(out) == len(expected)
     for got, want in zip(out, expected, strict=True):
+        assert got.provenance == "tool_result"
         assert got.name == want.name
         assert got.byte_length == want.byte_length
         assert got.media_type == want.media_type
