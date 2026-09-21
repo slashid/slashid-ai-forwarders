@@ -1328,3 +1328,49 @@ def test_aws_identity_mfa_authenticated_is_tristate_placeholder() -> None:
         mfa_authenticated=False,
     )
     assert observed_false.model_dump(mode="json", exclude_none=True)["mfa_authenticated"] is False
+
+
+def test_anthropic_identity_details_round_trips_through_the_union() -> None:
+    from slashid_ai_forwarder_core.events import AnthropicIdentityDetails
+
+    event = AIInvocationObservedV1.model_validate(
+        {
+            "request_id": "r",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "identity_details": {"kind": "anthropic", "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv"},
+            "model": {"id": "claude-sonnet-5"},
+            "parsed_as": "anthropic-inference-hook",
+        }
+    )
+    assert isinstance(event.identity_details, AnthropicIdentityDetails)
+    assert event.identity_details.user_id == "user_01AbCdEfGhIjKlMnOpQrStUv"
+    assert event.model_dump(exclude_none=True)["identity_details"] == {
+        "kind": "anthropic",
+        "user_id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+    }
+
+
+def test_anthropic_identity_details_requires_a_user_id() -> None:
+    """A null ``actor.id`` must drop the event upstream — the server rejects
+    an identity with no identifier, so the model refuses to build one."""
+    from pydantic import ValidationError
+
+    from slashid_ai_forwarder_core.events import AnthropicIdentityDetails
+
+    with pytest.raises(ValidationError):
+        AnthropicIdentityDetails.model_validate({"kind": "anthropic"})
+
+
+def test_anthropic_identity_details_on_the_envelope() -> None:
+    """EventEnvelope shares the union, so the receiver's envelope
+    constructor populates it the same way bedrock/vertex do theirs."""
+    from slashid_ai_forwarder_core.events import AnthropicIdentityDetails
+
+    env = EventEnvelope(
+        request_id="r",
+        timestamp="2026-09-18T00:00:00Z",
+        identity_details=AnthropicIdentityDetails(user_id="user_01Abc"),
+        model=AIModel(id="claude-sonnet-5"),
+        parsed_as="anthropic-inference-hook",
+    )
+    assert env.identity_details.kind == "anthropic"

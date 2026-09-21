@@ -221,8 +221,25 @@ class GCPIdentityDetails(_WireModel):
     credential_chain: list[GCPCredential] | None = None
 
 
+class AnthropicIdentityDetails(_WireModel):
+    """Anthropic-source shape of ``AIInvocationObservedV1.identity_details``.
+
+    The Inference hooks frame names the acting principal as ``actor.id``,
+    a ``user_01…`` identifier stable across requests; the compliance
+    denial activity names the same principal as ``actor.user_id``.
+
+    Required, not optional: the server's resolver rejects a payload with
+    no identifier, so a frame whose actor id is null is dropped by the
+    envelope constructor rather than turned into an unusable event.
+    ``kind`` is a client-side discriminator; the server ignores it.
+    """
+
+    kind: Literal["anthropic"] = "anthropic"
+    user_id: str
+
+
 IdentityDetails = Annotated[
-    AWSIdentityDetails | GCPIdentityDetails,
+    AWSIdentityDetails | GCPIdentityDetails | AnthropicIdentityDetails,
     Field(discriminator="kind"),
 ]
 
