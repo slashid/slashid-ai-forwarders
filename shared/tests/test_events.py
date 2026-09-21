@@ -1350,15 +1350,35 @@ def test_anthropic_identity_details_round_trips_through_the_union() -> None:
     }
 
 
-def test_anthropic_identity_details_requires_a_user_id() -> None:
-    """A null ``actor.id`` must drop the event upstream — the server rejects
-    an identity with no identifier, so the model refuses to build one."""
+def test_anthropic_identity_details_requires_at_least_one_identifier() -> None:
+    """Every identifier is optional on its own, because no single producer
+    observes all of them — a hook inside the Claude application knows the
+    acting user, an inline proxy knows only the key presented. But a payload
+    naming nobody is rejected: there is nothing to resolve and nothing to
+    meter, and the server rejects it too."""
     from pydantic import ValidationError
 
     from slashid_ai_forwarder_core.events import AnthropicIdentityDetails
 
     with pytest.raises(ValidationError):
         AnthropicIdentityDetails.model_validate({"kind": "anthropic"})
+
+
+def test_anthropic_identity_details_accept_any_single_identifier() -> None:
+    """A request authenticates as one principal, so several names for it is
+    a producer that knows the same actor more than one way, not ambiguity."""
+    from slashid_ai_forwarder_core.events import AnthropicIdentityDetails
+
+    for field, value in (
+        ("service_account_id", "svac_1"),
+        ("user_id", "user_01A"),
+        ("api_key_id", "apikey_1"),
+        ("api_key_hash", "a" * 64),
+    ):
+        got = AnthropicIdentityDetails.model_validate({"kind": "anthropic", field: value})
+        assert getattr(got, field) == value
+    both = AnthropicIdentityDetails(service_account_id="svac_1", user_id="user_01A")
+    assert both.service_account_id == "svac_1" and both.user_id == "user_01A"
 
 
 def test_anthropic_identity_details_on_the_envelope() -> None:
