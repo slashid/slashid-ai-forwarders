@@ -21,7 +21,6 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
 import httpx
 from slashid_ai_forwarder_core.events import (
@@ -42,7 +41,8 @@ from ..record import (
 )
 from ..store import PendingStore, Seen
 from .checkpoint import Cursors
-from .client import DENIED_ACTIVITY, ComplianceClient, created_at
+from .client import DENIED_ACTIVITY, ComplianceClient
+from .schema import Activity
 
 log = logging.getLogger(__name__)
 
@@ -75,18 +75,17 @@ async def read_denials(
     newest = start
     last_id: str | None = None
     async for activity in client.iter_activities(since=start):
-        created = created_at(activity)
-        if created:
-            newest = max(newest, created)
-        last_id = activity.get("id") or last_id
-        if activity.get("type") != DENIED_ACTIVITY:
+        if activity.at:
+            newest = max(newest, activity.at)
+        last_id = activity.id or last_id
+        if activity.type != DENIED_ACTIVITY:
             # Our own reads land here as `compliance_api_accessed` — 48 of
             # 68 rows in the measured window — alongside eight other types
             # in the recorded one. Filtering by type keeps them all out
             # without the reader needing to know its own api_key_id.
             counters.skipped_not_a_denial += 1
             continue
-        if activity.get("organization_uuid") != config.organization_uuid:
+        if activity.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
         await _handle(
@@ -103,7 +102,7 @@ async def read_denials(
 
 
 async def _handle(
-    activity: Mapping[str, Any],
+    activity: Activity,
     *,
     store: PendingStore,
     config: Config,
@@ -111,8 +110,8 @@ async def _handle(
     models: Mapping[str, str],
     counters: DenialCounters,
 ) -> None:
-    request_id = activity.get("request_id")
-    if not isinstance(request_id, str):
+    request_id = activity.request_id
+    if not request_id:
         return
     counters.handled += 1
     address = deny_address(request_id)
@@ -120,7 +119,6 @@ async def _handle(
     if state is Seen.TOMBSTONED:
         counters.tombstoned += 1
         return
-    actor = activity.get("actor") or {}
     if state is Seen.LIVE:
         # The record already holds the content. This stamps what the feed
         # alone attests — that the block actually happened — and the agent
@@ -138,7 +136,7 @@ async def _handle(
             {
                 "event": {
                     "stop_reason": "guardrail_intervened",
-                    "user_agent": actor.get("user_agent"),
+                    "user_agent": activity.actor.user_agent,
                 },
                 "contributed": Append((COMPLIANCE,)),
             },
@@ -147,12 +145,12 @@ async def _handle(
         counters.completed += 1
         await push_if_ready(address, outcome, store=store, config=config, client=http)
         return
-    user_id = actor.get("user_id")
-    if not isinstance(user_id, str) or not user_id:
+    user_id = activity.actor.user_id
+    if not user_id:
         # The server rejects an Anthropic identity with no identifier.
         counters.dropped_no_identity += 1
         return
-    event = _standalone(activity, user_id=user_id, models=models)
+    event = _standalone(activity, request_id=request_id, user_id=user_id, models=models)
     # A real delivery id, so `webhook_ids` gets one: this is the same
     # `webhook-id` the hook would have filed, and a later frame revealing
     # the same delivery should land in the same list.
@@ -168,7 +166,7 @@ async def _handle(
 
 
 def _standalone(
-    activity: Mapping[str, Any], *, user_id: str, models: Mapping[str, str]
+    activity: Activity, *, request_id: str, user_id: str, models: Mapping[str, str]
 ) -> AIInvocationObservedV1:
     """The event when the hook never recorded this delivery.
 
@@ -176,12 +174,11 @@ def _standalone(
     gone, so the activity is the whole record: who, which conversation,
     which client, and that it was blocked.
     """
-    actor = activity.get("actor") or {}
-    conversation_id = activity.get("conversation_id")
+    conversation_id = activity.conversation_id
     model = models.get(conversation_id or "", "unknown")
     return AIInvocationObservedV1(
-        request_id=activity["request_id"],
-        timestamp=activity["created_at"],
+        request_id=request_id,
+        timestamp=activity.created_at or "",
         identity_details=AnthropicIdentityDetails(user_id=user_id),
         model=AIModel(
             id=model,
@@ -192,6 +189,6 @@ def _standalone(
         # validates here, where a mistake is cheap to see.
         parsed_as=PARSED_AS_COMPLIANCE,
         stop_reason="guardrail_intervened",
-        user_agent=actor.get("user_agent") or activity.get("surface"),
+        user_agent=activity.actor.user_agent or activity.surface,
         conversation_id=conversation_id,
     )

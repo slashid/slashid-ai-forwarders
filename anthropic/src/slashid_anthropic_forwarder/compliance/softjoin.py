@@ -28,10 +28,12 @@ writes to the address a candidate already had.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
+
+from slashid_ai_forwarder_core.events import AIAccessedFile
 
 from ..record import COMPLIANCE_SOFT, Append, PendingRecord
 from ..store import Outcome
@@ -79,10 +81,14 @@ async def soft_join(
     *,
     conversation_id: str,
     at: datetime,
-    digests: Sequence[Mapping[str, Any]],
+    digests: Sequence[AIAccessedFile],
     window: timedelta,
 ) -> SoftMatch:
     """Deliver ``digests`` to the one record they can only belong to.
+
+    The digests arrive as ``AIAccessedFile`` and are serialized here, at
+    the one place that writes them: ``record.py`` holds a record's fields
+    as a mapping on purpose, and that seam belongs on this side of it.
 
     Nothing is cleared: the expectation set is the hard join's business,
     and a record waiting on ``file_digests`` has an address the reader
@@ -104,7 +110,7 @@ async def soft_join(
     await target.complete(
         candidates[0].address,
         {
-            "file_digests": [dict(d) for d in digests],
+            "file_digests": [d.model_dump(mode="json", exclude_none=True) for d in digests],
             # Its own value, not COMPLIANCE: the record then says which
             # kind of join supplied these hashes, which is the one thing
             # a reviewer needs in order to weigh them.

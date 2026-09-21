@@ -35,6 +35,10 @@ transcript answer ``{data, next_page, …}``, and a **chat** transcript
 answers the chat object itself, whose turns sit under ``chat_messages``
 and whose ``model`` no message repeats.
 
+Every response is parsed here and nowhere else: a reader receives
+``compliance.schema`` models, never a mapping, and a row that will not
+parse is dropped with a log line rather than taking the tick down.
+
 This client does not own its ``httpx.AsyncClient``: the tick shares one
 with the push path, and every header here is per request.
 """
@@ -45,12 +49,23 @@ import base64
 import binascii
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import httpx
+
+from .schema import (
+    Activity,
+    Chat,
+    ChatMessage,
+    CursorPage,
+    SessionListing,
+    SessionMessage,
+    SessionTranscript,
+    TokenPage,
+)
 
 log = logging.getLogger(__name__)
 
@@ -100,22 +115,8 @@ class Drain:
     the busiest tenants and immediately after an outage.
     """
 
-    sessions: list[dict[str, Any]]
+    sessions: list[SessionListing]
     complete: bool
-
-
-def provenance_type(message: Mapping[str, Any]) -> str | None:
-    """The ``type`` inside a message's ``provenance`` object, or None.
-
-    ``None`` is the common answer and the meaningful one: in the recorded
-    transcripts a newly-produced turn carries ``"provenance": null`` and a
-    replayed or synthetic one carries an object.
-    """
-    provenance = message.get("provenance")
-    if isinstance(provenance, Mapping):
-        kind = provenance.get("type")
-        return kind if isinstance(kind, str) else None
-    return None
 
 
 def decode_session_id(session_id: str) -> str | None:
@@ -139,7 +140,7 @@ def decode_session_id(session_id: str) -> str | None:
     return session if isinstance(session, str) else None
 
 
-def chat_session_id(chat: Mapping[str, Any]) -> str | None:
+def chat_session_id(chat: Chat) -> str | None:
     """The frame's ``session_id`` for a chat: the uuid its ``href`` ends with.
 
     Measured on every claude.ai conversation in the tenant, three of
@@ -147,26 +148,10 @@ def chat_session_id(chat: Mapping[str, Any]) -> str | None:
     carries, so a reader that used that id would file one conversation
     under two identifiers depending on which source saw it.
     """
-    href = chat.get("href")
-    if not isinstance(href, str) or "/" not in href:
+    href = chat.href
+    if not href or "/" not in href:
         return None
     return href.rstrip("/").rsplit("/", 1)[-1] or None
-
-
-def created_at(row: Mapping[str, Any]) -> datetime | None:
-    """A row's ``created_at``, parsed. ``None`` on anything unparseable.
-
-    One parser for both feeds, because they spell the same instant
-    differently — an activity carries an offset, a message a ``Z`` — and
-    a caller comparing the strings would be comparing spellings.
-    """
-    raw = row.get("created_at")
-    if not isinstance(raw, str):
-        return None
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        return None
 
 
 class ComplianceClient:
@@ -182,6 +167,8 @@ class ComplianceClient:
         self._headers = {"x-api-key": api_key, "anthropic-version": API_VERSION}
 
     async def _get(self, path: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        """The one mapping in this package: every caller validates it into
+        a ``schema`` model on the next line."""
         try:
             response = await self._client.get(
                 f"{self._base}{path}", params=dict(params), headers=self._headers
@@ -200,7 +187,7 @@ class ComplianceClient:
 
     async def iter_activities(
         self, *, since: datetime, page_size: int = 100
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncIterator[Activity]:
         """Oldest-first from ``since``. ``order=asc`` is mandatory."""
         params: dict[str, Any] = {
             "created_at.gte": since.isoformat(),
@@ -208,19 +195,16 @@ class ComplianceClient:
             "limit": page_size,
         }
         while True:
-            payload = await self._get(_ACTIVITIES, params)
-            rows = _rows(payload)
-            for row in rows:
+            page = CursorPage[Activity].model_validate(await self._get(_ACTIVITIES, params))
+            for row in page.data:
                 yield row
-            if not payload.get("has_more") or not payload.get("last_id") or not rows:
+            if not page.has_more or not page.last_id or not page.data:
                 return
-            params = {**params, "after_id": payload["last_id"]}
+            params = {**params, "after_id": page.last_id}
 
     # --- feed two: chats, ordered only when asked ---------------------
 
-    async def iter_chats(
-        self, *, since: datetime, page_size: int = 100
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def iter_chats(self, *, since: datetime, page_size: int = 100) -> AsyncIterator[Chat]:
         """``order_by`` is not optional here: the bound is rejected without it."""
         params: dict[str, Any] = {
             "updated_at.gte": since.isoformat(),
@@ -228,13 +212,12 @@ class ComplianceClient:
             "limit": page_size,
         }
         while True:
-            payload = await self._get(_CHATS, params)
-            rows = _rows(payload)
-            for row in rows:
+            page = CursorPage[Chat].model_validate(await self._get(_CHATS, params))
+            for row in page.data:
                 yield row
-            if not payload.get("has_more") or not payload.get("last_id") or not rows:
+            if not page.has_more or not page.last_id or not page.data:
                 return
-            params = {**params, "after_id": payload["last_id"]}
+            params = {**params, "after_id": page.last_id}
 
     # --- feed three: local sessions, unorderable ----------------------
 
@@ -250,11 +233,10 @@ class ComplianceClient:
         # parameter, so that filter is the caller's and runs over these
         # rows.
         params: dict[str, Any] = {"updated_at.gte": since.isoformat(), "limit": min(limit, 100)}
-        sessions: list[dict[str, Any]] = []
+        sessions: list[SessionListing] = []
         while True:
-            payload = await self._get(_SESSIONS, params)
-            rows = _rows(payload)
-            for row in rows:
+            page = TokenPage[SessionListing].model_validate(await self._get(_SESSIONS, params))
+            for row in page.data:
                 if len(sessions) >= limit:
                     log.warning(
                         "compliance: local-session drain cut at %d; oldest sessions unread, "
@@ -263,31 +245,30 @@ class ComplianceClient:
                     )
                     return Drain(sessions=sessions, complete=False)
                 sessions.append(row)
-            token = payload.get("next_page")
-            if not token or not rows:
+            if not page.next_page or not page.data:
                 return Drain(sessions=sessions, complete=True)
-            params = {**params, "page": token}
+            params = {**params, "page": page.next_page}
 
     # --- transcripts and bytes ----------------------------------------
 
-    async def chat(
-        self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
-    ) -> dict[str, Any]:
+    async def chat(self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES) -> Chat:
         """The chat object, turns included. Its ``model`` is the only one
         there is — no chat message carries one."""
-        return await self._get(f"{_CHATS}/{chat_id}/messages", _tool_caps(tool_block_bytes))
+        payload = await self._get(f"{_CHATS}/{chat_id}/messages", _tool_caps(tool_block_bytes))
+        return Chat.model_validate(payload)
 
     async def chat_messages(
         self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
-    ) -> list[dict[str, Any]]:
+    ) -> list[ChatMessage]:
         """A chat's turns, which sit under ``chat_messages`` rather than
         ``data``: reading ``data`` here yields nothing and says nothing
         about why."""
-        return _chat_messages(await self.chat(chat_id, tool_block_bytes=tool_block_bytes))
+        chat = await self.chat(chat_id, tool_block_bytes=tool_block_bytes)
+        return chat.chat_messages
 
     async def session_messages(
         self, session_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
-    ) -> list[dict[str, Any]]:
+    ) -> list[SessionMessage]:
         """A local-session transcript, ``{session, data, next_page}``.
 
         It paginates like the listing it came from rather than like the
@@ -295,15 +276,14 @@ class ComplianceClient:
         partial transcript silently hides produced turns.
         """
         params: dict[str, Any] = {**_tool_caps(tool_block_bytes), "limit": _MESSAGE_PAGE}
-        messages: list[dict[str, Any]] = []
+        messages: list[SessionMessage] = []
         while True:
             payload = await self._get(f"{_SESSIONS}/{session_id}/messages", params)
-            rows = _rows(payload)
-            messages.extend(rows)
-            token = payload.get("next_page")
-            if not token or not rows:
+            page = SessionTranscript.model_validate(payload)
+            messages.extend(page.data)
+            if not page.next_page or not page.data:
                 return messages
-            params = {**params, "page": token}
+            params = {**params, "page": page.next_page}
 
     async def file_content(self, file_id: str) -> bytes:
         """The whole stored body. There is no ``HEAD`` to size it first —
@@ -325,17 +305,3 @@ def _tool_caps(tool_block_bytes: int) -> dict[str, Any]:
         "tool_result_max_bytes": tool_block_bytes,
         "tool_use_input_max_bytes": tool_block_bytes,
     }
-
-
-def _rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    data = payload.get("data")
-    if not isinstance(data, Sequence):
-        return []
-    return [row for row in data if isinstance(row, dict)]
-
-
-def _chat_messages(chat: Mapping[str, Any]) -> list[dict[str, Any]]:
-    turns = chat.get("chat_messages")
-    if not isinstance(turns, Sequence):
-        return []
-    return [turn for turn in turns if isinstance(turn, dict)]

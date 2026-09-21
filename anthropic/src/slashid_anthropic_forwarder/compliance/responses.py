@@ -30,7 +30,7 @@ Two walks, because the feeds are different shapes:
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -67,12 +67,14 @@ from ..record import COMPLIANCE, FILE_DIGESTS, PARSED_AS_COMPLIANCE, Append, eve
 from ..store import PendingStore, Seen
 from .attachments import files_from_listing, listed_files
 from .checkpoint import Cursors
-from .client import (
-    ComplianceClient,
-    chat_session_id,
-    created_at,
-    decode_session_id,
-    provenance_type,
+from .client import ComplianceClient, chat_session_id, decode_session_id
+from .schema import (
+    Chat,
+    ChatMessage,
+    ContentBlock,
+    SessionListing,
+    SessionMessage,
+    TranscriptMessage,
 )
 from .softjoin import DigestTarget, SoftMatch, soft_join
 
@@ -87,7 +89,10 @@ _RESPONSE_KINDS = frozenset({"text", "tool_use", "thinking"})
 @dataclass
 class ProducedRun:
     index: int
-    messages: list[dict[str, Any]]
+    # Typed on the shared base, not on either transcript's class: the two
+    # walks produce different message types and everything downstream
+    # reads only the role, the content and the clock.
+    messages: list[TranscriptMessage]
     model: str
 
 
@@ -108,7 +113,7 @@ class ResponseCounters:
     models: dict[str, str] = field(default_factory=dict)
 
 
-def produced_runs(messages: Sequence[Mapping[str, Any]]) -> list[ProducedRun]:
+def produced_runs(messages: Sequence[SessionMessage]) -> list[ProducedRun]:
     """Newly-produced turns in a **local session** transcript.
 
     The marker is ``model`` with no ``provenance``: a replayed
@@ -119,27 +124,23 @@ def produced_runs(messages: Sequence[Mapping[str, Any]]) -> list[ProducedRun]:
     """
     runs: list[ProducedRun] = []
     for i, message in enumerate(messages):
-        if message.get("role") != "assistant" or not message.get("model"):
+        if message.role != "assistant" or not message.model:
             continue
-        if provenance_type(message) is not None:
+        if message.provenance is not None:
             continue
-        run = [dict(message)]
+        run: list[TranscriptMessage] = [message]
         for follower in messages[i + 1 :]:
             # One answer can arrive as several assistant messages. A
             # follower joins only when it carries neither a marker of its
             # own nor a provenance — anything marked is a different turn.
-            if (
-                follower.get("role") != "assistant"
-                or follower.get("model")
-                or follower.get("provenance")
-            ):
+            if follower.role != "assistant" or follower.model or follower.provenance:
                 break
-            run.append(dict(follower))
-        runs.append(ProducedRun(index=i, messages=run, model=str(message["model"])))
+            run.append(follower)
+        runs.append(ProducedRun(index=i, messages=run, model=message.model))
     return runs
 
 
-def chat_turns(chat: Mapping[str, Any]) -> list[ProducedRun]:
+def chat_turns(chat: Chat) -> list[ProducedRun]:
     """Produced turns in a **chat**, which are simply its assistant turns.
 
     A chat transcript is the canonical store rather than a client's
@@ -147,15 +148,15 @@ def chat_turns(chat: Mapping[str, Any]) -> list[ProducedRun]:
     filter it with: no chat message carries ``model`` or ``provenance``,
     and the model is on the chat object.
     """
-    model = str(chat.get("model") or "unknown")
+    model = chat.model or "unknown"
     turns: list[ProducedRun] = []
-    for i, message in enumerate(chat.get("chat_messages") or []):
-        if message.get("role") == "assistant":
-            turns.append(ProducedRun(index=i, messages=[dict(message)], model=model))
+    for i, message in enumerate(chat.chat_messages):
+        if message.role == "assistant":
+            turns.append(ProducedRun(index=i, messages=[message], model=model))
     return turns
 
 
-def response_blocks(blocks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def response_blocks(blocks: Sequence[ContentBlock]) -> list[ContentBlock]:
     """The subset of an answer that the response-side union admits.
 
     A chat's assistant message carries its ``tool_result`` blocks inline,
@@ -164,10 +165,10 @@ def response_blocks(blocks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
     mid-tick. The results are not lost from the record — they are in the
     transcript this run is attributed against — only from the *answer*.
     """
-    return [dict(b) for b in blocks if b.get("type") in _RESPONSE_KINDS]
+    return [block for block in blocks if block.type in _RESPONSE_KINDS]
 
 
-def to_anthropic(messages: Sequence[Mapping[str, Any]]) -> list[AnthropicRequestMessage]:
+def to_anthropic(messages: Sequence[TranscriptMessage]) -> list[AnthropicRequestMessage]:
     """Compliance messages into the canonical schema the spine speaks.
 
     The address must be byte-identical to the hook's for the same run, so
@@ -178,16 +179,25 @@ def to_anthropic(messages: Sequence[Mapping[str, Any]]) -> list[AnthropicRequest
     """
     out: list[AnthropicRequestMessage] = []
     for message in messages:
-        role = message.get("role")
-        if role not in ("user", "assistant"):
+        if message.role not in ("user", "assistant"):
             continue
-        content = message.get("content")
         out.append(
             AnthropicRequestMessage.model_validate(
-                {"role": role, "content": content if isinstance(content, list) else []}
+                {"role": message.role, "content": _dump(message.content)}
             )
         )
     return out
+
+
+def _dump(blocks: Sequence[ContentBlock]) -> list[dict[str, Any]]:
+    """Compliance blocks back onto the wire the vendor schema reads.
+
+    A round trip rather than a translation: every field either union
+    models — a tool id, a name, an input, a result's pairing id — comes
+    back out, so an address computed from a transcript stays
+    byte-identical to the one the hook computed from a frame.
+    """
+    return [block.model_dump(mode="json") for block in blocks]
 
 
 async def read_responses(
@@ -207,10 +217,10 @@ async def read_responses(
         since=cursors.sessions.window_start(now=now), limit=config.max_sessions_per_tick
     )
     for session in drain.sessions:
-        if session.get("organization_uuid") != config.organization_uuid:
+        if session.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
-        session_id = session.get("id", "")
+        session_id = session.id
         messages = await client.session_messages(session_id)
         await _walk(
             produced_runs(messages),
@@ -218,7 +228,7 @@ async def read_responses(
             conversation_id=decode_session_id(session_id) or session_id,
             # A message carries no user; the listing item does.
             user_id=_listed_user_id(session),
-            surface=session.get("product_surface"),
+            surface=session.product_surface,
             client=client,
             store=store,
             config=config,
@@ -230,11 +240,11 @@ async def read_responses(
     cursors.sessions.advance(timestamp=now - lag, drained=drain.complete)
 
     async for listed in client.iter_chats(since=cursors.chats.window_start(now=now)):
-        if listed.get("organization_uuid") != config.organization_uuid:
+        if listed.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
-        chat = await client.chat(listed.get("id", ""))
-        messages = list(chat.get("chat_messages") or [])
+        chat = await client.chat(listed.id)
+        messages = chat.chat_messages
         before = counters.emitted + counters.enriched
         await _walk(
             chat_turns(chat),
@@ -243,7 +253,7 @@ async def read_responses(
             # calls `session_id` — three of three, measured. The
             # `claude_chat_…` id appears in no frame, so using it would
             # file one conversation under two identifiers.
-            conversation_id=chat_session_id(chat) or str(chat.get("id") or ""),
+            conversation_id=chat_session_id(chat) or chat.id,
             user_id=_listed_user_id(chat) or _listed_user_id(listed),
             surface="claude-ai",
             client=client,
@@ -265,7 +275,7 @@ async def read_responses(
 async def _walk(
     runs: Sequence[ProducedRun],
     *,
-    messages: Sequence[Mapping[str, Any]],
+    messages: Sequence[TranscriptMessage],
     conversation_id: str,
     user_id: str | None,
     surface: str | None,
@@ -328,7 +338,7 @@ async def _walk(
 
 
 async def soft_join_uploads(
-    chat: Mapping[str, Any],
+    chat: Chat,
     *,
     client: ComplianceClient,
     store: DigestTarget,
@@ -342,27 +352,26 @@ async def soft_join_uploads(
     """
     window = timedelta(seconds=config.soft_join_window_seconds)
     conversation = chat_session_id(chat) or ""
-    messages = list(chat.get("chat_messages") or [])
+    messages = chat.chat_messages
     out: list[SoftMatch] = []
     for i, message in enumerate(messages):
         entries = listed_files(message)
-        at = created_at(message)
+        at = message.at
         if not entries or at is None or _hard_covered(messages, i):
             continue
-        digests = await files_from_listing(client, entries, config=config)
         out.append(
             await soft_join(
                 store,
                 conversation_id=conversation,
                 at=at,
-                digests=[d.model_dump(mode="json", exclude_none=True) for d in digests],
+                digests=await files_from_listing(client, entries, config=config),
                 window=window,
             )
         )
     return out
 
 
-def _hard_covered(messages: Sequence[Mapping[str, Any]], index: int) -> bool:
+def _hard_covered(messages: Sequence[ChatMessage], index: int) -> bool:
     """Has an addressable run already claimed this message's uploads?
 
     ``_walk`` attributes a round's files to the run that answered it, so
@@ -371,29 +380,29 @@ def _hard_covered(messages: Sequence[Mapping[str, Any]], index: int) -> bool:
     branch empties itself the day a common id ships.
     """
     for message in messages[index + 1 :]:
-        if message.get("role") != "assistant":
+        if message.role != "assistant":
             continue
         return joinable_address(to_anthropic([message])) is not None
     return False
 
 
 async def _digests(
-    before: Sequence[Mapping[str, Any]], *, client: ComplianceClient, config: Config
+    before: Sequence[TranscriptMessage], *, client: ComplianceClient, config: Config
 ) -> list[AIAccessedFile]:
     """Listing-derived entries for the round the run consumed."""
     entries = [f for message in _last_round(before) for f in listed_files(message)]
     return await files_from_listing(client, entries, config=config)
 
 
-def _last_round(messages: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+def _last_round(messages: Sequence[TranscriptMessage]) -> list[TranscriptMessage]:
     for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "assistant":
+        if messages[i].role == "assistant":
             return list(messages[i + 1 :])
     return list(messages)
 
 
 async def _standalone(
-    messages: Sequence[Mapping[str, Any]],
+    messages: Sequence[TranscriptMessage],
     *,
     run: ProducedRun,
     address: str,
@@ -414,19 +423,15 @@ async def _standalone(
         # The server rejects an Anthropic identity with no identifier.
         return None
     before = to_anthropic(messages[: run.index])
-    answer = response_blocks(
-        [block for message in run.messages for block in (message.get("content") or [])]
-    )
+    answer = response_blocks([block for message in run.messages for block in message.content])
     response = AnthropicMessage.model_validate(
         {
             "type": "message",
             "role": "assistant",
-            "content": answer,
+            "content": _dump(answer),
             # No surface carries a stop reason, so it is inferred from
             # block shape — exactly as the hook path infers it.
-            "stop_reason": "tool_use"
-            if answer and answer[-1]["type"] == "tool_use"
-            else "end_turn",
+            "stop_reason": "tool_use" if answer and answer[-1].type == "tool_use" else "end_turn",
         }
     )
     normalized = await message_to_normalized_invocation(
@@ -449,7 +454,7 @@ async def _standalone(
         normalized,
         EventEnvelope(
             request_id=address,
-            timestamp=str(run.messages[0].get("created_at") or ""),
+            timestamp=run.messages[0].created_at or "",
             identity_details=AnthropicIdentityDetails(user_id=user_id),
             model=AIModel(id=run.model, provider="anthropic", raw_model_id=run.model),
             # Overridden by `to_event` from `contributed`.
@@ -461,7 +466,7 @@ async def _standalone(
     )
 
 
-def _listed_user_id(item: Mapping[str, Any]) -> str | None:
+def _listed_user_id(item: SessionListing | Chat) -> str | None:
     """``user.id`` off a **listing item**, never off a message.
 
     A transcript message carries only ``type, id, role, created_at,
@@ -470,7 +475,4 @@ def _listed_user_id(item: Mapping[str, Any]) -> str | None:
     reader-emitted event and a hook-emitted one on one graph identity
     instead of forking the same human in two.
     """
-    user = item.get("user")
-    if isinstance(user, Mapping) and isinstance(user.get("id"), str):
-        return user["id"]
-    return None
+    return item.user.id if item.user else None

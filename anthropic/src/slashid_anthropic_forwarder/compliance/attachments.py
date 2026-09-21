@@ -24,32 +24,19 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Iterable
 
 from slashid_ai_forwarder_core.events import AIAccessedFile
 from slashid_ai_forwarder_core.normalize.normalized.media_types import parse_media_type
 
 from ..config import Config
 from .client import ComplianceClient, ComplianceError
+from .schema import ChatMessage, FileEntry, TranscriptMessage
 
 log = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class ListedFile:
-    """One ``files[]`` entry. The only cheap metadata there is: ``HEAD``
-    on the content endpoint 404s on every attachment."""
-
-    id: str
-    filename: str | None
-    mime_type: str | None
-    size_bytes: int | None
-    md5: str | None
-
-
-def listed_files(message: Mapping[str, Any]) -> list[ListedFile]:
+def listed_files(message: TranscriptMessage) -> list[FileEntry]:
     """The uploads hanging off one message.
 
     ``files[]`` hangs off the single message that carried the upload, so
@@ -59,31 +46,16 @@ def listed_files(message: Mapping[str, Any]) -> list[ListedFile]:
     read here: the first is reserved for a ``generated`` provenance that
     is not emitted yet, and an artifact is the assistant's own output,
     which does not belong in a field a reviewer reads as ingress.
+
+    The ``isinstance`` is the shape, not a guard: a local-session message
+    has no ``files[]`` at all, which is also why the soft join is a
+    chats-only walk.
     """
-    raw = message.get("files")
-    if not isinstance(raw, Sequence):
-        return []
-    out: list[ListedFile] = []
-    for entry in raw:
-        if not isinstance(entry, Mapping) or not isinstance(entry.get("id"), str):
-            continue
-        digest = entry.get("md5")
-        out.append(
-            ListedFile(
-                id=entry["id"],
-                filename=entry.get("filename"),
-                mime_type=entry.get("mime_type"),
-                size_bytes=entry.get("size_bytes"),
-                # Lowercase hex on the wire; normalized so a comparison
-                # against a recomputed digest cannot fail on case.
-                md5=digest.lower() if isinstance(digest, str) else None,
-            )
-        )
-    return out
+    return message.files if isinstance(message, ChatMessage) else []
 
 
 async def files_from_listing(
-    client: ComplianceClient, entries: Iterable[ListedFile], *, config: Config
+    client: ComplianceClient, entries: Iterable[FileEntry], *, config: Config
 ) -> list[AIAccessedFile]:
     """One ``AIAccessedFile`` per listed upload, at the configured tier."""
     out: list[AIAccessedFile] = []
@@ -118,7 +90,7 @@ async def files_from_listing(
     return out
 
 
-def _should_fetch(entry: ListedFile, config: Config) -> bool:
+def _should_fetch(entry: FileEntry, config: Config) -> bool:
     """Decided from the listing, before any request.
 
     There is no ``HEAD`` to size the object with, so ``size_bytes`` is

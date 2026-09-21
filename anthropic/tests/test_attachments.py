@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
-from typing import Any
 
 import httpx
 
@@ -13,12 +11,14 @@ from slashid_anthropic_forwarder.compliance.attachments import (
     listed_files,
 )
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
+from slashid_anthropic_forwarder.compliance.schema import Chat, ChatMessage
 from tests.compliance_fixtures import MARIA_BYTES, body, transport
 from tests.test_pending import config as a_config
 
 
-def _uploads() -> dict[str, Any]:
-    return next(m for m in body("chat_messages_1.json")["chat_messages"] if m.get("files"))
+def _uploads() -> ChatMessage:
+    chat = Chat.model_validate(body("chat_messages_1.json"))
+    return next(m for m in chat.chat_messages if m.files)
 
 
 def a_client() -> tuple[ComplianceClient, list[httpx.Request]]:
@@ -34,7 +34,7 @@ def test_listed_files_reads_the_five_fields_and_lowercases_the_digest() -> None:
         "maria.txt",
     ]
     assert all(e.md5 == (e.md5 or "").lower() for e in entries)
-    assert listed_files({"role": "user", "content": []}) == []
+    assert listed_files(ChatMessage(role="user")) == []
 
 
 async def test_md5_tier_takes_the_listing_digest_and_makes_no_request() -> None:
@@ -77,9 +77,7 @@ async def test_an_oversized_file_is_never_requested() -> None:
 async def test_an_unknown_size_is_treated_as_over_the_cap() -> None:
     client, seen = a_client()
     entry = next(e for e in listed_files(_uploads()) if e.filename == "maria.txt")
-    # `replace`, not a dict splat of `__dict__`: the splat hands every
-    # field back as `Any` and ty cannot see that `id` is still a str.
-    sized = replace(entry, size_bytes=None)
+    sized = entry.model_copy(update={"size_bytes": None})
     files = await files_from_listing(client, [sized], config=a_config(attachment_hashing="full"))
     assert seen == []
     assert files[0].content_hashes == {"md5": entry.md5}
@@ -98,7 +96,8 @@ async def test_a_bare_extension_mime_type_degrades_to_none() -> None:
     # `"txt"` is not a media type. Chunk 2 Task 2.2 made parse_media_type
     # fall back rather than raise; this is the recorded value that needs it.
     client, _ = a_client()
-    message = next(m for m in body("chat_messages_2.json")["chat_messages"] if m.get("files"))
+    chat = Chat.model_validate(body("chat_messages_2.json"))
+    message = next(m for m in chat.chat_messages if m.files)
     files = await files_from_listing(client, listed_files(message), config=a_config())
     assert files[0].media_type is None
     assert files[0].content_hashes is not None
