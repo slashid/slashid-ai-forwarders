@@ -351,7 +351,7 @@ async def test_write_from_frame(
     expected: Expected,
 ) -> None:
     store = a_store()
-    extra = {"compliance_key": "sk-ant-api01-x"} if compliance else {}
+    extra = {"compliance_key": "sk-ant-api01-x", "organization_uuid": "org-1"} if compliance else {}
     await write(frame(fixture, append), store, decision=DECISIONS[decision], **extra)
     written = addresses(store)
     tails = {a for a in written if a.startswith("tail:")}
@@ -451,6 +451,7 @@ async def test_a_denial_waits_for_reader_a_when_compliance_is_on() -> None:
         decision=BLOCKED,
         webhook_id="msg_9",
         compliance_key="sk-ant-api01-x",
+        organization_uuid="org-1",
     )
     assert awaiting(store, "deny:msg_9") == [DENIAL_ACTIVITY]
     # The previous run's record went; the denial did not.

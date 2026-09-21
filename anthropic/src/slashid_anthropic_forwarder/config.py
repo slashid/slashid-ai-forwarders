@@ -165,12 +165,38 @@ class Config(BaseConfig):
     def signing_secrets(self) -> list[str]:
         return [s.strip() for s in self.hook_signing_secret.split(",") if s.strip()]
 
+    @property
+    def hook_enabled(self) -> bool:
+        """The signing secret enables the hook; ``HOOK_ALLOW_UNSIGNED`` is the
+        escape hatch for an org that enabled hooks before secrets existed.
+
+        ``compliance_enabled`` is its counterpart and is already defined
+        above.
+        """
+        return bool(self.signing_secrets) or self.hook_allow_unsigned
+
     @model_validator(mode="after")
-    def _check_signing(self) -> Config:
-        if not self.signing_secrets and not self.hook_allow_unsigned:
-            raise ValueError("SLASHID_HOOK_SIGNING_SECRET is required unless HOOK_ALLOW_UNSIGNED")
+    def _check_capabilities(self) -> Config:
+        # At least one credential, or there is nothing to run. The signing
+        # secret is required only when the hook is the capability in use:
+        # compliance-only needs none, and demanding one made that deployment
+        # impossible to start.
+        if not self.hook_enabled and not self.compliance_enabled:
+            raise ValueError(
+                "no capability configured: set SLASHID_HOOK_SIGNING_SECRET for the hook "
+                "(or SLASHID_HOOK_ALLOW_UNSIGNED), SLASHID_COMPLIANCE_KEY for the readers"
+            )
         if self.hook_allow_unsigned and self.policy_url:
             raise ValueError("HOOK_ALLOW_UNSIGNED cannot be combined with POLICY_URL")
+        if self.compliance_enabled and not self.organization_uuid:
+            raise ValueError("SLASHID_ORGANIZATION_UUID is required with SLASHID_COMPLIANCE_KEY")
+        floor = self.join_wait_seconds + self.poll_lag_seconds + self.tick_interval_seconds
+        if self.tombstone_ttl_seconds <= floor:
+            raise ValueError(
+                f"SLASHID_TOMBSTONE_TTL_SECONDS ({self.tombstone_ttl_seconds}) must exceed "
+                f"JOIN_WAIT + POLL_LAG + one tick ({floor}): a reader arriving after its own "
+                "tombstone expired re-emits the invocation"
+            )
         return self
 
 

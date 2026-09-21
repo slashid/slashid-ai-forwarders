@@ -60,7 +60,13 @@ async def run(chat: dict[str, Any], store: Any, **over: Any) -> list[SoftMatch]:
         chat,
         client=ComplianceClient(client, api_key="k"),
         store=store,
-        config=a_config(**{"compliance_key": "sk-ant-api01-x", **over}),
+        config=a_config(
+            **{
+                "compliance_key": "sk-ant-api01-x",
+                "organization_uuid": "org-1",
+                **over,
+            }
+        ),
     )
 
 

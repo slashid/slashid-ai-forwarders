@@ -67,7 +67,9 @@ def test_compliance_is_off_without_a_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_a_compliance_key_turns_the_readers_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x")
+    # The organization uuid rides along because the key alone is refused:
+    # it reads every linked organization and the readers filter to one.
+    _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x", SLASHID_ORGANIZATION_UUID="org-1")
     assert Config().compliance_enabled is True
 
 
@@ -152,3 +154,56 @@ def test_empty_strings_from_terraform_mean_unset(monkeypatch: pytest.MonkeyPatch
     assert cfg.organization_uuid is None
     assert cfg.capture_bucket is None
     assert cfg.capture_deny_marker is None
+
+
+def test_compliance_only_starts_without_a_signing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conflict the design names: the old validator made the
+    compliance-only deployment impossible to start."""
+    _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x", SLASHID_ORGANIZATION_UUID="org-1")
+    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
+    cfg = Config()
+    assert cfg.hook_enabled is False
+    assert cfg.compliance_enabled is True
+
+
+def test_hook_only_needs_no_compliance_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    cfg = Config()
+    assert cfg.hook_enabled is True
+    assert cfg.compliance_enabled is False
+
+
+def test_no_credential_at_all_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
+    with pytest.raises(ValidationError, match="no capability configured"):
+        Config()
+
+
+def test_compliance_key_requires_an_organization_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key reads every linked organization; the readers filter to one."""
+    _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x")
+    with pytest.raises(ValidationError, match="SLASHID_ORGANIZATION_UUID"):
+        Config()
+
+
+def test_tombstone_ttl_must_outlive_join_wait_poll_lag_and_one_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """3600 + 120 + 3600 > 7200: an hourly tick at the default join wait is
+    exactly the configuration the assertion exists to refuse."""
+    _env(monkeypatch, SLASHID_TICK_INTERVAL_SECONDS="3600")
+    with pytest.raises(ValidationError, match="SLASHID_TOMBSTONE_TTL_SECONDS"):
+        Config()
+    _env(monkeypatch, SLASHID_TICK_INTERVAL_SECONDS="3600", SLASHID_TOMBSTONE_TTL_SECONDS="10800")
+    assert Config().tombstone_ttl_seconds == 10800
+
+
+def test_unsigned_hook_still_counts_as_a_capability(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_HOOK_ALLOW_UNSIGNED="true")
+    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
+    assert Config().hook_enabled is True
