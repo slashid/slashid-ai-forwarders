@@ -1,0 +1,97 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/apps/sessions/local",
+    "params": "limit=30"
+  },
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "type": "compliance_local_session",
+        "id": "clls_eyJ2IjoxLCJvIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwicCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsInMiOiIwMDAwMDAwMS0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAifQ",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": null,
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "product_surface": "claude_code",
+        "created_at": "2026-09-21T06:38:39.522161Z",
+        "updated_at": "2026-09-21T06:38:57.486268Z",
+        "truncated": false
+      },
+      {
+        "type": "compliance_local_session",
+        "id": "clls_eyJ2IjoxLCJvIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwicCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsInMiOiIwMDAwMDAwMi0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAifQ",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": null,
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "product_surface": "claude_code",
+        "created_at": "2026-09-21T06:38:24.632193Z",
+        "updated_at": "2026-09-21T06:38:30.487080Z",
+        "truncated": false
+      },
+      {
+        "type": "compliance_local_session",
+        "id": "clls_eyJ2IjoxLCJvIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwicCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsInMiOiIwMDAwMDAwMy0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAifQ",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": null,
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "product_surface": "claude_code",
+        "created_at": "2026-09-21T06:38:19.946345Z",
+        "updated_at": "2026-09-21T06:38:19.946345Z",
+        "truncated": false
+      },
+      {
+        "type": "compliance_local_session",
+        "id": "clls_eyJ2IjoxLCJvIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwicCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsInMiOiIwMDAwMDAwNC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAifQ",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": null,
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "product_surface": "claude_code",
+        "created_at": "2026-09-21T06:38:03.890783Z",
+        "updated_at": "2026-09-21T06:38:06.144243Z",
+        "truncated": false
+      },
+      {
+        "type": "compliance_local_session",
+        "id": "clls_eyJ2IjoxLCJvIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwicCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsInMiOiIwMDAwMDAwNS0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAifQ",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": null,
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "product_surface": "claude_code",
+        "created_at": "2026-09-21T01:56:45.689840Z",
+        "updated_at": "2026-09-21T01:56:47.751744Z",
+        "truncated": false
+      },
+      {
+        "type": "compliance_local_session",
+        "id": "clls_eyJ2IjoxLCJvIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwicCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsInMiOiIwMDAwMDAwNi0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAifQ",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "workspace_id": null,
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "product_surface": "claude_code",
+        "created_at": "2026-09-21T01:52:44.718281Z",
+        "updated_at": "2026-09-21T01:52:44.718281Z",
+        "truncated": false
+      }
+    ],
+    "next_page": null
+  }
+}

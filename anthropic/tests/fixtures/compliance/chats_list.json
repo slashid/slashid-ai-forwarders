@@ -1,0 +1,63 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/apps/chats",
+    "params": "limit=100"
+  },
+  "status": 200,
+  "body": {
+    "data": [
+      {
+        "id": "claude_chat_017qsKNxP2PoDZdUUPzp2LMY",
+        "name": "Testing file attachments with Claude",
+        "created_at": "2026-09-20T23:10:22.811062Z",
+        "updated_at": "2026-09-20T23:12:01.726733Z",
+        "deleted_at": null,
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "project_id": null,
+        "model": "claude-sonnet-5",
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "href": "https://claude.ai/chat/37698ab2-fc10-45a1-a592-7ab36d45570b"
+      },
+      {
+        "id": "claude_chat_01E2Erig8LwCmfXnF3zGsCYG",
+        "name": "Previs\u00e3o do tempo em Campinas",
+        "created_at": "2026-09-21T00:55:38.419528Z",
+        "updated_at": "2026-09-21T01:07:22.958707Z",
+        "deleted_at": null,
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "project_id": null,
+        "model": "claude-sonnet-5",
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "href": "https://claude.ai/chat/6973160e-c138-4e29-af4e-906b13aca881"
+      },
+      {
+        "id": "claude_chat_012XPDTHkcRigZefqq2de4yY",
+        "name": "Image analysis request",
+        "created_at": "2026-09-21T04:02:24.576013Z",
+        "updated_at": "2026-09-21T04:02:39.253290Z",
+        "deleted_at": null,
+        "organization_id": "org_01AAAAAAAAAAAAAAAAAAAAAA",
+        "organization_uuid": "11111111-1111-1111-1111-111111111111",
+        "project_id": null,
+        "model": "claude-sonnet-5",
+        "user": {
+          "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+          "email_address": "alice@example.com"
+        },
+        "href": "https://claude.ai/chat/0c57245e-310e-42db-98de-7f3d146cfbe3"
+      }
+    ],
+    "has_more": false,
+    "first_id": "eyJrIjogImNyZWF0ZWRfYXQiLCAidCI6ICIyMDI2LTA5LTIwVDIzOjEwOjIyLjgxMTA2MiswMDowMCIsICJpZCI6ICIzNzY5OGFiMi1mYzEwLTQ1YTEtYTU5Mi03YWIzNmQ0NTU3MGIifQ==",
+    "last_id": "eyJrIjogImNyZWF0ZWRfYXQiLCAidCI6ICIyMDI2LTA5LTIxVDA0OjAyOjI0LjU3NjAxMyswMDowMCIsICJpZCI6ICIwYzU3MjQ1ZS0zMTBlLTQyZGItOThkZS03ZjNkMTQ2Y2ZiZTMifQ=="
+  }
+}
