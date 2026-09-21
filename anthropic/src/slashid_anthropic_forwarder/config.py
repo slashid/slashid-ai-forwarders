@@ -54,6 +54,40 @@ class Config(BaseConfig):
     # the request path for one reason: a record may only wait for
     # attachment digests when something exists to deliver them.
     compliance_key: str | None = None
+    # The key can read every linked organization while the hook's tenant
+    # binding is per organization, so the readers filter to this one. It
+    # equals the frame's `tenant_id`. Not a query parameter: both
+    # listings reject `organization_uuid`, so the filter runs over the
+    # rows a listing returns.
+    organization_uuid: str | None = None
+    # How far behind now the `updated_at.gte` bound sits, and the initial
+    # watermark on a cold start — never a full backfill.
+    poll_lag_seconds: int = 120
+    # Bounds one tick against the 600 rpm shared with the sync adapter.
+    # The local-session listing cannot be ordered, so a tick that hits
+    # this cap leaves the *oldest* sessions untouched and must not
+    # advance its watermark.
+    max_sessions_per_tick: int = 200
+    # `md5` takes the digest the file listing already carries and makes
+    # no extra request. `full` downloads the stored bytes for sha1 and
+    # sha256, which OneDrive, SharePoint and Drive resources need.
+    attachment_hashing: Literal["md5", "full"] = "md5"
+    # Under `full`, the largest attachment worth downloading. Decided
+    # from the listing's `size_bytes` *before* any fetch: an oversized
+    # file is never started, and falls back to the listing's md5 rather
+    # than to no digest. A ranged read yields a snippet, never a digest.
+    max_attachment_fetch_bytes: int = 10 * 1024 * 1024
+    # One document per feed, in its own collection: a watermark is a
+    # different lifetime from a pending record, and the pending
+    # collection carries a TTL policy that would delete these.
+    checkpoint_collection: str = "anthropic_checkpoints"
+    # How far from a message a pending record may sit and still be its
+    # soft-join candidate. A knob because it decides the answer:
+    # measured, the nearest record sat 0.3 to 6.9 s away with the runner-up
+    # at least 6.1 s further, so at ±15 s three attachment rounds resolve
+    # to exactly one candidate — and at ±60 s one of them gains a second
+    # and abstains.
+    soft_join_window_seconds: int = 15
     # The project holding Firestore; vertex/ has the same field. Required:
     # this chunk builds the client, and ``project=None`` is a client that
     # talks to nothing.

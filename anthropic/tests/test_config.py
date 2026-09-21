@@ -92,3 +92,21 @@ def test_the_project_id_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SLASHID_GCP_PROJECT_ID")
     with pytest.raises(ValidationError):
         Config()
+
+
+def test_the_reader_knobs_have_the_designed_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    config = Config()
+    assert config.organization_uuid is None
+    assert config.poll_lag_seconds == 120
+    assert config.max_sessions_per_tick == 200
+    assert config.attachment_hashing == "md5"
+    assert config.max_attachment_fetch_bytes == 10 * 1024 * 1024
+    assert config.checkpoint_collection == "anthropic_checkpoints"
+    assert config.soft_join_window_seconds == 15
+
+
+def test_attachment_hashing_must_be_md5_or_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_ATTACHMENT_HASHING="sha256")
+    with pytest.raises(ValidationError):
+        Config()
