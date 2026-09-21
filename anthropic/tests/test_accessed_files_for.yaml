@@ -1,0 +1,49 @@
+id: read_result_is_hashed_after_the_line_numbers_are_stripped
+fixture: frame_tool_result
+expected:
+  - name: /home/alice/proj/notes.txt
+    sha256: e6bab19e50f90145e62b963a3584ec72ea6b88adcb71de6522301ebb9fa0813d
+    media_type: text/plain
+    byte_length: 49
+---
+# The content of a failed Read is an error message, not file bytes.
+id: error_result_is_not_a_file
+fixture: frame_tool_error
+expected: []
+---
+id: parallel_reads_yield_one_file_each
+fixture: frame_multi_tool
+expected:
+  - {name: /home/alice/proj/a.txt, sha256: 49e5ab7eb50b84ab791a464363506fca587318ec5400cfe9d9f08ef43f22103a}
+  - {name: /home/alice/proj/b.txt, sha256: 200893a46bdff328ad1c118adfe70d737601b81b7062f143cfcb92eb0871b0ae}
+---
+# The txt and the pdf carry extracted text; the jpeg carries none, so it is
+# not an entry. byte_length is the length of that text, never size_bytes.
+id: attachments_with_text_are_hashed_and_named
+fixture: frame_attachment
+expected:
+  - name: maria.txt
+    sha256: 576f5772eb89115f882ac39a431b48a4bc1872d84b48573ee1dd5c1f43065055
+    media_type: text/plain
+    byte_length: 27
+    provenance: attachment
+  - name: guiaSADT.pdf
+    sha256: 3f6af091f4b9191b99ff17468d46aee5079b69c13ad754979846b6883e92b5ff
+    media_type: application/pdf
+    byte_length: 47
+    provenance: attachment
+---
+# Handed the whole frame, the scan lands on the fresh round — the verdict's
+# slice. The Bash result sits a round earlier and is outside it; only the
+# Read is hashed. Task 3.4 hands the same function `split.before` and gets
+# the other round.
+id: only_the_last_round_counts
+fixture: frame_subagent_child
+expected:
+  - {name: /home/alice/proj/a.txt, sha256: 49e5ab7eb50b84ab791a464363506fca587318ec5400cfe9d9f08ef43f22103a}
+---
+# An MCP tool result is not a read, and a server tool's result is a
+# placeholder anyway — nothing hashable in either.
+id: mcp_results_are_not_files
+fixture: frame_mcp_tool
+expected: []
