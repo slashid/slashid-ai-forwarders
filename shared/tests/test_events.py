@@ -1374,3 +1374,32 @@ def test_anthropic_identity_details_on_the_envelope() -> None:
         parsed_as="anthropic-inference-hook",
     )
     assert env.identity_details.kind == "anthropic"
+
+
+async def test_envelope_conversation_id_reaches_the_event() -> None:
+    """The envelope owns conversation_id; the shared builder carries it
+    through unchanged. Bedrock and Vertex leave it unset and get None."""
+    from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
+
+    env = EventEnvelope(
+        request_id="r",
+        timestamp="2026-09-18T00:00:00Z",
+        identity_details=GCPIdentityDetails(),
+        model=AIModel(id="claude-sonnet-5"),
+        parsed_as="anthropic-inference-hook",
+        conversation_id="00000006-0000-4000-8000-000000000000",
+    )
+    event = await build_event_from_normalized(NormalizedInvocation(), env, config=_config())
+    assert event.conversation_id == "00000006-0000-4000-8000-000000000000"
+
+
+def test_sparse_event_carries_conversation_id() -> None:
+    """The compliance reader emits standalone denial events through the
+    sparse builder; grouping an incident needs the conversation id there
+    too."""
+    env = _sparse_envelope()
+    assert env.conversation_id is None
+    event = build_sparse_event(env, config=_config())
+    assert event.conversation_id is None
+    env_with = env.model_copy(update={"conversation_id": "sess_1"})
+    assert build_sparse_event(env_with, config=_config()).conversation_id == "sess_1"

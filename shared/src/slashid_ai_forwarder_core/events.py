@@ -358,6 +358,11 @@ class EventEnvelope(_WireModel):
     # request, not the principal — and it's cross-cloud, whereas the
     # identity shapes are vendor-specific.
     user_agent: str | None = None
+    # The vendor's own identifier for the multi-turn conversation this
+    # invocation belongs to. Set by sources that have one; Bedrock and
+    # Vertex leave it unset. It is what groups a denial incident, since
+    # one sticky denial produces an event per subsequent turn.
+    conversation_id: str | None = None
     # True when the vendor recorded a server-side error for the request
     # (non-zero gRPC status on Cloud Audit Logs, non-2xx HTTP status on
     # BQ payload rows, ``error`` set on Bedrock/Converse). When True the
@@ -571,6 +576,7 @@ async def build_event_from_normalized(
         tokens=envelope.tokens,
         parsed_as=envelope.parsed_as,
         user_agent=envelope.user_agent,
+        conversation_id=envelope.conversation_id,
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
@@ -620,5 +626,6 @@ def build_sparse_event(
         tokens=envelope.tokens,
         parsed_as=envelope.parsed_as,
         user_agent=envelope.user_agent,
+        conversation_id=envelope.conversation_id,
         stop_reason="error" if envelope.is_error else None,
     )
