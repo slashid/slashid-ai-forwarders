@@ -1,4 +1,4 @@
-"""The three addresses a pending record can be filed under."""
+"""The four addresses a pending record can be filed under."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from slashid_ai_forwarder_core.testing import yaml_pytest
 
 from slashid_anthropic_forwarder.address import (
     _canonical_bytes,
+    deny_address,
     hook_address,
     joinable_address,
     tail_address,
@@ -179,3 +180,13 @@ def test_a_successor_frame_reconstructs_its_predecessors_tail_key(
     assert reconstructed == written
     # And it is not the successor's own tail key, which is still outstanding.
     assert tail_address(successor.messages, successor.session_id) != written
+
+
+def test_a_denial_is_keyed_on_its_delivery() -> None:
+    assert deny_address("msg_1") == "deny:msg_1"
+
+
+def test_a_denial_and_an_unjoinable_run_on_one_delivery_do_not_collide() -> None:
+    """Both can arrive on the same frame, and merging them would leave one
+    record holding the other's event."""
+    assert deny_address("msg_1") != hook_address("msg_1")

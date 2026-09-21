@@ -23,8 +23,7 @@ what a reader may emit, what it may enrich and which runs get a tail all
 widen by themselves. Nothing else may test for a tool call.
 
 So there are four address spaces, and which one a record gets decides
-who may write it. Three of them are here; the fourth belongs to Reader A
-and lands with it:
+who may write it:
 
 - ``joinable_address`` — both sources compute it; either may open the
   record and the other may complete it.
@@ -36,11 +35,12 @@ and lands with it:
 - ``tail_address`` — the hook alone, for the fresh round a frame carries
   that no successor may ever report. Hook-local, so it may use an
   encoding the cross-source key cannot.
-- ``deny_address`` — **not here**: Reader A's, added in the chunk that
-  builds it. It is a fourth space rather than a second use of ``hook:``
-  because one frame can carry an unjoinable previous run *and* an
-  honoured deny on its fresh round, and one key for both would merge two
-  unrelated invocations into one record.
+- ``deny_address`` — the round whose deny was honoured, keyed on the
+  delivery the activity names so Reader A can compute it. It is a fourth
+  space rather than a second use of ``hook:`` because one frame can carry
+  an unjoinable previous run *and* an honoured deny on its fresh round,
+  and one key for both would merge two unrelated invocations into one
+  record.
 """
 
 from __future__ import annotations
@@ -98,6 +98,17 @@ def hook_address(webhook_id: str) -> str:
     compute it. A reader that finds an unjoinable run leaves it alone.
     """
     return f"hook:{webhook_id}"
+
+
+def deny_address(webhook_id: str) -> str:
+    """The address of a round whose deny was honoured: ``deny:`` + the delivery id.
+
+    Keyed on the delivery, which is what the denial activity names, but
+    under its own prefix. One frame can carry an unjoinable previous run
+    *and* an honoured deny on its fresh round — two invocations, and
+    ``hook:`` for both would merge them into one record.
+    """
+    return f"deny:{webhook_id}"
 
 
 def tail_address(transcript: Sequence[AnthropicRequestMessage], session_id: str | None) -> str:
