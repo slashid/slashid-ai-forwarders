@@ -1,51 +1,51 @@
 """Standard Webhooks signature verification for Inference hooks requests.
 
-https://www.standardwebhooks.com/ — HMAC-SHA256 over
-``{webhook-id}.{webhook-timestamp}.{raw body bytes}``.
+A thin wrapper over the reference implementation
+(https://www.standardwebhooks.com/), which owns the crypto: HMAC-SHA256
+over ``{webhook-id}.{webhook-timestamp}.{raw body bytes}``, the ``whsec_``
+prefix, the standard base64 alphabet, the ±300 s tolerance and
+constant-time comparison. The wrapper adds the two things the library
+does not do — accept more than one secret, so a rotation can be ridden
+out, and answer with a bool rather than an exception.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import time
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 
-TOLERANCE_SECONDS = 300
+from standardwebhooks import Webhook, WebhookVerificationError
+
+
+@lru_cache(maxsize=8)
+def _verifiers(secrets: tuple[str, ...]) -> tuple[Webhook, ...]:
+    """One verifier per usable secret, built once per secret set.
+
+    Construction decodes the secret and raises on a malformed one. Skip
+    those rather than let a mistyped second entry reject traffic the
+    first entry would have accepted.
+    """
+    built: list[Webhook] = []
+    for secret in secrets:
+        try:
+            built.append(Webhook(secret))
+        except Exception:  # misconfigured secret, not a request fault
+            continue
+    return tuple(built)
 
 
 def verify(secrets: Sequence[str], headers: Mapping[str, str], body: bytes) -> bool:
     """True when ``body`` was signed by Anthropic under any of ``secrets``.
 
-    ``body`` must be the raw bytes as received: a re-encoded JSON round trip
-    produces a different digest and silently rejects everything. Anthropic
-    sends header names lowercase, but proxies may re-case them.
+    ``body`` must be the raw bytes as received: hashing a re-encoded JSON
+    round trip produces a different digest and silently rejects
+    everything. ``json_parse=False`` keeps the library from parsing a
+    megabyte-scale frame whose parse we would immediately discard.
     """
-    lower = {k.lower(): v for k, v in headers.items()}
-    msg_id = lower.get("webhook-id")
-    timestamp = lower.get("webhook-timestamp")
-    signatures = lower.get("webhook-signature")
-    if not (msg_id and timestamp and signatures):
-        return False
-
-    try:
-        signed_at = int(timestamp)
-    except ValueError:
-        return False
-    if abs(time.time() - signed_at) > TOLERANCE_SECONDS:
-        return False
-
-    payload = f"{msg_id}.{timestamp}.".encode() + body
-    candidates = [c.encode() for c in signatures.split()]
-    for secret in secrets:
+    for webhook in _verifiers(tuple(secrets)):
         try:
-            # Standard alphabet, not urlsafe: the secret routinely contains
-            # '+' and '/', and a urlsafe decoder derives the wrong key bytes.
-            key = base64.b64decode(secret.removeprefix("whsec_"), validate=True)
-        except (ValueError, TypeError):
-            continue
-        expected = b"v1," + base64.b64encode(hmac.new(key, payload, hashlib.sha256).digest())
-        if any(hmac.compare_digest(expected, c) for c in candidates):
+            webhook.verify(body, dict(headers), json_parse=False)
             return True
+        except WebhookVerificationError:
+            continue
     return False

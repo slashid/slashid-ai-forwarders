@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.28",
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
+    "standardwebhooks>=1.1",
     "google-cloud-storage>=2.18",
 ]
 
