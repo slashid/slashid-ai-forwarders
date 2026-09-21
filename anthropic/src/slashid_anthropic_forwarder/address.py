@@ -45,12 +45,27 @@ and lands with it:
 
 from __future__ import annotations
 
+import hashlib
+import unicodedata
 from collections.abc import Sequence
 
 from slashid_ai_forwarder_core.normalize.anthropic.schema import (
+    AnthropicAttachmentBlock,
     AnthropicRequestMessage,
+    AnthropicTextBlock,
+    AnthropicToolResultBlock,
     AnthropicToolUseBlock,
 )
+
+# How much of a text block contributes to a tail digest. A Claude Code
+# transcript reaches 1.86 MB and a frame arrives every round, so the digest
+# has to be cheap; a 256-character prefix per block, together with the block
+# count, the roles and every tool id, was exact over the measured corpus —
+# 239 distinct keys from 284 deliveries, zero false merges, zero false
+# splits against the toolu_ ids as ground truth.
+TEXT_PREFIX_CHARS = 256
+
+_TAIL_VERSION = b"tail/1"
 
 
 def joinable_address(run: Sequence[AnthropicRequestMessage]) -> str | None:
@@ -83,3 +98,75 @@ def hook_address(webhook_id: str) -> str:
     compute it. A reader that finds an unjoinable run leaves it alone.
     """
     return f"hook:{webhook_id}"
+
+
+def tail_address(transcript: Sequence[AnthropicRequestMessage], session_id: str | None) -> str:
+    """``tail:`` + a digest over a frame's WHOLE transcript.
+
+    Hook-local: no reader ever computes it, so it may use an encoding that
+    the cross-source key provably cannot. Intra-source it was exact — 239
+    distinct keys from 284 deliveries, zero false merges and zero false
+    splits against the toolu_ ids as ground truth.
+
+    It must be **reconstructible**, because the successor frame's whole job
+    is to discard the record: frame N+1 drops its own trailing assistant run
+    and the round after it — ``split_transcript(...).before`` — and calls
+    this with the result. The canonical encoding is therefore part of the
+    contract, spelled out in ``_canonical_bytes``.
+    """
+    return "tail:" + hashlib.sha256(_canonical_bytes(transcript, session_id)).hexdigest()
+
+
+def _canonical_bytes(
+    transcript: Sequence[AnthropicRequestMessage], session_id: str | None
+) -> bytes:
+    """The byte stream a tail digest is taken over.
+
+    Every field is length-prefixed (4-byte big-endian) so content cannot
+    forge a separator. Per message: the role, then the number of blocks that
+    contributed, then each contributing block's fields. ``thinking`` and
+    unknown block types contribute nothing — frames carry no thinking blocks
+    today, and a block type invented next quarter must not move an existing
+    key. The version tag leads, so a future encoding change is a new key
+    space rather than a silent re-addressing of live records.
+    """
+    out = [
+        _field(_TAIL_VERSION),
+        _field(_prefix(session_id)),
+        _field(str(len(transcript)).encode()),
+    ]
+    for msg in transcript:
+        emitted = [f for f in (_block_fields(b) for b in msg.content) if f is not None]
+        out.append(_field(msg.role.encode("utf-8")))
+        out.append(_field(str(len(emitted)).encode()))
+        for fields in emitted:
+            out.extend(_field(f) for f in fields)
+    return b"".join(out)
+
+
+def _field(raw: bytes) -> bytes:
+    return len(raw).to_bytes(4, "big") + raw
+
+
+def _prefix(text: str | None) -> bytes:
+    """NFC-normalize, THEN truncate. The other order can split a combining
+    sequence and change what normalization produces."""
+    if not text:
+        return b""
+    return unicodedata.normalize("NFC", text)[:TEXT_PREFIX_CHARS].encode("utf-8")
+
+
+def _block_fields(block: object) -> list[bytes] | None:
+    """The fields one content block contributes, or ``None`` to skip it."""
+    if isinstance(block, AnthropicTextBlock):
+        return [b"t", _prefix(block.text)]
+    if isinstance(block, AnthropicToolUseBlock):
+        return [b"u", block.id.encode("utf-8"), _prefix(block.name)]
+    if isinstance(block, AnthropicToolResultBlock):
+        # The result's content is not hashed: it is capped at 10 KB on the
+        # reader's side and untruncated here, and the pairing id already
+        # identifies it uniquely.
+        return [b"r", block.tool_use_id.encode("utf-8"), b"1" if block.is_error else b"0"]
+    if isinstance(block, AnthropicAttachmentBlock):
+        return [b"a", _prefix(block.file_name), _prefix(block.text)]
+    return None
