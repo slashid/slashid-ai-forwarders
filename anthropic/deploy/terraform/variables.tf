@@ -326,3 +326,37 @@ variable "hook_path" {
   type        = string
   default     = "/hooks/anthropic"
 }
+
+variable "capture_bucket" {
+  description = <<-EOT
+    GCS bucket for raw prompt-frame capture, or "" to leave capture off.
+
+    Off by default and meant to stay off: a frame is the customer's whole
+    transcript in plaintext, so a bucket named here accumulates their
+    conversations. It exists because the protocol is only partly
+    documented and the shapes this forwarder relies on were settled by
+    reading real frames — the measurements in the README came from a
+    capture like this one.
+
+    Enable it on a test tenant, for as long as it takes to answer a
+    question, and give the bucket a retention policy. The service account
+    is granted objectCreator on it, and nothing in the service ever reads
+    an object back.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "capture_deny_marker" {
+  description = <<-EOT
+    A literal string that forces a deny when it appears anywhere in a
+    frame, for testing enforcement end to end. "" disables it.
+
+    Prefer SLASHID_MOCK_DENIED_HASHES, which is content-addressed: a
+    marker is tripped by anyone who merely quotes it, including the
+    person testing it, which has wedged a working session before.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}

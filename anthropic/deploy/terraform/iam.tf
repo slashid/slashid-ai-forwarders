@@ -76,3 +76,12 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
+
+# Write-only, and only when capture is on. The service never reads an
+# object back, so objectCreator rather than objectAdmin.
+resource "google_storage_bucket_iam_member" "capture" {
+  count  = var.capture_bucket == "" ? 0 : 1
+  bucket = var.capture_bucket
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.receiver.email}"
+}

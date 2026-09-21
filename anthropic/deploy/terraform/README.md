@@ -169,6 +169,29 @@ it, so the policy cannot reach one — which matters: expiring by creation
 time would delete a record that had been failing to push, the exact loss
 the store exists to prevent.
 
+## Frame capture
+
+Off unless `capture_bucket` names one, and meant to stay off. A prompt
+frame is the customer's whole transcript in plaintext, so a bucket named
+here accumulates their conversations.
+
+It exists because the protocol is only partly documented. Every wire
+claim this forwarder relies on was settled by reading real frames rather
+than the docs: that a hook spells the tool name differently from the
+Messages API, that attachments arrive as extracted text with no bytes,
+that one session id carries a hundred interleaved sub-conversations, and
+that the two sources share no identifier but a tool-use id. The
+measurements in `anthropic/README.md` came from a capture like this one.
+
+Turn it on against a test tenant, for as long as it takes to answer a
+question, and give the bucket a retention policy. The service account
+gets `objectCreator` and nothing in the service reads an object back.
+
+`capture_deny_marker` is the sibling knob: a literal string that forces a
+deny, for exercising enforcement. Prefer `SLASHID_MOCK_DENIED_HASHES`,
+which is content-addressed — a marker is tripped by anyone who merely
+quotes it, including the person testing it.
+
 ## Outputs
 
 | output | what it is |

@@ -65,6 +65,22 @@ resource "google_cloud_run_v2_service" "receiver" {
         name  = "SLASHID_PENDING_COLLECTION"
         value = var.pending_collection
       }
+      # Capture is off unless a bucket is named. See the variable for why
+      # it should stay that way outside a test tenant.
+      dynamic "env" {
+        for_each = var.capture_bucket == "" ? [] : [1]
+        content {
+          name  = "SLASHID_CAPTURE_BUCKET"
+          value = var.capture_bucket
+        }
+      }
+      dynamic "env" {
+        for_each = var.capture_deny_marker == "" ? [] : [1]
+        content {
+          name  = "SLASHID_CAPTURE_DENY_MARKER"
+          value = var.capture_deny_marker
+        }
+      }
       env {
         name  = "SLASHID_CHECKPOINT_COLLECTION"
         value = var.checkpoint_collection
