@@ -312,6 +312,12 @@ Only `accessed_files` is read today, so the call is skipped when the fresh round
 1. **An eventing failure must never become a verdict failure.** A non-200 is a *webhook failure*, which hands control to the organization's fail-open/fail-closed setting, and sustained failures trip Anthropic's circuit breaker and disable enforcement entirely. So: respond first, write the pending record in a tracked task afterwards, and never let its outcome reach the response.
 2. **The verdict's own failure mode is a separate knob**, defaulting to allow. Two settings that are easy to confuse; the README must name both and say which covers what.
 
+**A third check exists so the deny path can be exercised before preflight ships.** `SLASHID_MOCK_DENIED_HASHES` takes a comma-separated list of hex digests. When set, a local check denies any invocation whose `accessed_files` carry a matching `content_hashes` value, and it runs **in addition to** preflight rather than instead of it, composing under the same any-deny-denies rule. That matters for testing: with the endpoint unshipped and `SLASHID_PREFLIGHT_ENABLED` false, this is the only way to drive a real denial end to end — through composition, the deny reason, the recovery sentence, the `guardrail_intervened` stamp, the denial record's own address and Reader A's join — against a file whose digest the operator chose.
+
+It is pure local computation over content the frame already carried, so it cannot fail and never interacts with `SLASHID_VERDICT_FAIL_MODE`. It judges the same tail event preflight judges, so a test denial and a real one are attributed identically. Unset, it costs a comparison against an empty tuple.
+
+Like `SLASHID_CAPTURE_DENY_MARKER`, this is a test-tenant affordance and the README says so. Unlike the marker, it is content-addressed rather than a magic string, so it cannot be tripped by someone merely discussing it — which is the failure the marker has, and the reason this exists in its shape.
+
 **Budget.** Anthropic's timeout is 1–10,000 ms, 5,000 default, covering the whole exchange, and it retries once after 100 ms only when the connection attempt fails. The policy receiver caps itself at 2.5 s and preflight's graph deadline is 750 ms; both run concurrently under `SLASHID_VERDICT_BUDGET_MS`.
 
 ### Reader A — denials, from the Activity Feed
@@ -478,6 +484,7 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | `SLASHID_MAX_ATTACHMENT_FETCH_BYTES` | `10485760` | under `full`, the largest attachment worth downloading. Decided from the listing's `size_bytes` before any fetch; an oversized file falls back to the listing's `md5` rather than to no digest. |
 | `SLASHID_CAPTURE_BUCKET` | unset | raw-frame capture for protocol study; test tenants only |
 | `SLASHID_CAPTURE_DENY_MARKER` | unset | a token that forces a deny, for end-to-end enforcement tests on a test tenant; never logged or echoed |
+| `SLASHID_MOCK_DENIED_HASHES` | unset | comma-separated hex digests; denies any invocation whose `accessed_files` match one. Runs **alongside** preflight, so the deny path is testable before that endpoint ships. Test tenants only. |
 
 **At least one credential must be present**, or startup fails. The signing secret is required only when the hook is in use, so compliance-only needs none.
 
