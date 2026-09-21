@@ -25,8 +25,8 @@ class Config(BaseConfig):
     hook_allow_unsigned: bool = False
     # The Go policy receiver (POST /ai-access/<id>). None skips the check.
     policy_url: str | None = None
-    # POST {endpoint}/ip/nhi/ai/preflight. False skips the content check.
-    preflight_enabled: bool = True
+    # POST {endpoint}/ip/nhi/ai/preflight. Off until that endpoint ships.
+    preflight_enabled: bool = False
     # Answer when a check fails or comes back unverified. Allow by default:
     # refusing to answer is self-inflicted downtime, and the customer has
     # Anthropic-side failure handling for strictness.

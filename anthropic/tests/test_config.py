@@ -30,7 +30,7 @@ def test_defaults_are_observe_only_and_fail_open(monkeypatch: pytest.MonkeyPatch
     assert cfg.shadow_mode is True
     assert cfg.verdict_fail_mode == "allow"
     assert cfg.policy_url is None
-    assert cfg.preflight_enabled is True
+    assert cfg.preflight_enabled is False
     assert cfg.hook_allow_unsigned is False
     assert cfg.capture_bucket is None
 
