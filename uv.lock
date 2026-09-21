@@ -1727,6 +1727,7 @@ version = "0.1.0"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
+    { name = "google-cloud-firestore" },
     { name = "google-cloud-storage" },
     { name = "httpx" },
     { name = "pydantic" },
@@ -1744,6 +1745,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "google-cloud-firestore", specifier = ">=2.16" },
     { name = "google-cloud-storage", specifier = ">=2.18" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic", specifier = ">=2.10" },
