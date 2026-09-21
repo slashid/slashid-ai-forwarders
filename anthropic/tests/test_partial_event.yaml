@@ -1,0 +1,135 @@
+# An opening prompt has no previous run to name, so there is no record to
+# build. Its fresh round is not lost: it is what the tail record holds.
+id: a_first_frame_has_no_previous_run
+fixture: frame_first_turn
+insert_at: null
+append: []
+expected: null
+---
+# The Read result is in the fresh round, so it belongs to the invocation this
+# frame is about to feed — not to the run that asked for it. The tool is still
+# declared: the trailing run issued it.
+id: a_fresh_read_result_is_not_attributed_yet
+fixture: frame_tool_result
+insert_at: null
+append: []
+expected:
+  stop_reason: tool_use
+  tool_names: [Read]
+  servers: [[builtin, runtime]]
+---
+# The run that answers this record ends in two parallel tool calls, so they
+# are one output and the stop reason is tool_use. Both results sit in the
+# fresh round and land on the next record, not this one.
+id: a_run_ending_in_parallel_tool_calls_stops_on_tool_use
+fixture: frame_multi_tool
+insert_at: null
+append: []
+expected:
+  stop_reason: tool_use
+  tool_names: [Read]
+  servers: [[builtin, runtime]]
+---
+# The plainest shape there is: a prompt, a text answer, a new prompt. Nothing
+# consumed, nothing declared, and the answer stops on end_turn.
+id: a_text_only_run_stops_on_end_turn
+fixture: frame_first_turn
+insert_at: null
+append:
+  - {role: assistant, content: [{type: text, text: "Hello — what would you like to do?"}]}
+  - {role: user, content: [{type: text, text: nothing yet}]}
+expected: {}
+---
+# Continue the same conversation one round: the answer becomes the trailing
+# run, the Read result becomes the round it consumed, and the file lands.
+id: the_read_lands_one_round_later
+fixture: frame_tool_result
+insert_at: null
+append:
+  - {role: assistant, content: [{type: text, text: The first line is SCENARIO-B notes.}]}
+  - {role: user, content: [{type: text, text: thanks}]}
+expected:
+  used_tool_ids: [toolu_01Dqhr2d1w2UCUqbXhCSGutC]
+  used_tool_errors: [false]
+  accessed_files:
+    - {name: /home/alice/proj/notes.txt, sha256: e6bab19e50f90145e62b963a3584ec72ea6b88adcb71de6522301ebb9fa0813d}
+  tool_names: [Read]
+  servers: [[builtin, runtime]]
+---
+# A failed Read is still a tool the model used; it is just not a file read.
+id: a_failed_read_is_a_used_tool_but_not_a_file
+fixture: frame_tool_error
+insert_at: null
+append:
+  - {role: assistant, content: [{type: text, text: missing}]}
+  - {role: user, content: [{type: text, text: ok}]}
+expected:
+  used_tool_ids: [toolu_01GSt4gp6UqW6a5RsxRvyn8d]
+  used_tool_errors: [true]
+  tool_names: [Read]
+  servers: [[builtin, runtime]]
+---
+# Deferred-tool loading: the ToolSearch result and the separate "Tool loaded."
+# message are one round, and it is the round the trailing run consumed. That
+# run's own tool_use is mcp__demo__echo, which is what yields the demo MCP
+# server; its result sits in the fresh round and is not attributed here.
+id: the_attributed_round_spans_two_user_messages
+fixture: frame_mcp_tool
+insert_at: null
+append: []
+expected:
+  stop_reason: tool_use
+  used_tool_ids: [toolu_013a8rkKEU8XmKMJNmwAkcXn]
+  used_tool_errors: [false]
+  tool_names: [ToolSearch, echo]
+  servers: [[builtin, runtime], [demo, mcp]]
+---
+# The rule, pinned. Give the attachment frame a previous round and its three
+# attachment blocks stay in the fresh one, which belongs to the tail — so this
+# event carries no file at all. Handing the builder the whole frame instead
+# would stamp maria.txt and guiaSADT.pdf on a run that never saw either, on
+# 16 of the 17 measured claude.ai frames.
+id: an_attachment_in_the_fresh_round_is_not_on_this_record
+fixture: frame_attachment
+insert_at: 0
+append:
+  - {role: user, content: [{type: text, text: oi}]}
+  - {role: assistant, content: [{type: text, text: "Olá! Como posso ajudar?"}]}
+expected: {}
+---
+# The complement: one round later the same attachments are the round the
+# trailing run consumed, and both text-bearing ones land. The JPEG carries no
+# text either way, so it is never an entry.
+id: attachments_land_once_their_round_is_the_consumed_one
+fixture: frame_attachment
+insert_at: null
+append:
+  - {role: assistant, content: [{type: text, text: "Recebi os anexos."}]}
+  - {role: user, content: [{type: text, text: "e agora?"}]}
+expected:
+  accessed_files:
+    - {name: maria.txt, sha256: 576f5772eb89115f882ac39a431b48a4bc1872d84b48573ee1dd5c1f43065055, provenance: attachment}
+    - {name: guiaSADT.pdf, sha256: 3f6af091f4b9191b99ff17468d46aee5079b69c13ad754979846b6883e92b5ff, provenance: attachment}
+---
+# The Bash result is what the trailing Read run consumed, and Bash is no file
+# read, so there is no file. The fresh Read result — a.txt — is the next
+# invocation's. Both names are declared: the transcript and the run that
+# answered it reveal them.
+id: only_the_round_the_previous_run_consumed_is_attributed
+fixture: frame_subagent_child
+insert_at: null
+append: []
+expected:
+  stop_reason: tool_use
+  used_tool_ids: [toolu_01SpA8HaR3QvRatgbe8q11GT]
+  used_tool_errors: [false]
+  tool_names: [Bash, Read]
+  servers: [[builtin, runtime]]
+---
+# A shadow-mode denial needs no special case: the request ran, the assistant
+# answered, and this is an ordinary record.
+id: a_shadow_denied_turn_is_an_ordinary_invocation
+fixture: frame_after_shadow_deny
+insert_at: null
+append: []
+expected: {}
