@@ -35,7 +35,11 @@ def _verifiers(secrets: tuple[str, ...]) -> tuple[Webhook, ...]:
 
 
 def verify(secrets: Sequence[str], headers: Mapping[str, str], body: bytes) -> bool:
-    """True when ``body`` was signed by Anthropic under any of ``secrets``.
+    """True when ``body`` was signed by Anthropic under **any** of ``secrets``.
+
+    Any number is accepted, tried in order. Two is what a rotation needs;
+    more is allowed and costs one failed HMAC each, which is why the
+    caller, not this function, decides whether an empty list may pass.
 
     ``body`` must be the raw bytes as received: hashing a re-encoded JSON
     round trip produces a different digest and silently rejects

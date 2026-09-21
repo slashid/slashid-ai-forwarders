@@ -59,10 +59,42 @@ def test_unsigned_rejected() -> None:
     assert not verify([SECRET], {}, b"{}")
 
 
+def _secret(seed: int) -> str:
+    return "whsec_" + base64.b64encode(bytes([seed]) * 32).decode()
+
+
 def test_second_secret_accepted_during_rotation() -> None:
-    other = "whsec_" + base64.b64encode(b"\x01" * 32).decode()
+    other = _secret(1)
     body, ts = b"{}", _now()
     assert verify([SECRET, other], _headers("m", ts, _sign(other, "m", ts, body)), body)
+
+
+def test_any_one_of_many_secrets_verifies() -> None:
+    """The set is not capped at the two a rotation needs: every secret is
+    tried and the match may be the last."""
+    others = [_secret(i) for i in range(1, 5)]
+    body, ts = b"{}", _now()
+    sig = _sign(others[-1], "m", ts, body)
+    assert verify([SECRET, *others], _headers("m", ts, sig), body)
+
+
+def test_no_matching_secret_rejects() -> None:
+    body, ts = b"{}", _now()
+    sig = _sign(_secret(9), "m", ts, body)
+    assert not verify([SECRET, _secret(1), _secret(2)], _headers("m", ts, sig), body)
+
+
+def test_empty_secret_list_rejects() -> None:
+    """Accepting an unsigned request is HOOK_ALLOW_UNSIGNED's decision and
+    main.py's to make; verify never says yes with no key."""
+    body, ts = b"{}", _now()
+    assert not verify([], _headers("m", ts, _sign(SECRET, "m", ts, body)), body)
+
+
+def test_a_malformed_secret_does_not_shadow_a_later_good_one() -> None:
+    body, ts = b"{}", _now()
+    sig = _sign(SECRET, "m", ts, body)
+    assert verify(["whsec_not*base64", _secret(1), SECRET], _headers("m", ts, sig), body)
 
 
 def test_one_of_several_candidates_suffices() -> None:

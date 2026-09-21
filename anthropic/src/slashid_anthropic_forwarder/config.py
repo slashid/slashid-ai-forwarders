@@ -15,9 +15,10 @@ class Config(BaseConfig):
     SLASHID_MAX_RETRIES from BaseConfig.
     """
 
-    # Comma-separated so both secrets are accepted during a rotation:
-    # requests signed with the previous secret keep arriving for about a
-    # minute after the cutover.
+    # Comma-separated, any length. A rotation needs at least two live at
+    # once, since requests signed with the previous secret keep arriving
+    # for about a minute after the cutover; ``verify`` tries every entry,
+    # so more than two is allowed and costs one failed HMAC each.
     hook_signing_secret: str = ""
     # Escape hatch for an organization that enabled hooks before signing
     # secrets were required. Default false: unsigned requests get 401.
