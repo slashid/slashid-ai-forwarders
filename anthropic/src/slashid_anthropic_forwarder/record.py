@@ -21,6 +21,7 @@ reads the result back.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -82,6 +83,12 @@ class PendingRecord:
     verdict: str | None = None
     composed_verdict: str | None = None
     awaiting: list[str] = field(default_factory=list)
+    # Attachment digests a reader delivered, applied when the record
+    # becomes an event. They live beside the event rather than inside it
+    # because a reader cannot merge into `accessed_files` — it holds the
+    # listing's entries and not the frame's untruncated tool-result ones,
+    # and a merged list field replaces rather than unions.
+    file_digests: list[dict[str, Any]] = field(default_factory=list)
     contributed: list[str] = field(default_factory=list)
     attempts: int = 0
     claim_owner: str | None = None
@@ -144,15 +151,49 @@ def parsed_as(contributed: list[str]) -> str:
     return PARSED_AS_HOOK
 
 
+def apply_file_digests(
+    event: Mapping[str, Any], digests: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Swap the attachment group for what a reader measured.
+
+    Pairing a frame's attachment block to a ``files[]`` entry is
+    unreliable — ``file_name`` is null for images and was null for this
+    tenant's PDFs, the ``<uploaded_files>`` order does not match the block
+    order, and ``size_bytes`` disagrees whenever the stored copy was
+    processed — so the group is replaced wholesale. ``tool_result``
+    entries are never touched.
+
+    No digests means no replacement, which is not the same as an empty
+    group: a reader that visited and found nothing clears the expectation
+    at the store, and the frame's own entries stay.
+    """
+    body = dict(event)
+    if not digests:
+        return body
+    existing = body.get("accessed_files") or []
+    body["accessed_files"] = [
+        *[f for f in existing if f.get("provenance") != "attachment"],
+        *digests,
+    ]
+    return body
+
+
 def to_event(record: PendingRecord) -> AIInvocationObservedV1:
     """Validate a record into the event that goes on the wire.
+
+    The one place the stored mapping becomes an event, so it is also
+    where a reader's digests are applied and where ``parsed_as`` is
+    decided from ``contributed``.
 
     Raises ``ValidationError`` (a ``ValueError``) on a record that never
     became a whole event — which is why this runs at push, where the
     caller can log it and retry, and not on the request path.
     """
     return AIInvocationObservedV1.model_validate(
-        {**record.event, "parsed_as": parsed_as(record.contributed)}
+        {
+            **apply_file_digests(record.event, record.file_digests),
+            "parsed_as": parsed_as(record.contributed),
+        }
     )
 
 
@@ -166,6 +207,7 @@ def from_document(address: str, data: dict[str, Any]) -> PendingRecord:
         verdict=data.get("verdict"),
         composed_verdict=data.get("composed_verdict"),
         awaiting=list(data.get("awaiting") or []),
+        file_digests=list(data.get("file_digests") or []),
         contributed=list(data.get("contributed") or []),
         attempts=int(data.get("attempts") or 0),
         claim_owner=data.get("claim_owner"),

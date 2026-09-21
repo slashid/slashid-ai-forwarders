@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from slashid_ai_forwarder_core.events import (
@@ -21,7 +22,9 @@ from slashid_anthropic_forwarder.record import (
     FILE_DIGESTS,
     HOOK,
     MAX_EVENT_BYTES,
+    PARSED_AS_COMPLIANCE,
     PARSED_AS_HOOK,
+    PARSED_AS_JOINED,
     Append,
     PendingRecord,
     event_fields,
@@ -194,3 +197,69 @@ def test_a_record_with_no_raw_text_left_to_drop_still_fits() -> None:
     assert fields["elided"] is True
     assert "accessed_files" not in fields["event"]
     assert json_size(fields["event"]) <= MAX_EVENT_BYTES
+
+
+def _record_with(**over: Any) -> PendingRecord:
+    base: dict[str, Any] = {
+        "address": "toolu_01A",
+        "event": {
+            "request_id": "toolu_01A",
+            "timestamp": "2026-09-20T23:08:20+00:00",
+            "identity_details": {"kind": "anthropic", "user_id": "user_01A"},
+            "model": {"id": "claude-opus-5"},
+            "accessed_files": [
+                {
+                    "name": "src/a.py",
+                    "content_hashes": {"sha256": "aa"},
+                    "provenance": "tool_result",
+                },
+                {"name": None, "content_hashes": {"sha256": "bb"}, "provenance": "attachment"},
+            ],
+        },
+        "deadline": NOW,
+        "next_attempt_at": NOW,
+        "contributed": [HOOK],
+    }
+    return PendingRecord(**(base | over))
+
+
+def test_digests_replace_the_attachment_group_at_push() -> None:
+    record = _record_with(
+        file_digests=[
+            {"name": "maria.txt", "content_hashes": {"md5": "cc"}, "provenance": "attachment"}
+        ],
+        contributed=[HOOK, COMPLIANCE],
+    )
+    event = to_event(record)
+    assert [f.name for f in event.accessed_files or []] == ["src/a.py", "maria.txt"]
+    # The frame's tool-result entry is untouched: it was hashed from an
+    # untruncated transcript, which no reader can match.
+    assert (event.accessed_files or [])[0].content_hashes == {"sha256": "aa"}
+    assert event.parsed_as == PARSED_AS_JOINED
+
+
+def test_an_empty_visit_keeps_what_the_frame_hashed() -> None:
+    # A reader that found no listing still clears the expectation at the
+    # store, but an empty replacement replaces nothing: an empty listing is
+    # not evidence the round had no attachment, and a frame's
+    # extracted-text digest is exact for plain text.
+    event = to_event(_record_with(file_digests=[]))
+    assert [f.name for f in event.accessed_files or []] == ["src/a.py", None]
+
+
+def test_a_reader_only_record_is_labelled_compliance() -> None:
+    event = to_event(_record_with(contributed=[COMPLIANCE]))
+    assert event.parsed_as == PARSED_AS_COMPLIANCE
+
+
+def test_from_document_carries_the_digests() -> None:
+    record = from_document(
+        "toolu_01A",
+        {
+            "event": {},
+            "deadline": NOW,
+            "next_attempt_at": NOW,
+            "file_digests": [{"name": "maria.txt", "provenance": "attachment"}],
+        },
+    )
+    assert record.file_digests == [{"name": "maria.txt", "provenance": "attachment"}]
