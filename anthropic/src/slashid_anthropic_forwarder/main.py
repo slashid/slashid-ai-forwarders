@@ -15,9 +15,9 @@ import sys
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from .capture import Capture, GcsCapture
 from .config import Config, load_config
-from .signature import verify
+from .hook.capture import Capture, GcsCapture
+from .hook.signature import verify
 
 log = logging.getLogger(__name__)
 

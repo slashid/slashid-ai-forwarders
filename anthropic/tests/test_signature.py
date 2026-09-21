@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import time
 
-from slashid_anthropic_forwarder.signature import verify
+from slashid_anthropic_forwarder.hook.signature import verify
 
 # 0xfb 0xff 0xbf encodes as "+/+/", so the secret carries both characters
 # a URL-safe decoder gets wrong.
