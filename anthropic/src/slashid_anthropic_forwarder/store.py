@@ -16,6 +16,7 @@ changes.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -330,6 +331,62 @@ class FirestorePendingStore:
         if (snapshot.to_dict() or {}).get("tombstoned_at") is not None:
             return Seen.TOMBSTONED
         return Seen.LIVE
+
+
+class TickLease:
+    """The guard one tick takes before it does any work.
+
+    The flush needs no such thing — ``claim`` arbitrates per record — but
+    the readers do: two concurrent ticks walk the same lagging window,
+    spend the same rate limit twice, and both write a checkpoint that has
+    no precondition, so the watermark can move backwards.
+
+    One document, compare-and-set on its update time, exactly as ``claim``
+    works. It lives in the pending collection and nothing there sees it:
+    it carries no ``tombstoned_at``, so the IS_NULL filter behind ``due``
+    skips it, and no ``tombstone_expires_at``, so the TTL policy never
+    collects it.
+    """
+
+    def __init__(self, *, client: Any, collection: str, document: str = "tick") -> None:
+        self._client = client
+        self._ref = client.collection(collection).document(document)
+
+    async def take(self, lease: timedelta, *, owner: str, now: datetime | None = None) -> bool:
+        """True when this caller now holds it. False means another tick is
+        running, which is not an error: the next cron fire picks the work
+        up from the store, and Cloud Scheduler retries nothing."""
+        now = now or datetime.now(UTC)
+        snapshot = await self._ref.get()
+        if not snapshot.exists:
+            try:
+                await self._ref.create({"tick_owner": owner, "tick_expires_at": now + lease})
+            except AlreadyExists:
+                return False
+            return True
+        held = (snapshot.to_dict() or {}).get("tick_expires_at")
+        if held is not None and held > now:
+            return False
+        try:
+            await self._ref.update(
+                {"tick_owner": owner, "tick_expires_at": now + lease},
+                option=self._client.write_option(last_update_time=snapshot.update_time),
+            )
+        except (FailedPrecondition, NotFound):
+            return False
+        return True
+
+    async def release(self, *, owner: str) -> None:
+        """Hand it back. A lease that lapsed and was taken by someone else
+        is left alone: releasing it would give a running tick's guard away."""
+        snapshot = await self._ref.get()
+        if not snapshot.exists or (snapshot.to_dict() or {}).get("tick_owner") != owner:
+            return
+        with contextlib.suppress(FailedPrecondition, NotFound):
+            await self._ref.update(
+                {"tick_expires_at": None},
+                option=self._client.write_option(last_update_time=snapshot.update_time),
+            )
 
 
 def _transforms(fields: dict[str, Any]) -> dict[str, Any]:
