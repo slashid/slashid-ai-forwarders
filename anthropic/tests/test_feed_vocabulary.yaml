@@ -1,0 +1,23 @@
+# The activity feed defaults to desc. `order=asc` is not a preference: a
+# reader that omits it resumes from its watermark and pages backwards
+# into the past forever, with 200s and full pages the whole way.
+id: activities_ask_ascending_explicitly
+feed: activities
+params:
+  created_at.gte: "2026-09-20T12:00:00+00:00"
+  order: asc
+---
+# `updated_at.gte` is rejected unless the ordering rides with it, and the
+# parameter is `order_by`. Sending `order` here is a recorded 4xx.
+id: chats_need_order_by_with_the_bound
+feed: chats
+params:
+  updated_at.gte: "2026-09-20T12:00:00+00:00"
+  order_by: updated_at
+---
+# No ordering parameter exists at all — both `order` and `order_by` are
+# recorded rejections — so the bound is the only thing this feed takes.
+id: local_sessions_take_the_bound_and_nothing_else
+feed: local_sessions
+params:
+  updated_at.gte: "2026-09-20T12:00:00+00:00"
