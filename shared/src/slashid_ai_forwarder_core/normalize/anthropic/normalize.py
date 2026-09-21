@@ -16,6 +16,7 @@ import logging
 from typing import Any, cast
 
 from ...config_base import BaseConfig
+from ..normalized.media_types import parse_media_type
 from ..normalized.tools import build_tools_declared
 from ..normalized.types import (
     NormalizedContent,
@@ -25,6 +26,7 @@ from ..normalized.types import (
     NormalizedMessage,
 )
 from .schema import (
+    AnthropicAttachmentBlock,
     AnthropicContentBlockDeltaEvent,
     AnthropicContentBlockStart,
     AnthropicContentBlockStop,
@@ -173,6 +175,15 @@ def _translate_request_content(
                         tool_output=block.content,
                         tool_is_error=block.is_error,
                         tool_executor="client",
+                    )
+                )
+            case AnthropicAttachmentBlock():
+                out.append(
+                    NormalizedContent(
+                        kind="document",
+                        text=block.text,
+                        media_type=parse_media_type(block.media_type),
+                        byte_length=len(block.text.encode()) if block.text is not None else None,
                     )
                 )
             # AnthropicUnknownBlock: skipped silently.

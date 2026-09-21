@@ -230,11 +230,28 @@ class AnthropicToolResultBlock(_LenientModel):
     is_error: bool = False
 
 
+class AnthropicAttachmentBlock(_LenientModel):
+    """Inference hooks attachment: metadata plus extracted text, never bytes.
+
+    Every field but ``type`` can be null — an image arrives with no name
+    and no text, a PDF with text but no name. ``size_bytes`` describes
+    the upload, not the extracted text, and disagrees with it whenever
+    the stored copy was processed; it is metadata, not a hash input.
+    """
+
+    type: Literal["attachment"]
+    file_name: str | None = None
+    media_type: str | None = None
+    size_bytes: int | None = None
+    text: str | None = None
+
+
 AnthropicRequestContentBlock = (
     AnthropicTextBlock
     | AnthropicToolUseBlock
     | AnthropicThinkingBlock
     | AnthropicToolResultBlock
+    | AnthropicAttachmentBlock
     | AnthropicUnknownBlock
 )
 # Superset of the response-side content-block union: adds
