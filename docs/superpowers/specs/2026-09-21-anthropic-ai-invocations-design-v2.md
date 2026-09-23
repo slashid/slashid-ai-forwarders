@@ -4,7 +4,7 @@
 **Status:** Design, ready for planning. Every wire claim below was measured against a live Claude Enterprise tenant on 2026-09-20/21; nothing here is inferred from documentation alone.
 **Supersedes:** `2026-09-18-anthropic-inference-hooks-design.md`, which described the hook in isolation.
 **Target repo:** `slashid-ai-forwarders`, new subdirectory `anthropic/`, beside `bedrock/`, `vertex/` and `shared/`.
-**Companion changes:** `POST /ip/nhi/ai/preflight` in `ng-evangelion` ([#7733](https://github.com/slashid/ng-evangelion/pull/7733)); a batched schema sync for `AIAccessedFile.provenance` and `AnthropicIdentityDetails`.
+**Companion changes:** `POST /nhi/ai/preflight` in `ng-evangelion` ([#7733](https://github.com/slashid/ng-evangelion/pull/7733)); a batched schema sync for `AIAccessedFile.provenance` and `AnthropicIdentityDetails`.
 
 ## Overview
 
@@ -297,7 +297,7 @@ Two checks, concurrent, ANDed, each optional.
 
 **Policy.** `POST {SLASHID_POLICY_URL}` with the **raw request bytes** and the three `webhook-*` headers verbatim, uncompressed. The `ng-evangelion` receiver re-verifies the signature under its own copy of the secret, checks the tenant binding, resolves the actor and evaluates graph policy. It answers HTTP 200 with the Anthropic verdict shape and turns its own errors into an explicit deny, so a 200 deny is authoritative and never softened by our fail mode.
 
-**Preflight.** `POST {SLASHID_ENDPOINT}/ip/nhi/ai/preflight` with the connection push token, which is the same credential the sink uses rather than a second one.
+**Preflight.** `POST {SLASHID_ENDPOINT}/nhi/ai/preflight` with the connection push token, which is the same credential the sink uses rather than a second one.
 
 **The request body is an `AIInvocationObservedV1`** — the very object this service already builds — sent early and therefore incomplete, with `output`, `tokens` and everything the model has not produced yet simply absent. There is deliberately no preflight-specific request schema, so nothing has to be kept in step and the invocation is not built twice. The object to send is **the tail event**, the partial record for the fresh round, since that is the round being judged. The record for the previous run is a different invocation and must not be sent.
 
@@ -470,7 +470,7 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | `SLASHID_HOOK_SIGNING_SECRET` | unset | `whsec_…`; comma-separated accepts any number, tried in order. **Setting it enables the hook.** |
 | `SLASHID_HOOK_ALLOW_UNSIGNED` | `false` | escape hatch for an org that enabled hooks before secrets were required; cannot be combined with `POLICY_URL` |
 | `SLASHID_POLICY_URL` | unset | the `ng-evangelion` receiver's `/ai-access/<id>`; unset skips the policy check |
-| `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/ip/nhi/ai/preflight`; keep off until that endpoint is deployed |
+| `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/nhi/ai/preflight`; keep off until that endpoint is deployed |
 | `SLASHID_VERDICT_FAIL_MODE` | `allow` | `allow` or `deny` when a check fails or answers unverified |
 | `SLASHID_VERDICT_BUDGET_MS` | `3500` | both checks, concurrently, under Anthropic's timeout |
 | `SLASHID_SHADOW_MODE` | `true` | our own shadow mode, named after claude.ai's `shadow_mode` field and **independent of it**: when either is on, nothing is blocked. On by default, so a fresh deployment observes before it enforces. |
