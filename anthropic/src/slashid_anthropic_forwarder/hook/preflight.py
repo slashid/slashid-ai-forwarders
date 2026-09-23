@@ -57,10 +57,6 @@ async def preflight_check(
     The credential is the connection push token, carried exactly as
     ``sink.push_invocations`` carries it — the same one, not a second.
     """
-    # Every file goes, uncapped. Preflight fails closed, so a batch it cannot
-    # finish denies rather than slipping through, which is what makes this
-    # safe. A cap here would be the bypass: whatever sat past it would never
-    # be checked at all.
     try:
         # ``/ip`` is the route's internal name; the public gateway strips it,
         # as it does for the ingest route the sink calls.
