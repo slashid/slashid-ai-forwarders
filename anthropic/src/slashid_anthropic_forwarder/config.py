@@ -23,8 +23,6 @@ class Config(BaseConfig):
     # Escape hatch for an organization that enabled hooks before signing
     # secrets were required. Default false: unsigned requests get 401.
     hook_allow_unsigned: bool = False
-    # The Go policy receiver (POST /ai-access/<id>). None skips the check.
-    policy_url: str | None = None
     # POST {endpoint}/nhi/ai/preflight. Off until that endpoint ships.
     preflight_enabled: bool = False
     # Answer when a check fails or comes back unverified. Allow by default:
@@ -122,10 +120,10 @@ class Config(BaseConfig):
     # it, so this is the input and the cron is the derivation.
     tick_interval_seconds: int = 300
 
-    # Hex digests that deny. Exists because on a fresh deployment nothing
-    # else can: preflight is off until that endpoint ships and POLICY_URL
-    # is unset until a gate route exists, so the composition, the deny
-    # reason, the guardrail stamp, the `deny:` address and Reader A's join
+    # Hex digests that deny. Exists so a test tenant can drive a real
+    # denial without depending on the graph having anything tagged
+    # sensitive: the composition, the deny reason, the guardrail stamp,
+    # the `deny:` address and Reader A's join
     # onto it are all unreachable. Runs alongside preflight rather than
     # instead of it, so enabling the real endpoint later changes nothing.
     #
@@ -135,7 +133,6 @@ class Config(BaseConfig):
     mock_denied_hashes: str = ""
 
     @field_validator(
-        "policy_url",
         "compliance_key",
         "organization_uuid",
         "capture_bucket",
@@ -186,8 +183,6 @@ class Config(BaseConfig):
                 "no capability configured: set SLASHID_HOOK_SIGNING_SECRET for the hook "
                 "(or SLASHID_HOOK_ALLOW_UNSIGNED), SLASHID_COMPLIANCE_KEY for the readers"
             )
-        if self.hook_allow_unsigned and self.policy_url:
-            raise ValueError("HOOK_ALLOW_UNSIGNED cannot be combined with POLICY_URL")
         if self.compliance_enabled and not self.organization_uuid:
             raise ValueError("SLASHID_ORGANIZATION_UUID is required with SLASHID_COMPLIANCE_KEY")
         floor = self.join_wait_seconds + self.poll_lag_seconds + self.tick_interval_seconds

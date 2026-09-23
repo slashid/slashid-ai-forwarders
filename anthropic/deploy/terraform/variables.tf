@@ -41,7 +41,7 @@ variable "hook_signing_secret" {
 }
 
 variable "hook_allow_unsigned" {
-  description = "Accept unsigned frames. Escape hatch for an organization that enabled hooks before signing secrets were required; cannot be combined with policy_url."
+  description = "Accept unsigned frames. Escape hatch for an organization that enabled hooks before signing secrets were required."
   type        = bool
   default     = false
 }
@@ -60,12 +60,6 @@ variable "organization_uuid" {
 }
 
 # --- Verdict knobs ---------------------------------------------------------
-
-variable "policy_url" {
-  description = "The ng-evangelion receiver's /ai-access/<id>. Empty skips the policy check."
-  type        = string
-  default     = ""
-}
 
 variable "preflight_enabled" {
   description = "Call {slashid_endpoint}/nhi/ai/preflight for the content check. Keep off until that endpoint is deployed: against a 404 every frame takes the fail-mode path."

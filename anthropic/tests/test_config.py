@@ -30,7 +30,6 @@ def test_defaults_are_observe_only_and_fail_open(monkeypatch: pytest.MonkeyPatch
     cfg = Config()
     assert cfg.shadow_mode is True
     assert cfg.verdict_fail_mode == "allow"
-    assert cfg.policy_url is None
     assert cfg.preflight_enabled is False
     assert cfg.hook_allow_unsigned is False
     assert cfg.capture_bucket is None
@@ -49,16 +48,6 @@ def test_signing_secret_required_unless_unsigned_allowed(monkeypatch: pytest.Mon
         Config()
     monkeypatch.setenv("SLASHID_HOOK_ALLOW_UNSIGNED", "true")
     assert Config().signing_secrets == []
-
-
-def test_unsigned_with_policy_url_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The policy receiver answers 401 to an unsigned forward, so every frame
-    # would take the fail-mode path. Refuse the combination up front.
-    _env(
-        monkeypatch, SLASHID_HOOK_ALLOW_UNSIGNED="true", SLASHID_POLICY_URL="https://x/ai-access/a"
-    )
-    with pytest.raises(ValidationError):
-        Config()
 
 
 def test_compliance_is_off_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,14 +131,12 @@ def test_empty_strings_from_terraform_mean_unset(monkeypatch: pytest.MonkeyPatch
     readers on."""
     _env(
         monkeypatch,
-        SLASHID_POLICY_URL="",
         SLASHID_COMPLIANCE_KEY="",
         SLASHID_ORGANIZATION_UUID="",
         SLASHID_CAPTURE_BUCKET="",
         SLASHID_CAPTURE_DENY_MARKER="",
     )
     cfg = Config()
-    assert cfg.policy_url is None
     assert cfg.compliance_key is None
     assert cfg.organization_uuid is None
     assert cfg.capture_bucket is None

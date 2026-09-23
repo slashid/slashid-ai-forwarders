@@ -146,10 +146,6 @@ resource "google_cloud_run_v2_service" "receiver" {
         value = tostring(var.hook_allow_unsigned)
       }
       env {
-        name  = "SLASHID_POLICY_URL"
-        value = var.policy_url
-      }
-      env {
         name  = "SLASHID_PREFLIGHT_ENABLED"
         value = tostring(var.preflight_enabled)
       }

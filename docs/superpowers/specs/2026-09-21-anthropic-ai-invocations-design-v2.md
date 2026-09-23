@@ -87,7 +87,7 @@ The hook spells the tool name `tool_name` where the Messages API spells it `name
 
 ### Measured properties that shape the design
 
-- **Size, and it is bimodal by surface.** Claude Code: median 664 KB, p90 1.64 MB, **max 1.86 MB** (a 561-message transcript). claude.ai: median 3.4 KB, max 14.8 KB. Receipt-to-response was 39–42 ms for the largest, so the verdict budget is entirely outbound calls. Chaining to the policy receiver re-uploads the whole frame, and that receiver's cap is 10 MiB.
+- **Size, and it is bimodal by surface.** Claude Code: median 664 KB, p90 1.64 MB, **max 1.86 MB** (a 561-message transcript). claude.ai: median 3.4 KB, max 14.8 KB. Receipt-to-response was 39–42 ms for the largest, so the verdict budget is entirely outbound calls.
 - **`webhook-id` is per delivery, not per invocation.** All 492 deliveries carried a distinct `webhook-id`, but they revealed only **239 invocations**: 284 frames carried a previous assistant run, and **43 invocations were revealed by more than one delivery**, 45 redundant deliveries in all. Keying events on the delivery would double-count 18% of invocations. The cause is structural — a transcript's trailing assistant run stays trailing until the model produces a new one.
 - **The content anchor is available for most invocations but not all.** Of the 239, **175 anchor on a `toolu_` id** and 64 fall back to the content hash, so roughly one invocation in four depends on the fallback digest agreeing byte-for-byte across sources. That is the design's single load-bearing assumption and the tests measure it directly rather than asserting it.
 - **One `session_id` carries many conversations.** Alongside a main transcript reaching 231 assistant runs, 100-plus one-message frames arrived under the same id: Haiku status summaries, a `web_search` sub-request, deferred-tool probes. Any per-session ordinal collides.
@@ -293,9 +293,7 @@ Scanning only the newest message would unwedge the session and is wrong: it woul
 
 ### Verdict composition
 
-Two checks, concurrent, ANDed, each optional.
-
-**Policy.** `POST {SLASHID_POLICY_URL}` with the **raw request bytes** and the three `webhook-*` headers verbatim, uncompressed. The `ng-evangelion` receiver re-verifies the signature under its own copy of the secret, checks the tenant binding, resolves the actor and evaluates graph policy. It answers HTTP 200 with the Anthropic verdict shape and turns its own errors into an explicit deny, so a 200 deny is authoritative and never softened by our fail mode.
+One remote check. An earlier design ran two concurrently — a separate policy receiver that took the raw signed frame, beside preflight — but the graph policy check has moved into preflight itself (slashid/ng-evangelion#7796), so there is one call, one credential and one answer shape.
 
 **Preflight.** `POST {SLASHID_ENDPOINT}/nhi/ai/preflight` with the connection push token, which is the same credential the sink uses rather than a second one.
 
@@ -303,13 +301,17 @@ Two checks, concurrent, ANDed, each optional.
 
 **The response is `{"deny_reasons": [...]}`**, always serialized, the empty array included. Allow is a length check and never a null check. Each reason is at most 500 characters, already deduplicated, and composed only from values we sent — the endpoint deliberately never names a matched graph resource, because that would turn "confirm a digest you already hold" into an enumeration primitive over the organization's graph.
 
-**A check that could not run contributes no reason and the call is allowed.** The fail-open is recorded server-side on a counter and in logs, never on the wire, so there is no "this was a fallback" flag to read. That means `SLASHID_VERDICT_FAIL_MODE` applies to *our* transport failures only — a non-200, a timeout, an unparseable body — and never to a 200 with an empty list, which is a real allow.
+**Preflight fails closed.** A server-side check that cannot complete denies, with a reason of its own, rather than allowing. So an empty list is a genuine all-clear, and `SLASHID_VERDICT_FAIL_MODE` applies only to *our* transport failures — a non-200, a timeout, an unparseable body — and never to a 200 with an empty list. The server keeps a kill switch that reverts to permissive without a deploy; nothing here depends on which way it is set.
 
-Only `accessed_files` is read today, so the call is skipped when the fresh round has nothing hashable, and when `actor.id` is null. **The endpoint bounds one request at 100 `accessed_files`**, so we bound ours to match rather than discovering it as a 4xx.
+**We pass our budget down.** `SlashID-Request-Timeout` carries the verdict budget, so the server bounds its work to what we will actually wait for rather than to a fixed per-check deadline.
 
-**Composition.** Any deny denies. The first denying check supplies `deny_reason`, to which the recovery sentence is appended. The base is truncated to `500 - len(sentence)` **before** appending, never the joined string, or a long upstream reason would silently delete the one sentence the person needs. A transport failure or an unverified answer applies `SLASHID_VERDICT_FAIL_MODE` (default allow). A disabled check is skipped and does not count as unverified. `reference_id` is `hex(sha256(webhook-id))[:32]`, matching the Go receiver's recipe.
+**Every accessed file is sent, uncapped.** The server dropped its own cap once failing closed made flooding deny rather than slip through. A cap on our side would now be the bypass: a sensitive file past it would never be checked at all.
 
-**`config-test` frames and frames of unknown top-level `type` bypass both checks, answer allow, and write no record.** They carry no invocation; a pending record for one would have no successor frame and the flush would later push a console connection test as a real invocation against a real user. The policy receiver denies unresolvable actors and non-`prompt` frames, so forwarding either would return an authoritative deny — the opposite of the protocol's forward-compatibility rule.
+Only `accessed_files` is read for content, so the call is skipped when the fresh round has nothing hashable, and when `actor.id` is null.
+
+**Composition.** Any deny denies — preflight, the hash knob, or the capture marker. The first denying check supplies `deny_reason`, to which the recovery sentence is appended. The base is truncated to `500 - len(sentence)` **before** appending, never the joined string, or a long upstream reason would silently delete the one sentence the person needs. A transport failure applies `SLASHID_VERDICT_FAIL_MODE` (default allow). A disabled check is skipped and does not count as a failure. `reference_id` is `hex(sha256(webhook-id))[:32]`, stable across retries of one delivery.
+
+**`config-test` frames and frames of unknown top-level `type` bypass the check, answer allow, and write no record.** They carry no invocation; a pending record for one would have no successor frame and the flush would later push a console connection test as a real invocation against a real user. Denying an unknown type would also break the protocol's forward-compatibility rule.
 
 **`SLASHID_SHADOW_MODE=true`**, the default, runs every check, logs the composed verdict, and answers allow. It is deliberately the same word claude.ai uses, because it is the same idea one layer down — and the two are independent, so a request is blocked only when *neither* is shadowed. The receiver cannot see the org's setting (no frame reveals it), which is why it keeps its own.
 
@@ -324,7 +326,7 @@ It is pure local computation over content the frame already carried, so it canno
 
 Like `SLASHID_CAPTURE_DENY_MARKER`, this is a test-tenant affordance and the README says so. Unlike the marker, it is content-addressed rather than a magic string, so it cannot be tripped by someone merely discussing it — which is the failure the marker has, and the reason this exists in its shape.
 
-**Budget.** Anthropic's timeout is 1–10,000 ms, 5,000 default, covering the whole exchange, and it retries once after 100 ms only when the connection attempt fails. The policy receiver caps itself at 2.5 s and preflight's graph deadline is 750 ms; both run concurrently under `SLASHID_VERDICT_BUDGET_MS`.
+**Budget.** Anthropic's timeout is 1–10,000 ms, 5,000 default, covering the whole exchange, and it retries once after 100 ms only when the connection attempt fails. Preflight runs under `SLASHID_VERDICT_BUDGET_MS`, which is also what it is told as its own deadline.
 
 ### Reader A — denials, from the Activity Feed
 
@@ -468,8 +470,7 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SLASHID_HOOK_SIGNING_SECRET` | unset | `whsec_…`; comma-separated accepts any number, tried in order. **Setting it enables the hook.** |
-| `SLASHID_HOOK_ALLOW_UNSIGNED` | `false` | escape hatch for an org that enabled hooks before secrets were required; cannot be combined with `POLICY_URL` |
-| `SLASHID_POLICY_URL` | unset | the `ng-evangelion` receiver's `/ai-access/<id>`; unset skips the policy check |
+| `SLASHID_HOOK_ALLOW_UNSIGNED` | `false` | escape hatch for an org that enabled hooks before secrets were required |
 | `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/nhi/ai/preflight`; keep off until that endpoint is deployed |
 | `SLASHID_VERDICT_FAIL_MODE` | `allow` | `allow` or `deny` when a check fails or answers unverified |
 | `SLASHID_VERDICT_BUDGET_MS` | `3500` | both checks, concurrently, under Anthropic's timeout |
@@ -505,7 +506,7 @@ Fixture-driven, matching the house pattern, with `yaml_pytest` case tables over 
 
 - `test_signature.py` — valid, tampered, stale, future-dated, unsigned, malformed secret, several candidate signatures, re-cased headers, N secrets tried in order, and a secret whose base64 contains `+` and `/`.
 - `test_frame.py` — unknown block type, unknown `source.application`, unknown `actor.type`, unknown top-level `type`, null `session_id`/`model`; the transcript split, including a consumed round spanning two user messages and a merged assistant run.
-- `test_policy.py` / `test_preflight.py` — raw bytes and headers forwarded unchanged to the policy receiver; preflight sends the **tail** event and never the previous run's; an empty `deny_reasons` is an allow and not an unverified; a non-empty one denies and its reasons compose the message; non-200 and timeout raise and apply the fail mode; more than 100 `accessed_files` is bounded before the call.
+- `test_preflight.py` — preflight sends the **tail** event and never the previous run's; an empty `deny_reasons` is an allow and not an unverified; a non-empty one denies and its reasons compose the message; non-200 and timeout raise and apply the fail mode; every accessed file is sent, uncapped, and the verdict budget goes as `SlashID-Request-Timeout`.
 - `test_verdict.py` — both allow; each deny wins with its reason; transport failure and unverified honour the fail mode; budget exceeded; `config-test` and unknown type bypass; observe-only allows while still evaluating; the recovery sentence is appended; `reference_id` charset.
 - `test_pending.py` — a record is written rather than pushed in every configuration, the hook alone included; the next frame settles a no-attachment round immediately; an attachment-bearing round waits; a reader's visit that finds no listing settles it too; **a record past the deadline is pushed, not deleted**; a flush carries whatever the record holds, including `output` a successor frame already supplied; a pushed record leaves a tombstone; a tail is written in every configuration and its successor discards it unpushed; `claim` lets exactly one of a completing writer and the deadline sweep push.
 - `test_store.py` — against a fake and, when credentials allow, the Firestore emulator: `upsert` twice does not move the deadline; two concurrent `complete` calls both land, neither lost; `due` excludes tombstoned records and honours its bound; `seen` distinguishes live, tombstoned and absent; an oversized `input` is dropped rather than failing the write.

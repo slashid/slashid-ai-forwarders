@@ -27,7 +27,6 @@ from slashid_anthropic_forwarder.hook.verdict import RECOVERY, decide, reference
 from tests.conftest import SECRET
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
-POLICY = "https://policy.example/ai-access/acme"
 FILES = [AIAccessedFile(name="a.txt", content_hashes={"sha256": "x"})]
 HEADERS = {"webhook-id": "msg_1", "webhook-timestamp": "1", "webhook-signature": "v1,a"}
 
@@ -61,7 +60,6 @@ def config(**overrides: Any) -> Config:
         "gcp_project_id": "proj",
         "shadow_mode": False,
         "preflight_enabled": True,
-        "policy_url": POLICY,
     }
     base.update(overrides)
     return Config(**base)
@@ -88,14 +86,13 @@ def tail(kind: str) -> AIInvocationObservedV1 | None:
     )
 
 
-def router(policy: Mock | None, preflight: Mock | None):
+def router(preflight: Mock | None):
     calls: list[str] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        which = "policy" if request.url.host == "policy.example" else "preflight"
-        calls.append(which)
-        spec = policy if which == "policy" else preflight
-        assert spec is not None, f"{which} was called but the case gave it no answer"
+        calls.append("preflight")
+        spec = preflight
+        assert spec is not None, "preflight was called but the case gave it no answer"
         if spec.sleep:
             await asyncio.sleep(spec.sleep)
         if spec.error:
@@ -119,7 +116,6 @@ async def run(cfg: Config, handler, *, tail_kind: str, body: bytes, fr: PromptFr
 
 @yaml_pytest(filename="test_decide.yaml")
 async def test_decide(
-    policy: Mock | None,
     preflight: Mock | None,
     config_overrides: dict[str, Any],
     frame_update: dict[str, Any],
@@ -127,7 +123,7 @@ async def test_decide(
     body: str,
     expected: Expected,
 ) -> None:
-    handler, calls = router(policy, preflight)
+    handler, calls = router(preflight)
     decision = await run(
         config(**config_overrides),
         handler,
@@ -150,10 +146,7 @@ async def test_decide(
 async def test_a_long_reason_is_truncated_before_the_sentence_is_appended() -> None:
     """The sentence is the only thing the person can act on, so it survives
     a reason long enough to fill the field on its own."""
-    handler, _ = router(
-        Mock(body={"action": "deny", "deny_reason": "x" * 900}),
-        Mock(body={"deny_reasons": []}),
-    )
+    handler, _ = router(Mock(body={"deny_reasons": ["x" * 900]}))
     decision = await run(config(), handler, tail_kind="with_files", body=b"{}", fr=frame({}))
     answered = decision.answered
     reason = answered.deny_reason

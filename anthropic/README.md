@@ -284,10 +284,9 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_PUSH_TOKEN` | yes | — |
 | `SLASHID_GCP_PROJECT_ID` | yes | — |
 | `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |
-| `SLASHID_HOOK_ALLOW_UNSIGNED` | no | `false` (cannot be combined with `SLASHID_POLICY_URL`) |
+| `SLASHID_HOOK_ALLOW_UNSIGNED` | no | `false` |
 | `SLASHID_COMPLIANCE_KEY` | one capability required | — |
 | `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |
-| `SLASHID_POLICY_URL` | no | — (unset skips the policy check) |
 | `SLASHID_PREFLIGHT_ENABLED` | no | `false` |
 | `SLASHID_VERDICT_FAIL_MODE` | no | `allow` |
 | `SLASHID_VERDICT_BUDGET_MS` | no | `3500` |
@@ -318,12 +317,10 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `LOG_LEVEL` | no | `INFO` |
 
 `SLASHID_MOCK_DENIED_HASHES` denies any invocation whose `accessed_files` carry
-a listed digest. It runs **alongside** preflight rather than instead of it, so
-enabling the real endpoint later changes nothing. It exists because on a fresh
-deployment nothing else can deny: preflight is off until that endpoint ships
-and `SLASHID_POLICY_URL` is unset until a gate route exists, which leaves the
-deny reason, the guardrail stamp, the `deny:` address and the denial reader's
-join onto it all unreachable. Content-addressed, unlike
+a listed digest. It runs **alongside** preflight rather than instead of it. It
+exists so a test tenant can drive a real denial without depending on the graph
+having anything tagged sensitive: the deny reason, the guardrail stamp, the
+`deny:` address and the denial reader's join onto it. Content-addressed, unlike
 `SLASHID_CAPTURE_DENY_MARKER`: a literal token is tripped by anyone who merely
 quotes it.
 
