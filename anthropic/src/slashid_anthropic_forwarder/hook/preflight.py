@@ -29,11 +29,6 @@ from .checks import CheckFailed, Verdict
 
 log = logging.getLogger(__name__)
 
-# The endpoint rejects a larger batch with a 400, so it is bounded here:
-# discovering the cap as a 4xx would throw away the answer for the other
-# 100 files along with it.
-MAX_ACCESSED_FILES = 100
-
 
 def join_deny_reasons(reasons: Sequence[str]) -> str:
     """The endpoint's list as the single string Anthropic's ``deny_reason``
@@ -62,14 +57,6 @@ async def preflight_check(
     The credential is the connection push token, carried exactly as
     ``sink.push_invocations`` carries it — the same one, not a second.
     """
-    files = invocation.accessed_files or []
-    if len(files) > MAX_ACCESSED_FILES:
-        log.warning(
-            "preflight: %d accessed_files exceed the cap; checking the first %d",
-            len(files),
-            MAX_ACCESSED_FILES,
-        )
-        invocation = invocation.model_copy(update={"accessed_files": files[:MAX_ACCESSED_FILES]})
     try:
         # ``/ip`` is the route's internal name; the public gateway strips it,
         # as it does for the ingest route the sink calls.

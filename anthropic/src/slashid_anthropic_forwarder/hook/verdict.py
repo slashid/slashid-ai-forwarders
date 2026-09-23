@@ -26,7 +26,6 @@ from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 from ..config import Config
 from .checks import ALLOW, CheckFailed, Decision, Verdict
 from .frame import PromptFrame
-from .policy import policy_check
 from .preflight import preflight_check
 
 log = logging.getLogger(__name__)
@@ -43,10 +42,9 @@ MAX_DENY_REASON = 500
 def _with_recovery(reason: str | None) -> str:
     """The answered reason: a base bounded to leave room, then the sentence.
 
-    The base may already be several of preflight's reasons joined by
-    ``join_deny_reasons`` — Anthropic takes one string, not a list — or a
-    single reason from the policy receiver. Either way it is truncated
-    BEFORE the sentence is appended, never after: cutting the joined
+    The base may be several of preflight's reasons joined by
+    ``join_deny_reasons``, since Anthropic takes one string, not a list.
+    It is truncated BEFORE the sentence is appended, never after: cutting the joined
     string is what silently deletes the one instruction the person can
     act on, which is the entire point of appending it.
     """
@@ -55,7 +53,7 @@ def _with_recovery(reason: str | None) -> str:
 
 
 def reference_id(webhook_id: str) -> str:
-    """Same recipe as the Go policy receiver, so every record joins on one value."""
+    """A stable reference for one delivery: the same value on every retry."""
     return hashlib.sha256(webhook_id.encode()).hexdigest()[:32]
 
 
@@ -117,24 +115,11 @@ async def decide(
     ref = reference_id(webhook_id)
 
     if frame.type != "prompt" or frame.is_connection_test():
-        # The policy receiver denies both; the protocol wants allow for both.
+        # Neither carries an invocation to judge; the protocol wants allow.
         return _answer(config, Verdict("allow", source="bypass"))
 
     budget_s = config.verdict_budget_ms / 1000
     checks: list[tuple[str, Awaitable[Verdict]]] = []
-    if config.policy_url:
-        checks.append(
-            (
-                "policy",
-                policy_check(
-                    client,
-                    url=config.policy_url,
-                    body=raw_body,
-                    headers=headers,
-                    timeout_s=budget_s,
-                ),
-            )
-        )
     if config.preflight_enabled and tail_event is not None and tail_event.accessed_files:
         # The tail event is the FRESH round's partial record — the round
         # being judged. The record for the previous assistant run is a

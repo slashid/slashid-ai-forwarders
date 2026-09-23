@@ -16,7 +16,7 @@ from slashid_ai_forwarder_core.events import (
 )
 
 from slashid_anthropic_forwarder.hook.checks import CheckFailed, Verdict
-from slashid_anthropic_forwarder.hook.preflight import MAX_ACCESSED_FILES, preflight_check
+from slashid_anthropic_forwarder.hook.preflight import preflight_check
 
 ENDPOINT = "https://api.slashid.example"
 FILES = [
@@ -110,7 +110,11 @@ async def test_deny_reasons_join_into_one_reason() -> None:
     assert verdict.deny_reason == f"{SENSITIVE} Another file is marked sensitive."
 
 
-async def test_accessed_files_are_bounded_before_the_call() -> None:
+async def test_every_accessed_file_is_sent() -> None:
+    """No cap. Preflight fails closed, so a batch it cannot finish denies
+    rather than slipping through — which is what makes sending everything
+    safe. Truncating here would be the bypass: a sensitive file in position
+    101 would simply never be checked."""
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -120,11 +124,9 @@ async def test_accessed_files_are_bounded_before_the_call() -> None:
     many = [AIAccessedFile(name=f"{i}.txt", content_hashes={"sha256": "x"}) for i in range(150)]
     async with client(handler) as c:
         verdict = await call(c, invocation=tail(many))
-    # Bounded, not refused: the call still happens and still answers.
     assert verdict.action == "allow"
-    assert MAX_ACCESSED_FILES == 100
-    assert len(seen["json"]["accessed_files"]) == MAX_ACCESSED_FILES
-    assert seen["json"]["accessed_files"][0]["name"] == "0.txt"
+    assert len(seen["json"]["accessed_files"]) == 150
+    assert seen["json"]["accessed_files"][-1]["name"] == "149.txt"
 
 
 @pytest.mark.parametrize("status", [400, 401, 404, 503])

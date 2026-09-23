@@ -142,14 +142,6 @@ resource "google_cloud_run_v2_service" "receiver" {
         value = tostring(var.max_attachment_fetch_bytes)
       }
       env {
-        name  = "SLASHID_HOOK_ALLOW_UNSIGNED"
-        value = tostring(var.hook_allow_unsigned)
-      }
-      env {
-        name  = "SLASHID_POLICY_URL"
-        value = var.policy_url
-      }
-      env {
         name  = "SLASHID_PREFLIGHT_ENABLED"
         value = tostring(var.preflight_enabled)
       }
@@ -227,7 +219,7 @@ resource "google_cloud_run_v2_service" "receiver" {
   lifecycle {
     precondition {
       condition     = local.hook_enabled || local.compliance_enabled
-      error_message = "Set hook_signing_secret (or hook_allow_unsigned) for the hook, compliance_key for the readers, or both. The service refuses to start with neither."
+      error_message = "Set hook_signing_secret for the hook, compliance_key for the readers, or both. The service refuses to start with neither."
     }
 
     precondition {

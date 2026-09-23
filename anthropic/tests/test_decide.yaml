@@ -1,23 +1,12 @@
-id: both_allow
-policy: {body: {action: allow}}
+id: preflight_allows
 preflight: {body: {deny_reasons: []}}
 config_overrides: {}
 frame_update: {}
 tail_kind: with_files
 body: "{}"
-expected: {action: allow, source: none, calls: [policy, preflight]}
----
-id: policy_deny_wins_with_its_reason
-policy: {body: {action: deny, deny_reason: Not in hours.}}
-preflight: {body: {deny_reasons: []}}
-config_overrides: {}
-frame_update: {}
-tail_kind: with_files
-body: "{}"
-expected: {action: deny, source: policy}
+expected: {action: allow, source: none, calls: [preflight]}
 ---
 id: preflight_deny_wins_with_its_reasons
-policy: {body: {action: allow}}
 preflight: {body: {deny_reasons: [A file in this request is marked sensitive.]}}
 config_overrides: {}
 frame_update: {}
@@ -25,48 +14,36 @@ tail_kind: with_files
 body: "{}"
 expected: {action: deny, source: preflight}
 ---
-id: policy_transport_failure_fails_open_by_default
-policy: {status: 503}
+# Preflight fails closed: a check it could not run answers with a reason of
+# its own. So an empty list is a real all-clear and never reaches our fail
+# mode, even with it set to deny.
+id: preflight_empty_list_is_an_allow_not_a_fail_mode_case
 preflight: {body: {deny_reasons: []}}
+config_overrides: {verdict_fail_mode: deny}
+frame_update: {}
+tail_kind: with_files
+body: "{}"
+expected: {action: allow, source: none, calls: [preflight]}
+---
+# Ours, on the other hand: a non-200 is a check that gave us no answer.
+id: preflight_transport_failure_fails_open_by_default
+preflight: {status: 503}
 config_overrides: {}
 frame_update: {}
 tail_kind: with_files
 body: "{}"
 expected: {action: allow, source: none}
 ---
-id: policy_transport_failure_fails_closed_when_configured
-policy: {status: 503}
-preflight: {body: {deny_reasons: []}}
-config_overrides: {verdict_fail_mode: deny}
-frame_update: {}
-tail_kind: with_files
-body: "{}"
-expected: {action: deny, source: fail_mode}
----
-id: policy_timeout_takes_fail_mode
-policy: {error: true}
-preflight: {body: {deny_reasons: []}}
-config_overrides: {verdict_fail_mode: deny}
-frame_update: {}
-tail_kind: with_files
-body: "{}"
-expected: {action: deny, source: fail_mode}
----
-# The server's own fail-open is invisible, so an empty list is a real
-# allow and never reaches the fail mode — even with it set to deny.
-id: preflight_empty_list_is_an_allow_not_a_fail_mode_case
-policy: {body: {action: allow}}
-preflight: {body: {deny_reasons: []}}
-config_overrides: {verdict_fail_mode: deny}
-frame_update: {}
-tail_kind: with_files
-body: "{}"
-expected: {action: allow, source: none, calls: [policy, preflight]}
----
-# Ours, on the other hand: a non-200 is a check that gave us no answer.
-id: preflight_transport_failure_takes_fail_mode
-policy: {body: {action: allow}}
+id: preflight_transport_failure_fails_closed_when_configured
 preflight: {status: 503}
+config_overrides: {verdict_fail_mode: deny}
+frame_update: {}
+tail_kind: with_files
+body: "{}"
+expected: {action: deny, source: fail_mode}
+---
+id: preflight_timeout_takes_fail_mode
+preflight: {error: true}
 config_overrides: {verdict_fail_mode: deny}
 frame_update: {}
 tail_kind: with_files
@@ -75,18 +52,16 @@ expected: {action: deny, source: fail_mode}
 ---
 # The budget cancels the in-flight call, so this case runs in about 100 ms.
 id: budget_exceeded_takes_fail_mode
-policy: {sleep: 2.0, body: {action: allow}}
-preflight: {body: {deny_reasons: []}}
+preflight: {sleep: 2.0, body: {deny_reasons: []}}
 config_overrides: {verdict_budget_ms: 100, verdict_fail_mode: deny}
 frame_update: {}
 tail_kind: with_files
 body: "{}"
 expected: {action: deny, source: fail_mode}
 ---
-id: disabled_checks_are_skipped_not_failed
-policy: null
+id: a_disabled_check_is_skipped_not_failed
 preflight: null
-config_overrides: {policy_url: null, preflight_enabled: false, verdict_fail_mode: deny}
+config_overrides: {preflight_enabled: false, verdict_fail_mode: deny}
 frame_update: {}
 tail_kind: with_files
 body: "{}"
@@ -95,29 +70,25 @@ expected: {action: allow, source: none, calls: []}
 # Only accessed_files is read today, so a fresh round with nothing
 # hashable has nothing to ask about.
 id: preflight_not_called_without_files
-policy: {body: {action: allow}}
 preflight: null
 config_overrides: {verdict_fail_mode: deny}
 frame_update: {}
 tail_kind: without_files
 body: "{}"
-expected: {action: allow, source: none, calls: [policy]}
+expected: {action: allow, source: none, calls: []}
 ---
 # No tail event to send: a null actor.id cannot be resolved server-side,
-# so Chunk 6's builder produced nothing and there is no invocation to
-# hand over.
+# so the builder produced nothing and there is no invocation to hand over.
 id: preflight_not_called_without_a_tail_event
-policy: {body: {action: allow}}
 preflight: null
 config_overrides: {verdict_fail_mode: deny}
 frame_update: {}
 tail_kind: none
 body: "{}"
-expected: {action: allow, source: none, calls: [policy]}
+expected: {action: allow, source: none, calls: []}
 ---
-# The policy receiver would deny both; the protocol wants allow for both.
-id: config_test_bypasses_both_checks
-policy: {body: {action: deny, deny_reason: "no"}}
+# A connection test carries no invocation to judge; the protocol wants allow.
+id: config_test_bypasses_the_check
 preflight: {body: {deny_reasons: ["no"]}}
 config_overrides: {}
 frame_update: {source: {application: config-test}}
@@ -125,8 +96,7 @@ tail_kind: with_files
 body: "{}"
 expected: {action: allow, source: bypass, calls: []}
 ---
-id: unknown_type_bypasses_both_checks
-policy: {body: {action: deny, deny_reason: "no"}}
+id: unknown_type_bypasses_the_check
 preflight: {body: {deny_reasons: ["no"]}}
 config_overrides: {}
 frame_update: {type: response}
@@ -135,7 +105,6 @@ body: "{}"
 expected: {action: allow, source: bypass, calls: []}
 ---
 id: marker_denies_when_not_shadowed
-policy: {body: {action: allow}}
 preflight: {body: {deny_reasons: []}}
 config_overrides: {capture_deny_marker: SLASHID_DENY_ME}
 frame_update: {}
@@ -143,10 +112,9 @@ tail_kind: with_files
 body: '{"x": "SLASHID_DENY_ME"}'
 expected: {action: deny, source: marker}
 ---
-# Shadow mode is the default. Every check still runs; allow is answered, and
+# Shadow mode is the default. The check still runs; allow is answered, and
 # the composed deny is what the record will say.
-id: shadow_mode_runs_checks_but_allows
-policy: {body: {action: deny, deny_reason: "no"}}
+id: shadow_mode_runs_the_check_but_allows
 preflight: {body: {deny_reasons: ["no"]}}
 config_overrides: {shadow_mode: true}
 frame_update: {}
@@ -156,11 +124,10 @@ expected:
   action: allow
   source: shadow
   composed_action: deny
-  composed_source: policy
-  calls: [policy, preflight]
+  composed_source: preflight
+  calls: [preflight]
 ---
 id: a_configured_hash_denies
-policy: {body: {action: allow}}
 preflight: {body: {deny_reasons: []}}
 config_overrides: {mock_denied_hashes: x}
 frame_update: {}
@@ -169,7 +136,6 @@ body: "{}"
 expected: {action: deny, source: mock-hash}
 ---
 id: an_unconfigured_hash_denies_nothing
-policy: {body: {action: allow}}
 preflight: {body: {deny_reasons: []}}
 config_overrides: {mock_denied_hashes: "deadbeef"}
 frame_update: {}
@@ -180,7 +146,6 @@ expected: {action: allow, source: none}
 id: a_configured_hash_is_matched_case_insensitively
 # An operator pasting a digest from a tool that prints uppercase must not
 # be silently ignored; every source gives us lowercase hex.
-policy: {body: {action: allow}}
 preflight: {body: {deny_reasons: []}}
 config_overrides: {mock_denied_hashes: X}
 frame_update: {}
@@ -188,23 +153,20 @@ tail_kind: with_files
 body: "{}"
 expected: {action: deny, source: mock-hash}
 ---
-id: a_configured_hash_denies_when_no_other_check_can
-# The case the knob exists for: preflight has not shipped and no gate
-# route exists, so without this nothing could ever deny and the whole
-# denial path below the verdict would be unreachable.
-policy: null
+id: a_configured_hash_denies_with_preflight_off
+# Lets a test tenant drive the whole denial path below the verdict without
+# depending on the graph having anything tagged sensitive.
 preflight: null
-config_overrides: {mock_denied_hashes: x, preflight_enabled: false, policy_url: null}
+config_overrides: {mock_denied_hashes: x, preflight_enabled: false}
 frame_update: {}
 tail_kind: with_files
 body: "{}"
 expected: {action: deny, source: mock-hash, calls: []}
 ---
 id: a_round_with_nothing_hashable_is_unaffected
-policy: {body: {action: allow}}
 preflight: {body: {deny_reasons: []}}
 config_overrides: {mock_denied_hashes: x}
 frame_update: {}
 tail_kind: without_files
 body: "{}"
-expected: {action: allow, source: none, calls: [policy]}
+expected: {action: allow, source: none, calls: []}
