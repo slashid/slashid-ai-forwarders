@@ -75,6 +75,12 @@ async def test_deny_reasons_come_back_as_sent() -> None:
         assert await call(c) == body["deny_reasons"]
 
 
+async def test_a_field_the_server_adds_is_ignored() -> None:
+    body = {"deny_reasons": ["a.txt is sensitive."], "checked": ["hashes"]}
+    async with client(lambda r: httpx.Response(200, json=body)) as c:
+        assert await call(c) == ["a.txt is sensitive."]
+
+
 async def test_every_accessed_file_is_sent() -> None:
     """No cap. Preflight fails closed, so a batch it cannot finish denies;
     truncating here would be the bypass."""
@@ -103,8 +109,9 @@ async def test_non_200_raises(status: int) -> None:
         {"text": "not json"},
         {"json": {}},
         {"json": {"deny_reasons": "a.txt is sensitive"}},
+        {"json": {"deny_reasons": [1]}},
     ],
-    ids=["not_json", "no_deny_reasons", "not_a_list_of_strings"],
+    ids=["not_json", "no_deny_reasons", "not_a_list", "not_strings"],
 )
 async def test_unparseable_body_raises(kwargs: dict) -> None:
     async with client(lambda r: httpx.Response(200, **kwargs)) as c:

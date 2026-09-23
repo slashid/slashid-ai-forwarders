@@ -352,6 +352,14 @@ class AIInvocationObservedV1(_WireModel):
     accessed_files: list[AIAccessedFile] | None = None
 
 
+class AIPreflightResponse(BaseModel):
+    """spec/ai-schemas.yaml — AIPreflightResponse. Empty ``deny_reasons``
+    allows, non-empty denies. A response, so unknown fields are ignored
+    rather than forbidden: a field the server adds must not fail the check."""
+
+    deny_reasons: list[str]
+
+
 class EventEnvelope(_WireModel):
     """Vendor-neutral inputs to ``build_event_from_normalized``.
 

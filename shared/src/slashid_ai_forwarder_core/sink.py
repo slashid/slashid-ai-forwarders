@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -21,7 +22,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from .events import AIInvocationObservedV1
+from .events import AIInvocationObservedV1, AIPreflightResponse
 
 log = logging.getLogger(__name__)
 
@@ -187,9 +188,6 @@ async def preflight_invocation(
     if response.status_code != 200:
         raise PreflightError(f"HTTP {response.status_code}")
     try:
-        reasons = response.json()["deny_reasons"]
-    except (ValueError, KeyError, TypeError) as exc:
+        return AIPreflightResponse.model_validate_json(response.content).deny_reasons
+    except ValidationError as exc:
         raise PreflightError("unparseable verdict") from exc
-    if not isinstance(reasons, list) or not all(isinstance(r, str) for r in reasons):
-        raise PreflightError("deny_reasons is not a list of strings")
-    return reasons
