@@ -119,10 +119,10 @@ async def push_invocations(
     push_token: str,
     max_retries: int = 3,
 ) -> int:
-    """POST /nhi/events/ai-invocations in 1 MB batches. Returns the count sent."""
+    """POST /ip/nhi/events/ai-invocations in 1 MB batches. Returns the count sent."""
     if not events:
         return 0
-    url = f"{endpoint}/nhi/events/ai-invocations"
+    url = f"{endpoint}/ip/nhi/events/ai-invocations"
     headers = {"Authorization": f"Bearer {push_token}"}
 
     sent = 0

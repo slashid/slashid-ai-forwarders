@@ -316,7 +316,7 @@ class AIAccessedFile(_WireModel):
 
 
 class AIInvocationObservedV1(_WireModel):
-    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations.
+    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /ip/nhi/events/ai-invocations.
 
     `org_id`/`connection_id` aren't sent — server derives them from the
     authenticated push token. Schema dropped them as required fields too.

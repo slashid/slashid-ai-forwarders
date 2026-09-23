@@ -1,4 +1,4 @@
-"""POST /nhi/ai/preflight: the body is the tail event, the answer is a
+"""POST /ip/nhi/ai/preflight: the body is the tail event, the answer is a
 list of deny reasons, and an empty list is a real allow."""
 
 from __future__ import annotations
@@ -77,10 +77,9 @@ async def test_the_body_is_the_invocation_carried_by_the_push_token() -> None:
     invocation = tail()
     async with client(handler) as c:
         await call(c, invocation=invocation)
-    # The public gateway strips the internal ``/ip`` prefix, exactly as it
-    # does for the ingest route the sink calls. The spec names both routes
-    # ``/ip/nhi/...``; neither answers there from outside.
-    assert seen["url"] == f"{ENDPOINT}/nhi/ai/preflight"
+    # The gateway routes preflight only under ``/ip``; ingest also has a
+    # bare ``/nhi`` alias, which is what made the prefix look optional.
+    assert seen["url"] == f"{ENDPOINT}/ip/nhi/ai/preflight"
     assert seen["auth"] == "Bearer tok"
     # The server bounds its own work to the budget we pass down, instead of a
     # fixed per-check deadline that knows nothing about ours.

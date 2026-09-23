@@ -1,4 +1,4 @@
-"""Client for ``POST /nhi/ai/preflight``.
+"""Client for ``POST /ip/nhi/ai/preflight``.
 
 The body is an ``AIInvocationObservedV1`` — the same object the sink
 pushes once the call completes — sent early and therefore incomplete:
@@ -58,15 +58,12 @@ async def preflight_check(
     ``sink.push_invocations`` carries it — the same one, not a second.
     """
     try:
-        # ``/ip`` is the route's internal name; the public gateway strips it,
-        # as it does for the ingest route the sink calls.
-        #
         # ``SlashID-Request-Timeout`` hands the server our own budget, so it
         # bounds its work to what we will actually wait for rather than to a
         # fixed per-check deadline that knows nothing about ours. A server
         # that predates the header ignores it.
         response = await client.post(
-            f"{endpoint}/nhi/ai/preflight",
+            f"{endpoint}/ip/nhi/ai/preflight",
             json=invocation.model_dump(mode="json", exclude_none=True),
             headers={
                 "Authorization": f"Bearer {push_token}",
