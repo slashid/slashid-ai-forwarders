@@ -1723,7 +1723,7 @@ dev = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "slashid-anthropic-forwarder"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
