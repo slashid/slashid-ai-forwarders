@@ -1,4 +1,4 @@
-"""Client for ``POST /ip/nhi/ai/preflight``.
+"""Client for ``POST /nhi/ai/preflight``.
 
 The body is an ``AIInvocationObservedV1`` — the same object the sink
 pushes once the call completes — sent early and therefore incomplete:
@@ -71,12 +71,20 @@ async def preflight_check(
         )
         invocation = invocation.model_copy(update={"accessed_files": files[:MAX_ACCESSED_FILES]})
     try:
-        # The endpoint's own graph deadline is 750 ms, inside the verdict
-        # budget the caller passes down as ``timeout_s``.
+        # ``/ip`` is the route's internal name; the public gateway strips it,
+        # as it does for the ingest route the sink calls.
+        #
+        # ``SlashID-Request-Timeout`` hands the server our own budget, so it
+        # bounds its work to what we will actually wait for rather than to a
+        # fixed per-check deadline that knows nothing about ours. A server
+        # that predates the header ignores it.
         response = await client.post(
-            f"{endpoint}/ip/nhi/ai/preflight",
+            f"{endpoint}/nhi/ai/preflight",
             json=invocation.model_dump(mode="json", exclude_none=True),
-            headers={"Authorization": f"Bearer {push_token}"},
+            headers={
+                "Authorization": f"Bearer {push_token}",
+                "SlashID-Request-Timeout": f"{timeout_s:.1f}",
+            },
             timeout=timeout_s,
         )
     except httpx.HTTPError as exc:

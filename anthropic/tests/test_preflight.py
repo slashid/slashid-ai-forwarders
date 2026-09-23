@@ -1,4 +1,4 @@
-"""POST /ip/nhi/ai/preflight: the body is the tail event, the answer is a
+"""POST /nhi/ai/preflight: the body is the tail event, the answer is a
 list of deny reasons, and an empty list is a real allow."""
 
 from __future__ import annotations
@@ -70,14 +70,21 @@ async def test_the_body_is_the_invocation_carried_by_the_push_token() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         seen["auth"] = request.headers.get("authorization")
+        seen["timeout"] = request.headers.get("slashid-request-timeout")
         seen["json"] = json.loads(request.content)
         return answer()
 
     invocation = tail()
     async with client(handler) as c:
         await call(c, invocation=invocation)
-    assert seen["url"] == f"{ENDPOINT}/ip/nhi/ai/preflight"
+    # The public gateway strips the internal ``/ip`` prefix, exactly as it
+    # does for the ingest route the sink calls. The spec names both routes
+    # ``/ip/nhi/...``; neither answers there from outside.
+    assert seen["url"] == f"{ENDPOINT}/nhi/ai/preflight"
     assert seen["auth"] == "Bearer tok"
+    # The server bounds its own work to the budget we pass down, instead of a
+    # fixed per-check deadline that knows nothing about ours.
+    assert seen["timeout"] == "1.0"
     # Byte-for-byte what the sink would push, so there is no second shape
     # to keep in step with the event's field types.
     assert seen["json"] == invocation.model_dump(mode="json", exclude_none=True)
