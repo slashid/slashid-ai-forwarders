@@ -1,4 +1,5 @@
-"""Async HTTP client for the SlashID NHI AI invocations endpoint.
+"""Async HTTP client for the SlashID NHI AI invocations endpoints: the push,
+and the preflight that asks about an invocation before it is pushed.
 
 The forwarder only authenticates with the connection's event-streaming
 token. Identity creation, role-chain unrolling, and conversation
@@ -24,6 +25,9 @@ from .events import AIInvocationObservedV1
 
 log = logging.getLogger(__name__)
 
+AI_INVOCATIONS_PATH = "/ip/nhi/events/ai-invocations"
+PREFLIGHT_PATH = f"{AI_INVOCATIONS_PATH}/preflight"
+
 # Endpoint allows 1 MB; leave headroom for the wrapping envelope + transport overhead.
 MAX_BATCH_BYTES = 900_000
 
@@ -34,6 +38,11 @@ class TransientPushError(Exception):
 
 class PermanentPushError(Exception):
     """Non-retryable upstream failure (other 4xx)."""
+
+
+class PreflightError(Exception):
+    """Preflight gave no verdict: a transport failure, a non-200, or a body
+    that is not ``{"deny_reasons": [str, ...]}``."""
 
 
 def _classify(resp: httpx.Response) -> Exception:
@@ -122,7 +131,7 @@ async def push_invocations(
     """POST /ip/nhi/events/ai-invocations in 1 MB batches. Returns the count sent."""
     if not events:
         return 0
-    url = f"{endpoint}/ip/nhi/events/ai-invocations"
+    url = f"{endpoint}{AI_INVOCATIONS_PATH}"
     headers = {"Authorization": f"Bearer {push_token}"}
 
     sent = 0
@@ -142,3 +151,45 @@ async def push_invocations(
             for ev in payload["events"]:
                 log.debug("push_invocations: event payload: %s", _redact_content(ev))
     return sent
+
+
+async def preflight_invocation(
+    client: httpx.AsyncClient,
+    invocation: AIInvocationObservedV1,
+    *,
+    endpoint: str,
+    push_token: str,
+    timeout_s: float,
+) -> list[str]:
+    """POST /ip/nhi/events/ai-invocations/preflight. Returns the deny reasons.
+
+    The body is the same ``AIInvocationObservedV1`` the push carries, sent
+    before the model has answered and therefore incomplete. An empty list
+    allows: a server-side check that could not run contributes no reason and
+    is counted on the server, never on the wire. Only a failure to get a
+    verdict at all raises ``PreflightError``.
+
+    No retry: the caller is inside a budget, and ``SlashID-Request-Timeout``
+    hands that budget to the server so it bounds its own work to it.
+    """
+    try:
+        response = await client.post(
+            f"{endpoint}{PREFLIGHT_PATH}",
+            json=invocation.model_dump(mode="json", exclude_none=True),
+            headers={
+                "Authorization": f"Bearer {push_token}",
+                "SlashID-Request-Timeout": f"{timeout_s:.1f}",
+            },
+            timeout=timeout_s,
+        )
+    except httpx.HTTPError as exc:
+        raise PreflightError(repr(exc)) from exc
+    if response.status_code != 200:
+        raise PreflightError(f"HTTP {response.status_code}")
+    try:
+        reasons = response.json()["deny_reasons"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise PreflightError("unparseable verdict") from exc
+    if not isinstance(reasons, list) or not all(isinstance(r, str) for r in reasons):
+        raise PreflightError("deny_reasons is not a list of strings")
+    return reasons

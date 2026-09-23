@@ -20,7 +20,7 @@ class Config(BaseConfig):
     # for about a minute after the cutover; ``verify`` tries every entry,
     # so more than two is allowed and costs one failed HMAC each.
     hook_signing_secret: str = ""
-    # POST {endpoint}/ip/nhi/ai/preflight. Off until that endpoint ships.
+    # POST {endpoint}/ip/nhi/events/ai-invocations/preflight. Off until that endpoint ships.
     preflight_enabled: bool = False
     # Answer when a check fails or comes back unverified. Allow by default:
     # refusing to answer is self-inflicted downtime, and the customer has
