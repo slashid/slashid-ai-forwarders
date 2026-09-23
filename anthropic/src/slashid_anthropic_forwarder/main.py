@@ -179,7 +179,7 @@ def create_app(
         if len(body) > config.max_body_bytes:
             return Response(status_code=413)
         headers = {k: v for k, v in request.headers.items()}
-        if not verify(config.signing_secrets, headers, body) and not config.hook_allow_unsigned:
+        if not verify(config.signing_secrets, headers, body):
             return Response(status_code=401)
         webhook_id = headers.get("webhook-id", "")
 

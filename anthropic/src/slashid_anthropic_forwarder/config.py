@@ -20,9 +20,6 @@ class Config(BaseConfig):
     # for about a minute after the cutover; ``verify`` tries every entry,
     # so more than two is allowed and costs one failed HMAC each.
     hook_signing_secret: str = ""
-    # Escape hatch for an organization that enabled hooks before signing
-    # secrets were required. Default false: unsigned requests get 401.
-    hook_allow_unsigned: bool = False
     # POST {endpoint}/nhi/ai/preflight. Off until that endpoint ships.
     preflight_enabled: bool = False
     # Answer when a check fails or comes back unverified. Allow by default:
@@ -164,13 +161,10 @@ class Config(BaseConfig):
 
     @property
     def hook_enabled(self) -> bool:
-        """The signing secret enables the hook; ``HOOK_ALLOW_UNSIGNED`` is the
-        escape hatch for an org that enabled hooks before secrets existed.
-
-        ``compliance_enabled`` is its counterpart and is already defined
-        above.
+        """The signing secret enables the hook. ``compliance_enabled`` is its
+        counterpart and is already defined above.
         """
-        return bool(self.signing_secrets) or self.hook_allow_unsigned
+        return bool(self.signing_secrets)
 
     @model_validator(mode="after")
     def _check_capabilities(self) -> Config:
@@ -180,8 +174,8 @@ class Config(BaseConfig):
         # impossible to start.
         if not self.hook_enabled and not self.compliance_enabled:
             raise ValueError(
-                "no capability configured: set SLASHID_HOOK_SIGNING_SECRET for the hook "
-                "(or SLASHID_HOOK_ALLOW_UNSIGNED), SLASHID_COMPLIANCE_KEY for the readers"
+                "no capability configured: set SLASHID_HOOK_SIGNING_SECRET for the hook, "
+                "SLASHID_COMPLIANCE_KEY for the readers"
             )
         if self.compliance_enabled and not self.organization_uuid:
             raise ValueError("SLASHID_ORGANIZATION_UUID is required with SLASHID_COMPLIANCE_KEY")

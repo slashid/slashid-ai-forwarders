@@ -138,9 +138,8 @@ The signing secret does not exist until the endpoint is configured, and
 the endpoint does not exist until this module is applied. So it is two
 applies:
 
-1. Apply with **no** `hook_signing_secret` (supply `compliance_key`, or
-   `hook_allow_unsigned = true` for a first pass — there has to be a
-   capability). Copy the `hook_url` output.
+1. Apply with a placeholder `hook_signing_secret` (any `whsec_…` value;
+   every frame gets 401 until step 3). Copy the `hook_url` output.
 2. In claude.ai, as an Owner or Primary owner (`organization:manage`),
    configure that URL as the Inference hooks endpoint. It must be
    `https://` on port 443, publicly routable, with a valid public CA

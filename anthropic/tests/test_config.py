@@ -31,7 +31,6 @@ def test_defaults_are_observe_only_and_fail_open(monkeypatch: pytest.MonkeyPatch
     assert cfg.shadow_mode is True
     assert cfg.verdict_fail_mode == "allow"
     assert cfg.preflight_enabled is False
-    assert cfg.hook_allow_unsigned is False
     assert cfg.capture_bucket is None
 
 
@@ -41,13 +40,11 @@ def test_fail_mode_must_be_allow_or_deny(monkeypatch: pytest.MonkeyPatch) -> Non
         Config()
 
 
-def test_signing_secret_required_unless_unsigned_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_capability_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="no capability configured"):
         Config()
-    monkeypatch.setenv("SLASHID_HOOK_ALLOW_UNSIGNED", "true")
-    assert Config().signing_secrets == []
 
 
 def test_compliance_is_off_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,9 +185,3 @@ def test_tombstone_ttl_must_outlive_join_wait_poll_lag_and_one_tick(
         Config()
     _env(monkeypatch, SLASHID_TICK_INTERVAL_SECONDS="3600", SLASHID_TOMBSTONE_TTL_SECONDS="10800")
     assert Config().tombstone_ttl_seconds == 10800
-
-
-def test_unsigned_hook_still_counts_as_a_capability(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch, SLASHID_HOOK_ALLOW_UNSIGNED="true")
-    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    assert Config().hook_enabled is True

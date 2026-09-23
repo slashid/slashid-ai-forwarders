@@ -470,7 +470,6 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SLASHID_HOOK_SIGNING_SECRET` | unset | `whsec_…`; comma-separated accepts any number, tried in order. **Setting it enables the hook.** |
-| `SLASHID_HOOK_ALLOW_UNSIGNED` | `false` | escape hatch for an org that enabled hooks before secrets were required |
 | `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/nhi/ai/preflight`; keep off until that endpoint is deployed |
 | `SLASHID_VERDICT_FAIL_MODE` | `allow` | `allow` or `deny` when a check fails or answers unverified |
 | `SLASHID_VERDICT_BUDGET_MS` | `3500` | both checks, concurrently, under Anthropic's timeout |
@@ -497,7 +496,7 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 
 **Two conflicts with the code already on the branch**, both to settle in the implementation plan rather than silently:
 
-- `config.py` validates that a signing secret is present unless `HOOK_ALLOW_UNSIGNED` is set. That makes compliance-only impossible to start today. The validator has to become conditional on the hook capability being in use.
+- `config.py` validates that a signing secret is present. That makes compliance-only impossible to start today. The validator has to become conditional on the hook capability being in use.
 - `config.py` defaults `preflight_enabled` to `true`, against the `false` above. The table is the intent, since the preflight endpoint has not shipped; the code default flips.
 
 ## Tests

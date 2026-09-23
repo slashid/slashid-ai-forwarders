@@ -85,8 +85,7 @@ def test_no_matching_secret_rejects() -> None:
 
 
 def test_empty_secret_list_rejects() -> None:
-    """Accepting an unsigned request is HOOK_ALLOW_UNSIGNED's decision and
-    main.py's to make; verify never says yes with no key."""
+    """Verify never says yes with no key."""
     body, ts = b"{}", _now()
     assert not verify([], _headers("m", ts, _sign(SECRET, "m", ts, body)), body)
 

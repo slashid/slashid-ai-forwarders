@@ -40,12 +40,6 @@ variable "hook_signing_secret" {
   sensitive   = true
 }
 
-variable "hook_allow_unsigned" {
-  description = "Accept unsigned frames. Escape hatch for an organization that enabled hooks before signing secrets were required."
-  type        = bool
-  default     = false
-}
-
 variable "compliance_key" {
   description = "Compliance Access Key (sk-ant-api01-…) with read:compliance_activities and read:compliance_user_data. Empty disables the readers. Sensitive."
   type        = string

@@ -284,7 +284,6 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_PUSH_TOKEN` | yes | — |
 | `SLASHID_GCP_PROJECT_ID` | yes | — |
 | `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |
-| `SLASHID_HOOK_ALLOW_UNSIGNED` | no | `false` |
 | `SLASHID_COMPLIANCE_KEY` | one capability required | — |
 | `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |
 | `SLASHID_PREFLIGHT_ENABLED` | no | `false` |
