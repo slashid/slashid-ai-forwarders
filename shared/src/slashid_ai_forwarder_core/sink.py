@@ -30,7 +30,7 @@ AI_INVOCATIONS_PATH = "/ip/nhi/events/ai-invocations"
 PREFLIGHT_PATH = f"{AI_INVOCATIONS_PATH}/preflight"
 # Held back from the budget handed to the server, so a verdict it reaches
 # at its own deadline still travels back before ours runs out.
-PREFLIGHT_RETURN_MARGIN_S = 0.25
+PREFLIGHT_RETURN_MARGIN_S = 0.5
 # The server's floor; a budget below it is clamped up anyway.
 PREFLIGHT_MIN_BUDGET_S = 0.05
 

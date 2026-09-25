@@ -303,7 +303,7 @@ One remote check. An earlier design ran two concurrently — a separate policy r
 
 **Preflight fails closed.** A server-side check that cannot complete denies, with a reason of its own, rather than allowing. So an empty list is a genuine all-clear, and `SLASHID_VERDICT_FAIL_MODE` applies only to *our* transport failures — a non-200, a timeout, an unparseable body — and never to a 200 with an empty list. The server keeps a kill switch that reverts to permissive without a deploy; nothing here depends on which way it is set.
 
-**We pass our budget down, less a margin.** `SlashID-Request-Timeout` carries the verdict budget minus 250 ms, so the server bounds its work to what we will actually wait for. The margin matters because the server spends all of what it is given and denies when it runs out: handed the whole budget, that deny would arrive just as we stop waiting and become our fail mode instead.
+**We pass our budget down, less a margin.** `SlashID-Request-Timeout` carries the verdict budget minus 500 ms, so the server bounds its work to what we will actually wait for. The margin matters because the server spends all of what it is given and denies when it runs out: handed the whole budget, that deny would arrive just as we stop waiting and become our fail mode instead.
 
 **Every accessed file is sent, uncapped.** The server dropped its own cap once failing closed made flooding deny rather than slip through. A cap on our side would now be the bypass: a sensitive file past it would never be checked at all.
 

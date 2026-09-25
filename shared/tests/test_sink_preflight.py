@@ -64,7 +64,7 @@ async def test_the_body_is_the_invocation_carried_by_the_push_token() -> None:
     assert seen["auth"] == "Bearer tok"
     # Our budget less the return margin: the server spends all of it and
     # denies at the end, and that deny has to reach us before we give up.
-    assert seen["timeout"] == "0.750"
+    assert seen["timeout"] == "0.500"
     # Byte-for-byte what the push would send, so there is no second shape.
     assert seen["json"] == inv.model_dump(mode="json", exclude_none=True)
     assert "output" not in seen["json"] and "stop_reason" not in seen["json"]
@@ -78,7 +78,7 @@ async def test_a_budget_smaller_than_the_margin_sends_the_server_floor() -> None
         return httpx.Response(200, json={"deny_reasons": []})
 
     async with client(handler) as c:
-        await call(c, timeout_s=0.1)
+        await call(c, timeout_s=0.3)
     assert seen["timeout"] == "0.050"
 
 
