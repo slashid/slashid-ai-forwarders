@@ -62,11 +62,24 @@ async def test_the_body_is_the_invocation_carried_by_the_push_token() -> None:
         assert await call(c, invocation=inv) == []
     assert seen["url"] == f"{ENDPOINT}/ip/nhi/events/ai-invocations/preflight"
     assert seen["auth"] == "Bearer tok"
-    # The server bounds its own work to the budget we pass down.
-    assert seen["timeout"] == "1.0"
+    # Our budget less the return margin: the server spends all of it and
+    # denies at the end, and that deny has to reach us before we give up.
+    assert seen["timeout"] == "0.750"
     # Byte-for-byte what the push would send, so there is no second shape.
     assert seen["json"] == inv.model_dump(mode="json", exclude_none=True)
     assert "output" not in seen["json"] and "stop_reason" not in seen["json"]
+
+
+async def test_a_budget_smaller_than_the_margin_sends_the_server_floor() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.headers.get("slashid-request-timeout")
+        return httpx.Response(200, json={"deny_reasons": []})
+
+    async with client(handler) as c:
+        await call(c, timeout_s=0.1)
+    assert seen["timeout"] == "0.050"
 
 
 async def test_deny_reasons_come_back_as_sent() -> None:

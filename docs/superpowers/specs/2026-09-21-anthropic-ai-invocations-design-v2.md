@@ -303,11 +303,11 @@ One remote check. An earlier design ran two concurrently — a separate policy r
 
 **Preflight fails closed.** A server-side check that cannot complete denies, with a reason of its own, rather than allowing. So an empty list is a genuine all-clear, and `SLASHID_VERDICT_FAIL_MODE` applies only to *our* transport failures — a non-200, a timeout, an unparseable body — and never to a 200 with an empty list. The server keeps a kill switch that reverts to permissive without a deploy; nothing here depends on which way it is set.
 
-**We pass our budget down.** `SlashID-Request-Timeout` carries the verdict budget, so the server bounds its work to what we will actually wait for rather than to a fixed per-check deadline.
+**We pass our budget down, less a margin.** `SlashID-Request-Timeout` carries the verdict budget minus 250 ms, so the server bounds its work to what we will actually wait for. The margin matters because the server spends all of what it is given and denies when it runs out: handed the whole budget, that deny would arrive just as we stop waiting and become our fail mode instead.
 
 **Every accessed file is sent, uncapped.** The server dropped its own cap once failing closed made flooding deny rather than slip through. A cap on our side would now be the bypass: a sensitive file past it would never be checked at all.
 
-Only `accessed_files` is read for content, so the call is skipped when the fresh round has nothing hashable, and when `actor.id` is null.
+The call runs on every prompt, files or not, because the connection's AI policy judges the model and the tools too. It is skipped only when `actor.id` is null, since there is then no tail event to send.
 
 **Composition.** Any deny denies — preflight, the hash knob, or the capture marker. The first denying check supplies `deny_reason`, to which the recovery sentence is appended. The base is truncated to `500 - len(sentence)` **before** appending, never the joined string, or a long upstream reason would silently delete the one sentence the person needs. A transport failure applies `SLASHID_VERDICT_FAIL_MODE` (default allow). A disabled check is skipped and does not count as a failure. `reference_id` is `hex(sha256(webhook-id))[:32]`, stable across retries of one delivery.
 
@@ -470,7 +470,7 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SLASHID_HOOK_SIGNING_SECRET` | unset | `whsec_…`; comma-separated accepts any number, tried in order. **Setting it enables the hook.** |
-| `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/ip/nhi/events/ai-invocations/preflight`; keep off until that endpoint is deployed |
+| `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/ip/nhi/events/ai-invocations/preflight` on every prompt |
 | `SLASHID_VERDICT_FAIL_MODE` | `allow` | `allow` or `deny` when a check fails or answers unverified |
 | `SLASHID_VERDICT_BUDGET_MS` | `3500` | both checks, concurrently, under Anthropic's timeout |
 | `SLASHID_SHADOW_MODE` | `true` | our own shadow mode, named after claude.ai's `shadow_mode` field and **independent of it**: when either is on, nothing is blocked. On by default, so a fresh deployment observes before it enforces. |

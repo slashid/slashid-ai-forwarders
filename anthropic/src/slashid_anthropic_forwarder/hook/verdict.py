@@ -7,10 +7,10 @@ answers allow, and the ``Decision`` keeps both verdicts so the record
 stores the one that actually went out.
 
 "Gave us no answer" means a transport failure, a non-200 or a body we
-could not parse — never a 200. Preflight's own fail-open is invisible by
-design, recorded on the server's counter and in its logs rather than on
-the wire, so its empty ``deny_reasons`` is a real allow and running it
-through the fail mode would be a bug.
+could not parse — never a 200. Preflight fails closed: a server-side check
+that cannot complete denies with a reason of its own. So its empty
+``deny_reasons`` is a real allow, and running it through the fail mode
+would be a bug.
 """
 
 from __future__ import annotations
@@ -120,16 +120,16 @@ async def decide(
 
     budget_s = config.verdict_budget_ms / 1000
     checks: list[tuple[str, Awaitable[Verdict]]] = []
-    if config.preflight_enabled and tail_event is not None and tail_event.accessed_files:
+    if config.preflight_enabled and tail_event is not None:
         # The tail event is the FRESH round's partial record — the round
         # being judged. The record for the previous assistant run is a
         # different invocation and is never sent here.
         #
-        # No tail event means Chunk 6's builder produced none — what a
-        # null actor id does, since the server rejects an identity with no
-        # identifier — so there is no invocation to send. And only
-        # ``accessed_files`` is read today, so a round with nothing
-        # hashable has nothing to ask about.
+        # Every round goes, files or not: the connection's AI policy judges
+        # the model and the tools too. No tail event means the builder
+        # produced none — what a null actor id does, since the server
+        # rejects an identity with no identifier — so there is nothing to
+        # send.
         checks.append(
             (
                 "preflight",

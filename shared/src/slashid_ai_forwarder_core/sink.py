@@ -28,6 +28,11 @@ log = logging.getLogger(__name__)
 
 AI_INVOCATIONS_PATH = "/ip/nhi/events/ai-invocations"
 PREFLIGHT_PATH = f"{AI_INVOCATIONS_PATH}/preflight"
+# Held back from the budget handed to the server, so a verdict it reaches
+# at its own deadline still travels back before ours runs out.
+PREFLIGHT_RETURN_MARGIN_S = 0.25
+# The server's floor; a budget below it is clamped up anyway.
+PREFLIGHT_MIN_BUDGET_S = 0.05
 
 # Endpoint allows 1 MB; leave headroom for the wrapping envelope + transport overhead.
 MAX_BATCH_BYTES = 900_000
@@ -166,20 +171,24 @@ async def preflight_invocation(
 
     The body is the same ``AIInvocationObservedV1`` the push carries, sent
     before the model has answered and therefore incomplete. An empty list
-    allows: a server-side check that could not run contributes no reason and
-    is counted on the server, never on the wire. Only a failure to get a
-    verdict at all raises ``PreflightError``.
+    allows. A server-side check that cannot complete denies with a reason of
+    its own, so only a failure to get a verdict at all raises
+    ``PreflightError``.
 
-    No retry: the caller is inside a budget, and ``SlashID-Request-Timeout``
-    hands that budget to the server so it bounds its own work to it.
+    No retry: the caller is inside a budget of ``timeout_s``. The server gets
+    that budget less ``PREFLIGHT_RETURN_MARGIN_S`` through
+    ``SlashID-Request-Timeout``, because it spends all of what it is given and
+    denies when it runs out; handed the whole budget, that deny would arrive
+    just as we stop waiting and become our own fail mode instead.
     """
+    server_budget_s = max(timeout_s - PREFLIGHT_RETURN_MARGIN_S, PREFLIGHT_MIN_BUDGET_S)
     try:
         response = await client.post(
             f"{endpoint}{PREFLIGHT_PATH}",
             json=invocation.model_dump(mode="json", exclude_none=True),
             headers={
                 "Authorization": f"Bearer {push_token}",
-                "SlashID-Request-Timeout": f"{timeout_s:.1f}",
+                "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
             },
             timeout=timeout_s,
         )
