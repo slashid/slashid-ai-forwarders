@@ -4,7 +4,7 @@
 **Status:** Design, ready for planning. Every wire claim below was measured against a live Claude Enterprise tenant on 2026-09-20/21; nothing here is inferred from documentation alone.
 **Supersedes:** `2026-09-18-anthropic-inference-hooks-design.md`, which described the hook in isolation.
 **Target repo:** `slashid-ai-forwarders`, new subdirectory `anthropic/`, beside `bedrock/`, `vertex/` and `shared/`.
-**Companion changes:** `POST /nhi/ai/preflight` in `ng-evangelion` ([#7733](https://github.com/slashid/ng-evangelion/pull/7733)); a batched schema sync for `AIAccessedFile.provenance` and `AnthropicIdentityDetails`.
+**Companion changes:** `POST /ip/nhi/events/ai-invocations/preflight` in `ng-evangelion` ([#7733](https://github.com/slashid/ng-evangelion/pull/7733)); a batched schema sync for `AIAccessedFile.provenance` and `AnthropicIdentityDetails`.
 
 ## Overview
 
@@ -295,7 +295,7 @@ Scanning only the newest message would unwedge the session and is wrong: it woul
 
 One remote check. An earlier design ran two concurrently — a separate policy receiver that took the raw signed frame, beside preflight — but the graph policy check has moved into preflight itself (slashid/ng-evangelion#7796), so there is one call, one credential and one answer shape.
 
-**Preflight.** `POST {SLASHID_ENDPOINT}/nhi/ai/preflight` with the connection push token, which is the same credential the sink uses rather than a second one.
+**Preflight.** `POST {SLASHID_ENDPOINT}/ip/nhi/events/ai-invocations/preflight` with the connection push token, which is the same credential the sink uses rather than a second one.
 
 **The request body is an `AIInvocationObservedV1`** — the very object this service already builds — sent early and therefore incomplete, with `output`, `tokens` and everything the model has not produced yet simply absent. There is deliberately no preflight-specific request schema, so nothing has to be kept in step and the invocation is not built twice. The object to send is **the tail event**, the partial record for the fresh round, since that is the round being judged. The record for the previous run is a different invocation and must not be sent.
 
@@ -303,11 +303,11 @@ One remote check. An earlier design ran two concurrently — a separate policy r
 
 **Preflight fails closed.** A server-side check that cannot complete denies, with a reason of its own, rather than allowing. So an empty list is a genuine all-clear, and `SLASHID_VERDICT_FAIL_MODE` applies only to *our* transport failures — a non-200, a timeout, an unparseable body — and never to a 200 with an empty list. The server keeps a kill switch that reverts to permissive without a deploy; nothing here depends on which way it is set.
 
-**We pass our budget down.** `SlashID-Request-Timeout` carries the verdict budget, so the server bounds its work to what we will actually wait for rather than to a fixed per-check deadline.
+**We pass our budget down, less a margin.** `SlashID-Request-Timeout` carries the verdict budget minus 500 ms, so the server bounds its work to what we will actually wait for. The margin matters because the server spends all of what it is given and denies when it runs out: handed the whole budget, that deny would arrive just as we stop waiting and become our fail mode instead.
 
 **Every accessed file is sent, uncapped.** The server dropped its own cap once failing closed made flooding deny rather than slip through. A cap on our side would now be the bypass: a sensitive file past it would never be checked at all.
 
-Only `accessed_files` is read for content, so the call is skipped when the fresh round has nothing hashable, and when `actor.id` is null.
+The call runs on every prompt, files or not, because the connection's AI policy judges the model and the tools too. It is skipped only when `actor.id` is null, since there is then no tail event to send.
 
 **Composition.** Any deny denies — preflight, the hash knob, or the capture marker. The first denying check supplies `deny_reason`, to which the recovery sentence is appended. The base is truncated to `500 - len(sentence)` **before** appending, never the joined string, or a long upstream reason would silently delete the one sentence the person needs. A transport failure applies `SLASHID_VERDICT_FAIL_MODE` (default allow). A disabled check is skipped and does not count as a failure. `reference_id` is `hex(sha256(webhook-id))[:32]`, stable across retries of one delivery.
 
@@ -470,7 +470,7 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SLASHID_HOOK_SIGNING_SECRET` | unset | `whsec_…`; comma-separated accepts any number, tried in order. **Setting it enables the hook.** |
-| `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/nhi/ai/preflight`; keep off until that endpoint is deployed |
+| `SLASHID_PREFLIGHT_ENABLED` | `false` | call `{ENDPOINT}/ip/nhi/events/ai-invocations/preflight` on every prompt |
 | `SLASHID_VERDICT_FAIL_MODE` | `allow` | `allow` or `deny` when a check fails or answers unverified |
 | `SLASHID_VERDICT_BUDGET_MS` | `3500` | both checks, concurrently, under Anthropic's timeout |
 | `SLASHID_SHADOW_MODE` | `true` | our own shadow mode, named after claude.ai's `shadow_mode` field and **independent of it**: when either is on, nothing is blocked. On by default, so a fresh deployment observes before it enforces. |

@@ -56,7 +56,7 @@ variable "organization_uuid" {
 # --- Verdict knobs ---------------------------------------------------------
 
 variable "preflight_enabled" {
-  description = "Call {slashid_endpoint}/nhi/ai/preflight for the content check. Keep off until that endpoint is deployed: against a 404 every frame takes the fail-mode path."
+  description = "Call {slashid_endpoint}/ip/nhi/events/ai-invocations/preflight on every prompt: the sensitive-file check and the connection's AI policy."
   type        = bool
   default     = false
 }

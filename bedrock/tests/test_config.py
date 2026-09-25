@@ -50,7 +50,7 @@ def test_config_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_config_strips_trailing_slash_from_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression for B2: customer pasting `https://api.slashid.com/` should
-    not produce `https://api.slashid.com//nhi/events/ai-invocations` later."""
+    not produce `https://api.slashid.com//ip/nhi/events/ai-invocations` later."""
     monkeypatch.setenv("SLASHID_ENDPOINT", "https://api.slashid.com/")
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "tok")
 

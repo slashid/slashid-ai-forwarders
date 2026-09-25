@@ -9,7 +9,7 @@ serialized in the `message` field. The pipeline:
 
   1. Decode + decompress + json-parse the CW Logs payload
   2. Normalize each record (Anthropic → Converse shape)
-  3. Build AIInvocationObservedV1 events → POST /nhi/events/ai-invocations
+  3. Build AIInvocationObservedV1 events → POST /ip/nhi/events/ai-invocations
 
 The connection ID is supplied via env var (the customer's streaming
 endpoint), and the only credential is the connection's push bearer

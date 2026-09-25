@@ -316,7 +316,7 @@ class AIAccessedFile(_WireModel):
 
 
 class AIInvocationObservedV1(_WireModel):
-    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /nhi/events/ai-invocations.
+    """spec/openapi.yaml — AIInvocationObservedV1. Body for POST /ip/nhi/events/ai-invocations.
 
     `org_id`/`connection_id` aren't sent — server derives them from the
     authenticated push token. Schema dropped them as required fields too.
@@ -350,6 +350,14 @@ class AIInvocationObservedV1(_WireModel):
     input: AIInvocationContent | None = None
     output: AIInvocationContent | None = None
     accessed_files: list[AIAccessedFile] | None = None
+
+
+class AIPreflightResponse(BaseModel):
+    """spec/ai-schemas.yaml — AIPreflightResponse. Empty ``deny_reasons``
+    allows, non-empty denies. A response, so unknown fields are ignored
+    rather than forbidden: a field the server adds must not fail the check."""
+
+    deny_reasons: list[str]
 
 
 class EventEnvelope(_WireModel):

@@ -40,6 +40,6 @@ class BaseConfig(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
         # Customer-pasted base URLs often end in "/"; the sink builds
-        # `endpoint + "/nhi/events/..."` so a trailing slash produces a
+        # `endpoint + "/ip/nhi/events/..."` so a trailing slash produces a
         # double slash. Normalise at the boundary.
         return v.rstrip("/")

@@ -1,33 +1,20 @@
-"""Client for ``POST /nhi/ai/preflight``.
+"""Preflight as a verdict check.
 
-The body is an ``AIInvocationObservedV1`` — the same object the sink
-pushes once the call completes — sent early and therefore incomplete:
-``output``, ``tokens`` and everything the model has not produced yet are
-absent, and nothing requires them. There is deliberately no
-preflight-specific request schema, so nothing has to be kept in step and
-the invocation is not built twice. Only ``accessed_files`` is read today.
-
-The answer is ``{"deny_reasons": [...]}``, always serialized, the empty
-array included: empty allows, non-empty denies. A server-side check that
-could not run contributes no reason and the call is allowed — that
-degradation is recorded on the server's own counter and in its logs,
-never on the wire, so there is no "this was a fallback" flag to read and
-an empty list is a real allow. Only *our* transport failures — non-200,
-timeout, unparseable body — raise ``CheckFailed``, which is what the
-composer's fail mode covers.
+The wire call is ``sink.preflight_invocation``, next to the push it
+precedes. This module turns its deny reasons into a ``Verdict``: an empty
+list is a real allow, and only a failure to get an answer at all raises
+``CheckFailed``, which is what the composer's fail mode covers.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 
 import httpx
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
+from slashid_ai_forwarder_core.sink import PreflightError, preflight_invocation
 
 from .checks import CheckFailed, Verdict
-
-log = logging.getLogger(__name__)
 
 
 def join_deny_reasons(reasons: Sequence[str]) -> str:
@@ -53,37 +40,13 @@ async def preflight_check(
     """Judge ``invocation``: the tail event, the partial record for the
     round about to be sent. The record for the previous assistant run is a
     different invocation and must never be sent here.
-
-    The credential is the connection push token, carried exactly as
-    ``sink.push_invocations`` carries it — the same one, not a second.
     """
     try:
-        # ``/ip`` is the route's internal name; the public gateway strips it,
-        # as it does for the ingest route the sink calls.
-        #
-        # ``SlashID-Request-Timeout`` hands the server our own budget, so it
-        # bounds its work to what we will actually wait for rather than to a
-        # fixed per-check deadline that knows nothing about ours. A server
-        # that predates the header ignores it.
-        response = await client.post(
-            f"{endpoint}/nhi/ai/preflight",
-            json=invocation.model_dump(mode="json", exclude_none=True),
-            headers={
-                "Authorization": f"Bearer {push_token}",
-                "SlashID-Request-Timeout": f"{timeout_s:.1f}",
-            },
-            timeout=timeout_s,
+        reasons = await preflight_invocation(
+            client, invocation, endpoint=endpoint, push_token=push_token, timeout_s=timeout_s
         )
-    except httpx.HTTPError as exc:
-        raise CheckFailed(f"preflight: {exc!r}") from exc
-    if response.status_code != 200:
-        raise CheckFailed(f"preflight: HTTP {response.status_code}")
-    try:
-        reasons = response.json()["deny_reasons"]
-    except (ValueError, KeyError, TypeError) as exc:
-        raise CheckFailed("preflight: unparseable verdict") from exc
-    if not isinstance(reasons, list) or not all(isinstance(r, str) for r in reasons):
-        raise CheckFailed("preflight: deny_reasons is not a list of strings")
+    except PreflightError as exc:
+        raise CheckFailed(f"preflight: {exc}") from exc
     if not reasons:
         return Verdict("allow", source="preflight")
     return Verdict("deny", deny_reason=join_deny_reasons(reasons), source="preflight")

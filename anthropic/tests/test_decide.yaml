@@ -67,15 +67,15 @@ tail_kind: with_files
 body: "{}"
 expected: {action: allow, source: none, calls: []}
 ---
-# Only accessed_files is read today, so a fresh round with nothing
-# hashable has nothing to ask about.
-id: preflight_not_called_without_files
-preflight: null
-config_overrides: {verdict_fail_mode: deny}
+# Every round goes, files or not: the connection's AI policy judges the
+# model and the tools too.
+id: preflight_runs_without_files
+preflight: {body: {deny_reasons: ["Your organization's AI policy does not allow this model."]}}
+config_overrides: {}
 frame_update: {}
 tail_kind: without_files
 body: "{}"
-expected: {action: allow, source: none, calls: []}
+expected: {action: deny, source: preflight, calls: [preflight]}
 ---
 # No tail event to send: a null actor.id cannot be resolved server-side,
 # so the builder produced nothing and there is no invocation to hand over.
@@ -169,4 +169,4 @@ config_overrides: {mock_denied_hashes: x}
 frame_update: {}
 tail_kind: without_files
 body: "{}"
-expected: {action: allow, source: none, calls: []}
+expected: {action: allow, source: none, calls: [preflight]}

@@ -12,7 +12,7 @@ Bedrock call ──→ MIL ──→ CloudWatch Logs ──┐
                                    Lambda (this repo)
                                             │
                                             ▼
-                              POST /nhi/events/ai-invocations
+                              POST /ip/nhi/events/ai-invocations
                                             │
                                             ▼
                                   SlashID NHI subgraph

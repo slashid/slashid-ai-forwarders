@@ -1,4 +1,5 @@
-"""Async HTTP client for the SlashID NHI AI invocations endpoint.
+"""Async HTTP client for the SlashID NHI AI invocations endpoints: the push,
+and the preflight that asks about an invocation before it is pushed.
 
 The forwarder only authenticates with the connection's event-streaming
 token. Identity creation, role-chain unrolling, and conversation
@@ -13,6 +14,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -20,9 +22,17 @@ from tenacity import (
     wait_exponential,
 )
 
-from .events import AIInvocationObservedV1
+from .events import AIInvocationObservedV1, AIPreflightResponse
 
 log = logging.getLogger(__name__)
+
+AI_INVOCATIONS_PATH = "/ip/nhi/events/ai-invocations"
+PREFLIGHT_PATH = f"{AI_INVOCATIONS_PATH}/preflight"
+# Held back from the budget handed to the server, so a verdict it reaches
+# at its own deadline still travels back before ours runs out.
+PREFLIGHT_RETURN_MARGIN_S = 0.5
+# The server's floor; a budget below it is clamped up anyway.
+PREFLIGHT_MIN_BUDGET_S = 0.05
 
 # Endpoint allows 1 MB; leave headroom for the wrapping envelope + transport overhead.
 MAX_BATCH_BYTES = 900_000
@@ -34,6 +44,11 @@ class TransientPushError(Exception):
 
 class PermanentPushError(Exception):
     """Non-retryable upstream failure (other 4xx)."""
+
+
+class PreflightError(Exception):
+    """Preflight gave no verdict: a transport failure, a non-200, or a body
+    that is not ``{"deny_reasons": [str, ...]}``."""
 
 
 def _classify(resp: httpx.Response) -> Exception:
@@ -119,10 +134,10 @@ async def push_invocations(
     push_token: str,
     max_retries: int = 3,
 ) -> int:
-    """POST /nhi/events/ai-invocations in 1 MB batches. Returns the count sent."""
+    """POST /ip/nhi/events/ai-invocations in 1 MB batches. Returns the count sent."""
     if not events:
         return 0
-    url = f"{endpoint}/nhi/events/ai-invocations"
+    url = f"{endpoint}{AI_INVOCATIONS_PATH}"
     headers = {"Authorization": f"Bearer {push_token}"}
 
     sent = 0
@@ -142,3 +157,46 @@ async def push_invocations(
             for ev in payload["events"]:
                 log.debug("push_invocations: event payload: %s", _redact_content(ev))
     return sent
+
+
+async def preflight_invocation(
+    client: httpx.AsyncClient,
+    invocation: AIInvocationObservedV1,
+    *,
+    endpoint: str,
+    push_token: str,
+    timeout_s: float,
+) -> list[str]:
+    """POST /ip/nhi/events/ai-invocations/preflight. Returns the deny reasons.
+
+    The body is the same ``AIInvocationObservedV1`` the push carries, sent
+    before the model has answered and therefore incomplete. An empty list
+    allows. A server-side check that cannot complete denies with a reason of
+    its own, so only a failure to get a verdict at all raises
+    ``PreflightError``.
+
+    No retry: the caller is inside a budget of ``timeout_s``. The server gets
+    that budget less ``PREFLIGHT_RETURN_MARGIN_S`` through
+    ``SlashID-Request-Timeout``, because it spends all of what it is given and
+    denies when it runs out; handed the whole budget, that deny would arrive
+    just as we stop waiting and become our own fail mode instead.
+    """
+    server_budget_s = max(timeout_s - PREFLIGHT_RETURN_MARGIN_S, PREFLIGHT_MIN_BUDGET_S)
+    try:
+        response = await client.post(
+            f"{endpoint}{PREFLIGHT_PATH}",
+            json=invocation.model_dump(mode="json", exclude_none=True),
+            headers={
+                "Authorization": f"Bearer {push_token}",
+                "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
+            },
+            timeout=timeout_s,
+        )
+    except httpx.HTTPError as exc:
+        raise PreflightError(repr(exc)) from exc
+    if response.status_code != 200:
+        raise PreflightError(f"HTTP {response.status_code}")
+    try:
+        return AIPreflightResponse.model_validate_json(response.content).deny_reasons
+    except ValidationError as exc:
+        raise PreflightError("unparseable verdict") from exc
