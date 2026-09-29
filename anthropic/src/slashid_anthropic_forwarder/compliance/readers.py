@@ -1,4 +1,4 @@
-"""One reader pass, and what builds it.
+"""One reader pass.
 
 Reader B runs first: it reads the transcripts, which is where the model
 of a denied conversation is, and Reader A has no ``model`` of its own.
@@ -21,7 +21,7 @@ import httpx
 
 from ..config import Config
 from ..store import PendingStore
-from .checkpoint import ACTIVITIES, CHATS, SESSIONS, Cursors, FeedCursor
+from .checkpoint import Cursors
 from .client import ComplianceClient
 from .denials import read_denials
 from .responses import read_responses
@@ -29,37 +29,12 @@ from .responses import read_responses
 log = logging.getLogger(__name__)
 
 
-def build_cursors(config: Config) -> Cursors:
-    """One checkpoint document per feed, in their own collection.
-
-    Synchronous, because the promoted ``CheckpointStore`` is: six
-    single-document reads and writes per tick, on a route with no latency
-    budget. ``asyncio.to_thread`` around the two ``FeedCursor`` methods is
-    the escape hatch if that ever stops being true.
-    """
-    from google.cloud import firestore
-    from slashid_ai_forwarder_core.checkpoint import FirestoreCheckpointStore
-
-    client = firestore.Client(project=config.gcp_project_id, database=config.firestore_database)
-
-    def cursor(feed: str) -> FeedCursor:
-        return FeedCursor(
-            FirestoreCheckpointStore(
-                client=client, collection=config.checkpoint_collection, document=feed
-            ),
-            name=feed,
-            poll_lag_seconds=config.poll_lag_seconds,
-        )
-
-    return Cursors(activities=cursor(ACTIVITIES), chats=cursor(CHATS), sessions=cursor(SESSIONS))
-
-
 async def run_readers(
     *,
     store: PendingStore,
     config: Config,
     http: httpx.AsyncClient,
-    cursors: Cursors | None = None,
+    cursors: Cursors | None,
     compliance: httpx.AsyncClient | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
@@ -71,9 +46,10 @@ async def run_readers(
     """
     if not config.compliance_enabled or not config.compliance_key:
         return {}
+    if cursors is None:
+        raise ValueError("compliance is enabled but no checkpoint store was wired")
     moment = now or datetime.now(UTC)
     client = ComplianceClient(compliance or http, api_key=config.compliance_key)
-    cursors = cursors or build_cursors(config)
     counters: dict[str, int] = {}
 
     models: dict[str, str] = {}

@@ -1,0 +1,72 @@
+"""The Anthropic forwarder's ports, built for the cloud it runs on.
+
+``main.py`` asks this module for everything stateful and never imports a
+cloud SDK itself. The generic pieces (checkpoints, blobs, the scheduler's
+identity) come from ``slashid_ai_forwarder_core.platform``; the pending
+store and the tick lease are this adapter's own ports, so their cloud
+implementations are built here too.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+from slashid_ai_forwarder_core.platform import SchedulerAuth
+from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
+
+from .compliance.checkpoint import ACTIVITIES, CHATS, SESSIONS, Cursors, FeedCursor
+from .config import Config
+from .hook.capture import BlobCapture, Capture
+from .store import FirestorePendingStore, FirestoreTickLease, PendingStore, TickLease
+
+
+@dataclass(frozen=True)
+class Ports:
+    store: PendingStore
+    lease: TickLease
+    cursors: Cursors
+    tick_auth: SchedulerAuth
+    capture: Capture | None
+
+
+def build_ports(config: Config) -> Ports:
+    match config.platform:
+        case "gcp":
+            return _gcp(config)
+
+
+def _gcp(config: Config) -> Ports:
+    platform = GcpPlatform(project=config.gcp_project_id, database=config.firestore_database)
+
+    def cursor(feed: str) -> FeedCursor:
+        return FeedCursor(
+            platform.checkpoint_store(collection=config.checkpoint_collection, document=feed),
+            name=feed,
+            poll_lag_seconds=config.poll_lag_seconds,
+        )
+
+    return Ports(
+        # Both durations are passed: ``tombstone_ttl`` defaults to two hours
+        # in the adapter, and leaving it there would make
+        # ``SLASHID_TOMBSTONE_TTL_SECONDS`` an environment variable with no
+        # effect on anything.
+        store=FirestorePendingStore(
+            client=platform.firestore_async,
+            collection=config.pending_collection,
+            join_wait=timedelta(seconds=config.join_wait_seconds),
+            tombstone_ttl=timedelta(seconds=config.tombstone_ttl_seconds),
+        ),
+        lease=FirestoreTickLease(
+            client=platform.firestore_async, collection=config.pending_collection
+        ),
+        cursors=Cursors(
+            activities=cursor(ACTIVITIES), chats=cursor(CHATS), sessions=cursor(SESSIONS)
+        ),
+        tick_auth=platform.scheduler_auth(
+            principal=config.tick_service_account, audience=config.tick_audience
+        ),
+        capture=BlobCapture(platform.blob_sink(config.capture_bucket))
+        if config.capture_bucket
+        else None,
+    )

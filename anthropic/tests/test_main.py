@@ -14,7 +14,7 @@ from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
-from slashid_anthropic_forwarder.store import FirestorePendingStore, TickLease
+from slashid_anthropic_forwarder.store import FirestorePendingStore, FirestoreTickLease, TickLease
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
@@ -58,7 +58,7 @@ SCHEDULER = {"authorization": "Bearer scheduler-token"}
 
 
 async def _accepts_the_scheduler(token: str) -> bool:
-    """Stands in for `google_oidc_check`, which verifies a Google
+    """Stands in for `GcpPlatform.scheduler_auth`, which verifies a Google
     signature against Google's certificates and cannot run offline."""
     return token == "scheduler-token"
 
@@ -295,7 +295,7 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
     Chunk 7 would not, and their checkpoint has no precondition."""
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
-    lease = TickLease(client=fake(store), collection="anthropic_pending")
+    lease = FirestoreTickLease(client=fake(store), collection="anthropic_pending")
     assert await lease.take(TICK_LEASE, owner="the-tick-already-running") is True
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
@@ -307,7 +307,7 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
 async def test_a_tick_releases_the_lease_so_the_next_one_runs() -> None:
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
-    lease = TickLease(client=fake(store), collection="anthropic_pending")
+    lease = FirestoreTickLease(client=fake(store), collection="anthropic_pending")
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 1}

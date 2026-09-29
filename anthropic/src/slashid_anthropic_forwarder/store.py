@@ -377,8 +377,16 @@ class FirestorePendingStore:
         return Seen.LIVE
 
 
-class TickLease:
-    """The guard one tick takes before it does any work.
+class TickLease(Protocol):
+    """The guard one tick takes before it does any work."""
+
+    async def take(self, lease: timedelta, *, owner: str, now: datetime | None = None) -> bool: ...
+
+    async def release(self, *, owner: str) -> None: ...
+
+
+class FirestoreTickLease:
+    """``TickLease`` on one Firestore document.
 
     The flush needs no such thing — ``claim`` arbitrates per record — but
     the readers do: two concurrent ticks walk the same lagging window,

@@ -83,6 +83,9 @@ class Config(BaseConfig):
     # to exactly one candidate — and at ±60 s one of them gains a second
     # and abstains.
     soft_join_window_seconds: int = 15
+    # The cloud the stateful ports are built on; ``platform.py`` switches
+    # on it. The fields below it are that cloud's.
+    platform: Literal["gcp"] = "gcp"
     # The project holding Firestore; vertex/ has the same field. Required:
     # this chunk builds the client, and ``project=None`` is a client that
     # talks to nothing.

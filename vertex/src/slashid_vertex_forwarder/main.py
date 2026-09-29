@@ -14,7 +14,7 @@ from functools import cache
 
 import functions_framework
 from cloudevents.http import CloudEvent
-from slashid_ai_forwarder_core.checkpoint import FirestoreCheckpointStore
+from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
 from .audit_only_source import AuditOnlyEventSource
 from .config import load_config
@@ -68,22 +68,18 @@ def _sources() -> list[EventSource]:
     hash the raw dict and chokes on lists). ``load_config()`` is
     itself cached, so pulling it inside is free.
     """
-    from google.cloud import bigquery, firestore
+    from google.cloud import bigquery
     from google.cloud import logging as gcp_logging
 
     config = load_config()
 
-    firestore_client = firestore.Client(
-        project=config.gcp_project_id,
-        database=config.firestore_database,
-    )
+    platform = GcpPlatform(project=config.gcp_project_id, database=config.firestore_database)
     bq_client = bigquery.Client(project=config.gcp_project_id)
 
     sources: list[EventSource] = [
         BqEventSource(
             client=bq_client,
-            checkpoint_store=FirestoreCheckpointStore(
-                client=firestore_client,
+            checkpoint_store=platform.checkpoint_store(
                 collection=config.firestore_checkpoint_collection,
                 document=_bq_checkpoint_doc(region),
             ),
@@ -103,8 +99,7 @@ def _sources() -> list[EventSource]:
                 project=config.gcp_project_id,
                 _use_grpc=False,
             ),
-            checkpoint_store=FirestoreCheckpointStore(
-                client=firestore_client,
+            checkpoint_store=platform.checkpoint_store(
                 collection=config.firestore_checkpoint_collection,
                 document=_AUDIT_ONLY_CHECKPOINT_DOC,
             ),

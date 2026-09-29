@@ -21,10 +21,10 @@ from slashid_anthropic_forwarder.record import (
 )
 from slashid_anthropic_forwarder.store import (
     FirestorePendingStore,
+    FirestoreTickLease,
     PendingStore,
     Retirement,
     Seen,
-    TickLease,
 )
 from tests.fake_firestore import FakeFirestore
 
@@ -372,9 +372,9 @@ def test_the_adapter_satisfies_the_port() -> None:
 TICK = timedelta(minutes=10)
 
 
-def a_lease(client: FakeFirestore | None = None) -> tuple[TickLease, FakeFirestore]:
+def a_lease(client: FakeFirestore | None = None) -> tuple[FirestoreTickLease, FakeFirestore]:
     fake = client or FakeFirestore()
-    return TickLease(client=fake, collection="anthropic_pending", document="tick"), fake
+    return FirestoreTickLease(client=fake, collection="anthropic_pending", document="tick"), fake
 
 
 async def test_one_tick_takes_the_lease_and_the_next_is_turned_away() -> None:
