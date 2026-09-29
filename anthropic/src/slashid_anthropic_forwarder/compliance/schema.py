@@ -284,6 +284,8 @@ class Chat(_LenientModel):
     user: UserRef | None = None
     href: str | None = None
     chat_messages: Rows[ChatMessage] = Field(default_factory=list)
+    # Set on a transcript page when more messages follow.
+    has_more: bool = False
 
 
 class Actor(_LenientModel):

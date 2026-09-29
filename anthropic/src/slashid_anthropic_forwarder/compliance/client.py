@@ -82,6 +82,8 @@ _FILE_CONTENT = "/apps/chats/files/{file_id}/content"
 # one page of a long session at 1,000 messages regularly outlived a 10s
 # read timeout, and a smaller page costs round trips, not correctness.
 _MESSAGE_PAGE = 200
+# Chat transcripts page separately; the endpoint accepts up to this many.
+_CHAT_PAGE = 1_000
 
 # Transcript endpoints cap each tool block at this many bytes and flag the
 # block ``truncated``; ``-1`` asks for the whole block (~1 MiB ceiling).
@@ -260,19 +262,32 @@ class ComplianceClient:
 
     # --- transcripts and bytes ----------------------------------------
 
-    async def chat(self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES) -> Chat:
-        """The chat object, turns included. Its ``model`` is the only one
-        there is — no chat message carries one."""
-        payload = await self._get(f"{_CHATS}/{chat_id}/messages", _tool_caps(tool_block_bytes))
-        return Chat.model_validate(payload)
+    async def chat(self, chat_id: str) -> Chat:
+        """The chat object with every turn. Its ``model`` is the only one
+        there is — no chat message carries one.
 
-    async def chat_messages(
-        self, chat_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
-    ) -> list[ChatMessage]:
+        Unlike a session transcript, this endpoint takes no tool-block caps
+        (it answers 400 to them) and pages with ``after_id``: the id of the
+        previous page's last message. The response's own ``last_id`` is not
+        that id, so it is not used.
+        """
+        params: dict[str, Any] = {"limit": _CHAT_PAGE}
+        first: Chat | None = None
+        messages: list[ChatMessage] = []
+        while True:
+            page = Chat.model_validate(await self._get(f"{_CHATS}/{chat_id}/messages", params))
+            first = first or page
+            messages.extend(page.chat_messages)
+            last = page.chat_messages[-1].id if page.chat_messages else None
+            if not page.has_more or not last:
+                return first.model_copy(update={"chat_messages": messages, "has_more": False})
+            params = {**params, "after_id": last}
+
+    async def chat_messages(self, chat_id: str) -> list[ChatMessage]:
         """A chat's turns, which sit under ``chat_messages`` rather than
         ``data``: reading ``data`` here yields nothing and says nothing
         about why."""
-        chat = await self.chat(chat_id, tool_block_bytes=tool_block_bytes)
+        chat = await self.chat(chat_id)
         return chat.chat_messages
 
     async def session_messages(
@@ -292,6 +307,41 @@ class ComplianceClient:
             messages.extend(page.data)
             if not page.next_page or not page.data:
                 return messages
+            params = {**params, "page": page.next_page}
+
+    async def session_tail(
+        self,
+        session_id: str,
+        *,
+        horizon: datetime,
+        tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES,
+    ) -> tuple[list[SessionMessage], bool]:
+        """The end of a transcript that holds every turn from ``horizon`` on,
+        oldest-first, and whether that is the whole transcript.
+
+        Read newest-first (``order=desc``) and stopped at the first
+        assistant message older than ``horizon``, which is kept: a turn's
+        round starts after the assistant message before it, so every turn
+        from the horizon on has its round in the tail. A turn cut off by
+        where reading stopped began before the horizon and is skipped.
+        """
+        params: dict[str, Any] = {
+            **_tool_caps(tool_block_bytes),
+            "limit": _MESSAGE_PAGE,
+            "order": "desc",
+        }
+        newest_first: list[SessionMessage] = []
+        while True:
+            payload = await self._get(f"{_SESSIONS}/{session_id}/messages", params)
+            page = SessionTranscript.model_validate(payload)
+            start = len(newest_first)
+            newest_first.extend(page.data)
+            for i in range(start, len(newest_first)):
+                message = newest_first[i]
+                if message.role == "assistant" and _before(message.created_at, horizon):
+                    return newest_first[i::-1], False
+            if not page.next_page or not page.data:
+                return newest_first[::-1], True
             params = {**params, "page": page.next_page}
 
     async def file_content(self, file_id: str) -> bytes:
@@ -314,3 +364,14 @@ def _tool_caps(tool_block_bytes: int) -> dict[str, Any]:
         "tool_result_max_bytes": tool_block_bytes,
         "tool_use_input_max_bytes": tool_block_bytes,
     }
+
+
+def _before(created_at: str | None, horizon: datetime) -> bool:
+    """Whether a message's clock is older than ``horizon``. A missing or
+    unreadable clock is not, so reading goes on past it."""
+    if not created_at:
+        return False
+    try:
+        return datetime.fromisoformat(created_at) < horizon
+    except ValueError:
+        return False

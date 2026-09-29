@@ -29,6 +29,7 @@ Two walks, because the feeds are different shapes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -114,6 +115,8 @@ class ResponseCounters:
     # watermark, so the next tick reads it again.
     session_failed: int = 0
     chat_failed: int = 0
+    # The reader stopped at its time budget this tick.
+    budget_exhausted: bool = False
     # Turns older than the tombstone horizon, skipped: see `_walk`.
     before_horizon: int = 0
     # How far the latest-arriving turn trailed its `created_at` when this
@@ -210,6 +213,25 @@ def _dump(blocks: Sequence[ContentBlock]) -> list[dict[str, Any]]:
     return [block.model_dump(mode="json") for block in blocks]
 
 
+@dataclass
+class _Deferred:
+    """A turn the hook never saw, waiting for its full transcript."""
+
+    run: ProducedRun
+    address: str
+    digests: list[AIAccessedFile]
+    created: datetime | None
+
+
+@dataclass
+class _SessionWork:
+    session_id: str
+    conversation_id: str
+    user_id: str | None
+    surface: str | None
+    runs: list[_Deferred]
+
+
 async def read_responses(
     client: ComplianceClient,
     *,
@@ -219,46 +241,190 @@ async def read_responses(
     http: httpx.AsyncClient,
     now: datetime,
 ) -> ResponseCounters:
-    """One pass over both conversation feeds."""
+    """One pass over both conversation feeds, inside one time budget.
+
+    Sessions are read in two passes. The first reads only each
+    transcript's tail, back to the tombstone horizon, which is all that
+    enriching a turn the hook recorded needs. A turn the hook never saw
+    needs the whole conversation as its input, so it is queued, and the
+    second pass fetches each such transcript once, after the chats. A
+    long session therefore costs its full length only when it has a turn
+    to emit, and never before the cheap work is done.
+
+    The budget is what guarantees Reader A and the flush still run: when
+    it runs out this returns with every unfinished feed's watermark held,
+    and the next tick carries on.
+    """
     counters = ResponseCounters()
     lag = timedelta(seconds=config.poll_lag_seconds)
-
-    drain = await client.drain_local_sessions(
-        since=cursors.sessions.window_start(now=now), limit=config.max_sessions_per_tick
-    )
-    # One conversation that cannot be read must not cost the rest: it is
-    # skipped, counted, and holds the watermark so the next tick retries it.
-    sessions_read = True
-    for session in drain.sessions:
-        if session.organization_uuid != config.organization_uuid:
-            counters.skipped_other_org += 1
-            continue
-        session_id = session.id
-        try:
-            messages = await client.session_messages(session_id)
-            await _walk(
-                produced_runs(messages),
+    horizon = _horizon(now, config)
+    sessions_done = chats_done = False
+    try:
+        async with asyncio.timeout(config.response_reader_budget_seconds):
+            drain = await client.drain_local_sessions(
+                since=cursors.sessions.window_start(now=now), limit=config.max_sessions_per_tick
+            )
+            work, tails_read = await _read_session_tails(
+                drain.sessions,
+                horizon=horizon,
                 now=now,
-                messages=messages,
-                conversation_id=decode_session_id(session_id) or session_id,
-                # A message carries no user; the listing item does.
-                user_id=_listed_user_id(session),
-                surface=session.product_surface,
                 client=client,
                 store=store,
                 config=config,
                 http=http,
                 counters=counters,
             )
-        except ComplianceError as exc:
-            log.warning("compliance: session %s unread this tick: %s", session_id, exc)
-            counters.session_failed += 1
-            sessions_read = False
-    # Only a finished drain may move a window bound whose listing is
-    # newest-first: the tail a cap leaves is the oldest.
-    cursors.sessions.advance(timestamp=now - lag, drained=drain.complete and sessions_read)
+            chats_done = await _read_chats(
+                cursors,
+                now=now,
+                client=client,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
+            )
+            emitted = await _emit_deferred(
+                work,
+                now=now,
+                client=client,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
+            )
+            # Only a finished drain may move a window bound whose listing is
+            # newest-first: the tail a cap leaves is the oldest.
+            sessions_done = drain.complete and tails_read and emitted
+    except TimeoutError:
+        counters.budget_exhausted = True
+        log.warning(
+            "compliance: the response reader used its %ss budget; "
+            "unfinished feeds hold their watermarks",
+            config.response_reader_budget_seconds,
+        )
+    cursors.sessions.advance(timestamp=now - lag, drained=sessions_done)
+    cursors.chats.advance(timestamp=now - lag, drained=chats_done)
+    return counters
 
-    chats_read = True
+
+async def _read_session_tails(
+    sessions: Sequence[SessionListing],
+    *,
+    horizon: datetime,
+    now: datetime,
+    client: ComplianceClient,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    counters: ResponseCounters,
+) -> tuple[list[_SessionWork], bool]:
+    """Pass one. One conversation that cannot be read must not cost the
+    rest: it is skipped, counted, and holds the watermark."""
+    work: list[_SessionWork] = []
+    ok = True
+    for session in sessions:
+        if session.organization_uuid != config.organization_uuid:
+            counters.skipped_other_org += 1
+            continue
+        conversation_id = decode_session_id(session.id) or session.id
+        # A message carries no user; the listing item does.
+        user_id = _listed_user_id(session)
+        deferred: list[_Deferred] = []
+        try:
+            tail, _ = await client.session_tail(session.id, horizon=horizon)
+            await _walk(
+                produced_runs(tail),
+                now=now,
+                messages=tail,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                surface=session.product_surface,
+                client=client,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
+                defer=deferred,
+            )
+        except ComplianceError as exc:
+            log.warning("compliance: session %s unread this tick: %s", session.id, exc)
+            counters.session_failed += 1
+            ok = False
+            continue
+        if deferred:
+            work.append(
+                _SessionWork(
+                    session.id, conversation_id, user_id, session.product_surface, deferred
+                )
+            )
+    return work, ok
+
+
+async def _emit_deferred(
+    work: Sequence[_SessionWork],
+    *,
+    now: datetime,
+    client: ComplianceClient,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    counters: ResponseCounters,
+) -> bool:
+    """Pass two: each queued session's full transcript, fetched once."""
+    ok = True
+    for item in work:
+        try:
+            full = await client.session_messages(item.session_id)
+        except ComplianceError as exc:
+            log.warning("compliance: session %s unread this tick: %s", item.session_id, exc)
+            counters.session_failed += 1
+            ok = False
+            continue
+        position = {m.id: i for i, m in enumerate(full) if m.id}
+        for deferred in item.runs:
+            first = deferred.run.messages[0].id
+            index = position.get(first) if first else None
+            if index is None:
+                # The tail's turn is not in the full read; retry next tick.
+                log.warning(
+                    "compliance: session %s turn %s missing from its full transcript",
+                    item.session_id,
+                    deferred.address,
+                )
+                ok = False
+                continue
+            await _emit(
+                full,
+                run=ProducedRun(
+                    index=index, messages=deferred.run.messages, model=deferred.run.model
+                ),
+                address=deferred.address,
+                digests=deferred.digests,
+                created=deferred.created,
+                now=now,
+                conversation_id=item.conversation_id,
+                user_id=item.user_id,
+                surface=item.surface,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
+            )
+    return ok
+
+
+async def _read_chats(
+    cursors: Cursors,
+    *,
+    now: datetime,
+    client: ComplianceClient,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    counters: ResponseCounters,
+) -> bool:
+    """One call per chat returns it whole, so chats need no second pass."""
+    ok = True
     async for listed in client.iter_chats(since=cursors.chats.window_start(now=now)):
         if listed.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
@@ -276,9 +442,8 @@ async def read_responses(
         except ComplianceError as exc:
             log.warning("compliance: chat %s unread this tick: %s", listed.id, exc)
             counters.chat_failed += 1
-            chats_read = False
-    cursors.chats.advance(timestamp=now - lag, drained=chats_read)
-    return counters
+            ok = False
+    return ok
 
 
 async def _read_chat(
@@ -324,6 +489,10 @@ async def _read_chat(
 _HORIZON_MARGIN = timedelta(minutes=5)
 
 
+def _horizon(now: datetime, config: Config) -> datetime:
+    return now - timedelta(seconds=config.tombstone_ttl_seconds) + _HORIZON_MARGIN
+
+
 def _created(run: ProducedRun) -> datetime | None:
     raw = run.messages[0].created_at if run.messages else None
     if not raw:
@@ -347,7 +516,11 @@ async def _walk(
     config: Config,
     http: httpx.AsyncClient,
     counters: ResponseCounters,
+    defer: list[_Deferred] | None = None,
 ) -> None:
+    """Handle each turn. A turn the hook never saw is emitted, or appended
+    to ``defer`` when ``messages`` is only the transcript's tail.
+    """
     # A conversation is re-read whole whenever it changes, but a tombstone
     # lives only `tombstone_ttl_seconds`. A turn older than that may have
     # lost its tombstone and would be emitted again, and after the
@@ -356,7 +529,7 @@ async def _walk(
     # deliberately does not backfill. Anything newer is still covered by
     # its tombstone, so this only drops turns that arrive later than the
     # TTL, which `max_first_seen_lag_s` measures.
-    horizon = now - timedelta(seconds=config.tombstone_ttl_seconds) + _HORIZON_MARGIN
+    horizon = _horizon(now, config)
     for run in runs:
         counters.models[conversation_id] = run.model
         created = _created(run)
@@ -388,35 +561,74 @@ async def _walk(
             counters.enriched += 1
             await push_if_ready(address, outcome, store=store, config=config, client=http)
             continue
-        event = await _standalone(
+        if defer is not None:
+            defer.append(_Deferred(run, address, digests, created))
+            continue
+        await _emit(
             messages,
             run=run,
             address=address,
+            digests=digests,
+            created=created,
+            now=now,
             conversation_id=conversation_id,
             user_id=user_id,
             surface=surface,
-            digests=digests,
+            store=store,
             config=config,
+            http=http,
+            counters=counters,
         )
-        if event is None:
-            counters.dropped_no_identity += 1
-            continue
-        # `event_fields`, not `open_fields`: there is no delivery id on
-        # this side, and `webhook_ids` is the list Reader A matches a
-        # denial against — putting a `clsm_` id in it would be a lie.
-        outcome = await store.upsert(
-            address, {**event_fields(event), "contributed": Append((COMPLIANCE,))}, ()
-        )
-        counters.emitted += 1
-        if created is not None:
-            # First sighting: an ABSENT address that is now tombstoned is
-            # never ABSENT again.
-            lag = (now - created).total_seconds()
-            log.info("compliance: %s first seen %.0fs after created_at", address, lag)
-            counters.max_first_seen_lag_s = max(counters.max_first_seen_lag_s, lag)
-        # No expectations, so the record is born ready: this pushes it and
-        # the retire inside leaves the tombstone the next tick honours.
-        await push_if_ready(address, outcome, store=store, config=config, client=http)
+
+
+async def _emit(
+    messages: Sequence[TranscriptMessage],
+    *,
+    run: ProducedRun,
+    address: str,
+    digests: Sequence[AIAccessedFile],
+    created: datetime | None,
+    now: datetime,
+    conversation_id: str,
+    user_id: str | None,
+    surface: str | None,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    counters: ResponseCounters,
+) -> None:
+    """A turn the hook never saw, as a standalone event. ``messages`` is
+    the whole transcript: the event's input is everything before the turn.
+    """
+    event = await _standalone(
+        messages,
+        run=run,
+        address=address,
+        conversation_id=conversation_id,
+        user_id=user_id,
+        surface=surface,
+        digests=digests,
+        config=config,
+    )
+    if event is None:
+        counters.dropped_no_identity += 1
+        return
+    # `event_fields`, not `open_fields`: there is no delivery id on
+    # this side, and `webhook_ids` is the list Reader A matches a
+    # denial against — putting a `clsm_` id in it would be a lie.
+    outcome = await store.upsert(
+        address, {**event_fields(event), "contributed": Append((COMPLIANCE,))}, ()
+    )
+    counters.emitted += 1
+    if created is not None:
+        # First sighting: an ABSENT address that is now tombstoned is
+        # never ABSENT again.
+        lag = (now - created).total_seconds()
+        log.info("compliance: %s first seen %.0fs after created_at", address, lag)
+        counters.max_first_seen_lag_s = max(counters.max_first_seen_lag_s, lag)
+    # No expectations, so the record is born ready: this pushes it and
+    # the retire inside leaves the tombstone the next tick honours.
+    await push_if_ready(address, outcome, store=store, config=config, client=http)
 
 
 async def soft_join_uploads(
