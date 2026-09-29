@@ -78,8 +78,10 @@ _CHATS = "/apps/chats"
 # way round, and it is the one path here worth pinning in a constant.
 _SESSIONS = "/apps/sessions/local"
 _FILE_CONTENT = "/apps/chats/files/{file_id}/content"
-# Transcript pages, which a listing's limit does not bound.
-_MESSAGE_PAGE = 1_000
+# Transcript pages, which a listing's limit does not bound. Small, because
+# one page of a long session at 1,000 messages regularly outlived a 10s
+# read timeout, and a smaller page costs round trips, not correctness.
+_MESSAGE_PAGE = 200
 
 # Transcript endpoints cap each tool block at this many bytes and flag the
 # block ``truncated``; ``-1`` asks for the whole block (~1 MiB ceiling).
@@ -161,8 +163,12 @@ class ComplianceClient:
         *,
         api_key: str,
         base_url: str = API_BASE,
+        timeout: float | None = None,
     ) -> None:
+        """``timeout`` bounds each request, overriding the shared client's
+        own, which is tuned for the hook rather than for transcript pages."""
         self._client = client
+        self._timeout = httpx.USE_CLIENT_DEFAULT if timeout is None else timeout
         self._base = base_url.rstrip("/")
         self._headers = {"x-api-key": api_key, "anthropic-version": API_VERSION}
 
@@ -171,7 +177,10 @@ class ComplianceClient:
         a ``schema`` model on the next line."""
         try:
             response = await self._client.get(
-                f"{self._base}{path}", params=dict(params), headers=self._headers
+                f"{self._base}{path}",
+                params=dict(params),
+                headers=self._headers,
+                timeout=self._timeout,
             )
         except httpx.HTTPError as exc:
             raise ComplianceError(f"{path}: {exc!r}") from exc
@@ -291,7 +300,7 @@ class ComplianceClient:
         ``size_bytes`` is what decides whether this is called at all."""
         url = f"{self._base}{_FILE_CONTENT.format(file_id=file_id)}"
         try:
-            response = await self._client.get(url, headers=self._headers)
+            response = await self._client.get(url, headers=self._headers, timeout=self._timeout)
         except httpx.HTTPError as exc:
             raise ComplianceError(f"file {file_id}: {exc!r}") from exc
         if response.status_code // 100 != 2:

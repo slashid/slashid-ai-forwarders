@@ -49,7 +49,11 @@ async def run_readers(
     if cursors is None:
         raise ValueError("compliance is enabled but no checkpoint store was wired")
     moment = now or datetime.now(UTC)
-    client = ComplianceClient(compliance or http, api_key=config.compliance_key)
+    client = ComplianceClient(
+        compliance or http,
+        api_key=config.compliance_key,
+        timeout=config.compliance_timeout_seconds,
+    )
     counters: dict[str, int] = {}
 
     models: dict[str, str] = {}
@@ -70,6 +74,10 @@ async def run_readers(
             # on a conversation and a clock.
             "responses_soft_enriched": responses.soft_enriched,
             "responses_soft_abstained": responses.soft_abstained,
+            "responses_session_failed": responses.session_failed,
+            "responses_chat_failed": responses.chat_failed,
+            "responses_before_horizon": responses.before_horizon,
+            "responses_max_first_seen_lag_s": round(responses.max_first_seen_lag_s),
         }
 
     try:

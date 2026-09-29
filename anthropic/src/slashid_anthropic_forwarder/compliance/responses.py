@@ -67,7 +67,7 @@ from ..record import COMPLIANCE, FILE_DIGESTS, PARSED_AS_COMPLIANCE, Append, eve
 from ..store import PendingStore, Seen
 from .attachments import files_from_listing, listed_files
 from .checkpoint import Cursors
-from .client import ComplianceClient, chat_session_id, decode_session_id
+from .client import ComplianceClient, ComplianceError, chat_session_id, decode_session_id
 from .schema import (
     Chat,
     ChatMessage,
@@ -110,6 +110,16 @@ class ResponseCounters:
     # a clock.
     soft_enriched: int = 0
     soft_abstained: int = 0
+    # Conversations that could not be read this tick. Each holds its feed's
+    # watermark, so the next tick reads it again.
+    session_failed: int = 0
+    chat_failed: int = 0
+    # Turns older than the tombstone horizon, skipped: see `_walk`.
+    before_horizon: int = 0
+    # How far the latest-arriving turn trailed its `created_at` when this
+    # reader first saw it. Measures how late transcripts become visible,
+    # which is what the horizon has to tolerate.
+    max_first_seen_lag_s: float = 0.0
     models: dict[str, str] = field(default_factory=dict)
 
 
@@ -216,65 +226,118 @@ async def read_responses(
     drain = await client.drain_local_sessions(
         since=cursors.sessions.window_start(now=now), limit=config.max_sessions_per_tick
     )
+    # One conversation that cannot be read must not cost the rest: it is
+    # skipped, counted, and holds the watermark so the next tick retries it.
+    sessions_read = True
     for session in drain.sessions:
         if session.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
         session_id = session.id
-        messages = await client.session_messages(session_id)
-        await _walk(
-            produced_runs(messages),
-            messages=messages,
-            conversation_id=decode_session_id(session_id) or session_id,
-            # A message carries no user; the listing item does.
-            user_id=_listed_user_id(session),
-            surface=session.product_surface,
-            client=client,
-            store=store,
-            config=config,
-            http=http,
-            counters=counters,
-        )
+        try:
+            messages = await client.session_messages(session_id)
+            await _walk(
+                produced_runs(messages),
+                now=now,
+                messages=messages,
+                conversation_id=decode_session_id(session_id) or session_id,
+                # A message carries no user; the listing item does.
+                user_id=_listed_user_id(session),
+                surface=session.product_surface,
+                client=client,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
+            )
+        except ComplianceError as exc:
+            log.warning("compliance: session %s unread this tick: %s", session_id, exc)
+            counters.session_failed += 1
+            sessions_read = False
     # Only a finished drain may move a window bound whose listing is
     # newest-first: the tail a cap leaves is the oldest.
-    cursors.sessions.advance(timestamp=now - lag, drained=drain.complete)
+    cursors.sessions.advance(timestamp=now - lag, drained=drain.complete and sessions_read)
 
+    chats_read = True
     async for listed in client.iter_chats(since=cursors.chats.window_start(now=now)):
         if listed.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
             continue
-        chat = await client.chat(listed.id)
-        messages = chat.chat_messages
-        before = counters.emitted + counters.enriched
-        await _walk(
-            chat_turns(chat),
-            messages=messages,
-            # The uuid the chat's `href` ends with, which is what a frame
-            # calls `session_id` — three of three, measured. The
-            # `claude_chat_…` id appears in no frame, so using it would
-            # file one conversation under two identifiers.
-            conversation_id=chat_session_id(chat) or chat.id,
-            user_id=_listed_user_id(chat) or _listed_user_id(listed),
-            surface="claude-ai",
-            client=client,
-            store=store,
-            config=config,
-            http=http,
-            counters=counters,
-        )
-        counters.from_chats += (counters.emitted + counters.enriched) - before
-        for match in await soft_join_uploads(chat, client=client, store=store, config=config):
-            if match is SoftMatch.ENRICHED:
-                counters.soft_enriched += 1
-            else:
-                counters.soft_abstained += 1
-    cursors.chats.advance(timestamp=now - lag, drained=True)
+        try:
+            await _read_chat(
+                listed,
+                now=now,
+                client=client,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
+            )
+        except ComplianceError as exc:
+            log.warning("compliance: chat %s unread this tick: %s", listed.id, exc)
+            counters.chat_failed += 1
+            chats_read = False
+    cursors.chats.advance(timestamp=now - lag, drained=chats_read)
     return counters
+
+
+async def _read_chat(
+    listed: Chat,
+    *,
+    now: datetime,
+    client: ComplianceClient,
+    store: PendingStore,
+    config: Config,
+    http: httpx.AsyncClient,
+    counters: ResponseCounters,
+) -> None:
+    chat = await client.chat(listed.id)
+    messages = chat.chat_messages
+    before = counters.emitted + counters.enriched
+    await _walk(
+        chat_turns(chat),
+        now=now,
+        messages=messages,
+        # The uuid the chat's `href` ends with, which is what a frame
+        # calls `session_id` — three of three, measured. The
+        # `claude_chat_…` id appears in no frame, so using it would
+        # file one conversation under two identifiers.
+        conversation_id=chat_session_id(chat) or chat.id,
+        user_id=_listed_user_id(chat) or _listed_user_id(listed),
+        surface="claude-ai",
+        client=client,
+        store=store,
+        config=config,
+        http=http,
+        counters=counters,
+    )
+    counters.from_chats += (counters.emitted + counters.enriched) - before
+    for match in await soft_join_uploads(chat, client=client, store=store, config=config):
+        if match is SoftMatch.ENRICHED:
+            counters.soft_enriched += 1
+        else:
+            counters.soft_abstained += 1
+
+
+# Slack on the tombstone horizon for clock skew between Anthropic's
+# `created_at` and our own clock.
+_HORIZON_MARGIN = timedelta(minutes=5)
+
+
+def _created(run: ProducedRun) -> datetime | None:
+    raw = run.messages[0].created_at if run.messages else None
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
 
 
 async def _walk(
     runs: Sequence[ProducedRun],
     *,
+    now: datetime,
     messages: Sequence[TranscriptMessage],
     conversation_id: str,
     user_id: str | None,
@@ -285,8 +348,21 @@ async def _walk(
     http: httpx.AsyncClient,
     counters: ResponseCounters,
 ) -> None:
+    # A conversation is re-read whole whenever it changes, but a tombstone
+    # lives only `tombstone_ttl_seconds`. A turn older than that may have
+    # lost its tombstone and would be emitted again, and after the
+    # server's 72h dedup expires, ingested again. Such a turn was already
+    # handled: watermarks never pass an unfinished pass, and a cold start
+    # deliberately does not backfill. Anything newer is still covered by
+    # its tombstone, so this only drops turns that arrive later than the
+    # TTL, which `max_first_seen_lag_s` measures.
+    horizon = now - timedelta(seconds=config.tombstone_ttl_seconds) + _HORIZON_MARGIN
     for run in runs:
         counters.models[conversation_id] = run.model
+        created = _created(run)
+        if created is not None and created < horizon:
+            counters.before_horizon += 1
+            continue
         address = joinable_address(to_anthropic(run.messages))
         if address is None:
             # Not addressable from this side, so it is the hook's, under a
@@ -332,6 +408,12 @@ async def _walk(
             address, {**event_fields(event), "contributed": Append((COMPLIANCE,))}, ()
         )
         counters.emitted += 1
+        if created is not None:
+            # First sighting: an ABSENT address that is now tombstoned is
+            # never ABSENT again.
+            lag = (now - created).total_seconds()
+            log.info("compliance: %s first seen %.0fs after created_at", address, lag)
+            counters.max_first_seen_lag_s = max(counters.max_first_seen_lag_s, lag)
         # No expectations, so the record is born ready: this pushes it and
         # the retire inside leaves the tombstone the next tick honours.
         await push_if_ready(address, outcome, store=store, config=config, client=http)

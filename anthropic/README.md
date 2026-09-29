@@ -123,6 +123,13 @@ around. Extend as new ones surface.
 - **The local-sessions listing cannot be ordered**, so the response reader
   re-walks its whole lagging window every tick instead of resuming from a
   cursor. Dedup absorbs the repeats; a long outage still means a long re-walk.
+- **A turn that becomes visible later than the tombstone TTL is dropped.** A
+  conversation is re-read whole whenever it changes, so the response reader
+  skips turns older than `SLASHID_TOMBSTONE_TTL_SECONDS` (2h): their
+  tombstones may be gone, and they would otherwise be emitted again. A local
+  session uploaded more than that after it happened loses those turns. The
+  tick counter `responses_max_first_seen_lag_s` measures how late turns
+  actually arrive; raise the TTL if it approaches the limit.
 - **Cloud Run caps HTTP/1 bodies at 32 MiB**, below the protocol's 64 MiB
   ceiling. Observed frames peak at 1.86 MB.
 - **Ticks overlap.** Cloud Run gives a second concurrent `POST /tick` a second
@@ -306,6 +313,7 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_MAX_SESSIONS_PER_TICK` | no | `200` |
 | `SLASHID_ATTACHMENT_HASHING` | no | `md5` (or `full`) |
 | `SLASHID_MAX_ATTACHMENT_FETCH_BYTES` | no | `10485760` |
+| `SLASHID_COMPLIANCE_TIMEOUT_SECONDS` | no | `60` (per Compliance API request) |
 | `SLASHID_SOFT_JOIN_WINDOW_SECONDS` | no | `15` |
 | `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |
 | `SLASHID_MAX_CONTENT_SIZE` | no | `100000` |
