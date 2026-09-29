@@ -12,20 +12,22 @@ makes an overlapping tick a no-op instead.
 from __future__ import annotations
 
 import contextlib
+import logging
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+log = logging.getLogger(__name__)
+
 
 class TickLease(Protocol):
-    async def take(self, lease: timedelta, *, owner: str, now: datetime | None = None) -> bool:
-        """True when this caller now holds it. False means another tick is
-        running, which is not an error: the next scheduled tick picks the
-        work up where this one would have."""
-        ...
-
-    async def release(self, *, owner: str) -> None:
-        """Hand it back. A lease that lapsed and was taken by someone else
-        is left alone: releasing it would give a running tick's guard away."""
+    def hold(self, lease: timedelta) -> AbstractAsyncContextManager[bool]:
+        """``async with lease.hold(duration) as held:``. ``held`` is False
+        when another tick is running, which is not an error: the body should
+        skip, and the next scheduled tick picks the work up. When True, the
+        lease is handed back on every way out of the block."""
         ...
 
 
@@ -38,7 +40,20 @@ class FirestoreTickLease:
         self._client = client  # google.cloud.firestore.AsyncClient
         self._ref = client.collection(collection).document(document)
 
+    @contextlib.asynccontextmanager
+    async def hold(self, lease: timedelta) -> AsyncIterator[bool]:
+        owner = f"tick-{uuid.uuid4().hex[:8]}"
+        held = await self.take(lease, owner=owner)
+        if not held:
+            log.info("%s skipped: another tick holds the lease", owner)
+        try:
+            yield held
+        finally:
+            if held:
+                await self.release(owner=owner)
+
     async def take(self, lease: timedelta, *, owner: str, now: datetime | None = None) -> bool:
+        """True when ``owner`` now holds it."""
         from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
 
         now = now or datetime.now(UTC)
@@ -62,6 +77,8 @@ class FirestoreTickLease:
         return True
 
     async def release(self, *, owner: str) -> None:
+        """A lease that lapsed and was taken by someone else is left alone:
+        releasing it would give a running tick's guard away."""
         from google.api_core.exceptions import FailedPrecondition, NotFound
 
         snapshot = await self._ref.get()

@@ -15,7 +15,6 @@ import logging
 import os
 import sys
 import time
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -192,14 +191,13 @@ def create_app(
             return Response(status_code=401)
         if store is None:
             return JSONResponse({"flushed": 0})
-        owner = f"tick-{uuid.uuid4().hex[:8]}"
-        if lease is not None and not await lease.take(TICK_LEASE, owner=owner):
-            # Not an error. Cloud Scheduler retries nothing, and the next
-            # fire picks the same work up from the store.
-            log.info("tick %s skipped: another holds the lease", owner)
-            return JSONResponse({"flushed": 0, "skipped": True})
-        counters: dict[str, int] = {}
-        try:
+        guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
+        async with guard as held:
+            if not held:
+                # Not an error. Cloud Scheduler retries nothing, and the
+                # next fire picks the same work up from the store.
+                return JSONResponse({"flushed": 0, "skipped": True})
+            counters: dict[str, int] = {}
             # Readers first: a `complete` here can make a record ready,
             # and it should go out on this tick rather than the next.
             try:
@@ -212,9 +210,6 @@ def create_app(
                 # from its watermark.
                 log.exception("tick: the reader pass failed; flushing anyway")
             flushed = await flush_due(store, config=config, client=http())
-        finally:
-            if lease is not None:
-                await lease.release(owner=owner)
         return JSONResponse({"flushed": flushed, **counters})
 
     @app.post("/{path:path}")

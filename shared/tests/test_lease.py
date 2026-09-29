@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
 
 from slashid_ai_forwarder_core.lease import FirestoreTickLease
@@ -99,3 +100,32 @@ async def test_releasing_a_lease_someone_else_holds_does_nothing() -> None:
     await lease.release(owner="crashed")
     third, _ = a_lease(db)
     assert await third.take(TICK, owner="third", now=NOW + TICK + timedelta(minutes=1)) is False
+
+
+async def test_hold_hands_the_lease_back_when_the_block_ends() -> None:
+    lease, db = a_lease()
+    async with lease.hold(TICK) as held:
+        assert held is True
+        async with a_lease(db)[0].hold(TICK) as second:
+            assert second is False
+    async with a_lease(db)[0].hold(TICK) as third:
+        assert third is True
+
+
+async def test_hold_hands_the_lease_back_when_the_block_raises() -> None:
+    lease, db = a_lease()
+    with pytest.raises(RuntimeError):
+        async with lease.hold(TICK):
+            raise RuntimeError("the tick failed")
+    async with a_lease(db)[0].hold(TICK) as held:
+        assert held is True
+
+
+async def test_hold_that_was_turned_away_releases_nothing() -> None:
+    """Leaving the block without the lease must not free the holder's."""
+    lease, db = a_lease()
+    async with lease.hold(TICK):
+        async with a_lease(db)[0].hold(TICK) as second:
+            assert second is False
+        async with a_lease(db)[0].hold(TICK) as third:
+            assert third is False
