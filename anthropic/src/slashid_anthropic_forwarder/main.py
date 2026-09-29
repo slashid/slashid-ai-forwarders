@@ -33,7 +33,7 @@ from .hook.frame import PromptFrame
 from .hook.signature import verify
 from .hook.verdict import decide
 from .pending import TICK_LEASE, flush_due, unanswered_round, write_from_frame
-from .platform import build_ports
+from .platform import build_backends
 from .store import PendingStore, TickLease
 
 log = logging.getLogger(__name__)
@@ -235,12 +235,12 @@ def app() -> FastAPI:
         format="%(levelname)s %(name)s: %(message)s",
     )
     config = load_config()
-    ports = build_ports(config)
+    backends = build_backends(config)
     return create_app(
         config,
-        capture=ports.capture,
-        store=ports.store,
-        lease=ports.lease,
-        cursors=ports.cursors,
-        tick_auth=ports.tick_auth,
+        capture=backends.capture,
+        store=backends.store,
+        lease=backends.lease,
+        cursors=backends.cursors,
+        tick_auth=backends.tick_auth,
     )

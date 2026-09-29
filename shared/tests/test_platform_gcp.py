@@ -1,4 +1,4 @@
-"""``GcpPlatform``: the ports it hands out, without touching Google."""
+"""``GcpPlatform``: what it hands out, without touching Google."""
 
 from __future__ import annotations
 

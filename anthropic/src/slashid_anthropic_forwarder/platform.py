@@ -1,9 +1,9 @@
-"""The Anthropic forwarder's ports, built for the cloud it runs on.
+"""The Anthropic forwarder's backends, built for the cloud it runs on.
 
 ``main.py`` asks this module for everything stateful and never imports a
 cloud SDK itself. The generic pieces (checkpoints, blobs, the scheduler's
 identity) come from ``slashid_ai_forwarder_core.platform``; the pending
-store and the tick lease are this adapter's own ports, so their cloud
+store and the tick lease are this adapter's own interfaces, so their cloud
 implementations are built here too.
 """
 
@@ -22,7 +22,7 @@ from .store import FirestorePendingStore, FirestoreTickLease, PendingStore, Tick
 
 
 @dataclass(frozen=True)
-class Ports:
+class Backends:
     store: PendingStore
     lease: TickLease
     cursors: Cursors
@@ -30,13 +30,13 @@ class Ports:
     capture: Capture | None
 
 
-def build_ports(config: Config) -> Ports:
+def build_backends(config: Config) -> Backends:
     match config.platform:
         case "gcp":
             return _gcp(config)
 
 
-def _gcp(config: Config) -> Ports:
+def _gcp(config: Config) -> Backends:
     platform = GcpPlatform(project=config.gcp_project_id, database=config.firestore_database)
 
     def cursor(feed: str) -> FeedCursor:
@@ -46,7 +46,7 @@ def _gcp(config: Config) -> Ports:
             poll_lag_seconds=config.poll_lag_seconds,
         )
 
-    return Ports(
+    return Backends(
         # Both durations are passed: ``tombstone_ttl`` defaults to two hours
         # in the adapter, and leaving it there would make
         # ``SLASHID_TOMBSTONE_TTL_SECONDS`` an environment variable with no

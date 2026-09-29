@@ -1,4 +1,4 @@
-"""What a forwarder needs from the cloud it runs on, behind ports.
+"""What a forwarder needs from the cloud it runs on, behind interfaces.
 
 An adapter's logic — polling a feed, answering a hook, pushing events —
 does not care where it runs. What does is a short list: where watermarks
@@ -7,8 +7,8 @@ who it is. ``Platform`` names those, and one implementation per cloud
 supplies them; ``gcp.GcpPlatform`` is the only one today.
 
 An adapter with state of its own (a pending store, a lease) declares its
-own ports next to its code and builds them from the same platform, so
-moving an adapter to another cloud means implementing those ports there,
+own interfaces next to its code and builds them from the same platform,
+so moving an adapter to another cloud means implementing those there,
 not editing the adapter.
 """
 

@@ -30,7 +30,7 @@ class GcsBlobSink:
 class GcpPlatform:
     """One project and one named Firestore database.
 
-    The Firestore clients are exposed as well as the ports, because an
+    The Firestore clients are exposed as well as the interfaces, because an
     adapter whose own store is Firestore-backed shares this connection
     rather than opening a second one.
     """
