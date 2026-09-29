@@ -22,12 +22,12 @@ from typing import Any
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from slashid_ai_forwarder_core.platform import SchedulerAuth
+from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth
 
 from .compliance.checkpoint import Cursors
 from .compliance.readers import run_readers
 from .config import Config, load_config
-from .hook.capture import Capture
+from .hook.capture import capture_frame
 from .hook.checks import ALLOW, Decision
 from .hook.frame import PromptFrame
 from .hook.signature import verify
@@ -39,9 +39,9 @@ from .store import PendingStore, TickLease
 log = logging.getLogger(__name__)
 
 
-async def _capture_safely(capture: Capture, request_id: str, headers: dict, body: bytes) -> None:
+async def _capture_safely(capture: BlobSink, request_id: str, headers: dict, body: bytes) -> None:
     try:
-        await capture.store(request_id, headers, body)
+        await capture_frame(capture, request_id, headers, body)
     except Exception:
         log.exception("capture failed for %s", request_id)
 
@@ -87,7 +87,7 @@ async def _refuse(_token: str) -> bool:
 def create_app(
     config: Config,
     *,
-    capture: Capture | None = None,
+    capture: BlobSink | None = None,
     store: PendingStore | None = None,
     lease: TickLease | None = None,
     cursors: Cursors | None = None,

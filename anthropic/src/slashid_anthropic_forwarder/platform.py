@@ -12,12 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
-from slashid_ai_forwarder_core.platform import SchedulerAuth
+from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth
 from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
 from .compliance.checkpoint import ACTIVITIES, CHATS, SESSIONS, Cursors, FeedCursor
 from .config import Config
-from .hook.capture import BlobCapture, Capture
 from .store import FirestorePendingStore, FirestoreTickLease, PendingStore, TickLease
 
 
@@ -27,7 +26,7 @@ class Backends:
     lease: TickLease
     cursors: Cursors
     tick_auth: SchedulerAuth
-    capture: Capture | None
+    capture: BlobSink | None
 
 
 def build_backends(config: Config) -> Backends:
@@ -66,7 +65,5 @@ def _gcp(config: Config) -> Backends:
         tick_auth=platform.scheduler_auth(
             principal=config.tick_service_account, audience=config.tick_audience
         ),
-        capture=BlobCapture(platform.blob_sink(config.capture_bucket))
-        if config.capture_bucket
-        else None,
+        capture=platform.blob_sink(config.capture_bucket) if config.capture_bucket else None,
     )
