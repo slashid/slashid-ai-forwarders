@@ -24,9 +24,9 @@ output "bigquery_table_ids" {
   }
 }
 
-output "firestore_checkpoint_collection" {
+output "checkpoint_collection" {
   description = "Firestore collection under which the per-source checkpoint documents live (``checkpoint_bq_<region_slug>`` per region for the BQ path, ``checkpoint_audit_only`` shared for the audit-only path)."
-  value       = var.firestore_checkpoint_collection
+  value       = var.checkpoint_collection
 }
 
 output "push_token_secret_id" {

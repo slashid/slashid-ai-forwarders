@@ -160,7 +160,7 @@ The database is named rather than `(default)`, the same isolation
 `vertex/` takes. Firestore databases cannot be undeleted, so
 `deletion_policy = "ABANDON"`: a `terraform destroy` leaves it behind,
 and a re-apply into the same project should set
-`create_firestore_database = false`.
+`create_database = false`.
 
 The TTL policy keys on `tombstone_expires_at`, the field the store writes
 as `tombstoned_at + tombstone_ttl_seconds`. A live record never carries
@@ -201,5 +201,5 @@ quotes it, including the person testing it.
 | `scheduler_service_account_email` | The identity the OIDC token names. |
 | `tick_schedule` | The unix-cron schedule derived from `tick_interval_seconds`. |
 | `image` | The image the service runs, through the registry proxy. |
-| `firestore_database` | The named database holding records and checkpoints. |
+| `database` | The named database holding records and checkpoints. |
 | `capabilities` | `{ hook, compliance }` — which halves this deployment runs. |

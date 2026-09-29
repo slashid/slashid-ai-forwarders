@@ -183,7 +183,7 @@ variable "release_repo" {
   default     = "slashid/slashid-ai-forwarders"
 }
 
-variable "create_firestore_database" {
+variable "create_database" {
   description = <<-EOT
     Provision the Firestore Native-mode database. Firestore is
     singleton-per-project until multi-database GA — set to false to
@@ -214,13 +214,13 @@ variable "bq_dataset_prefix" {
   default     = "slashid_vertex_reqresp_logs"
 }
 
-variable "firestore_database" {
+variable "database" {
   description = "Named Firestore database (multi-database GA). Kept isolated from the project's (default) database so the forwarder does not interfere with other customer workloads."
   type        = string
   default     = "slashid-vertex"
 }
 
-variable "firestore_checkpoint_collection" {
+variable "checkpoint_collection" {
   description = "Firestore collection for the polling checkpoint document."
   type        = string
   default     = "slashid_vertex"

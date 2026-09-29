@@ -59,7 +59,7 @@ resource "google_cloud_run_v2_service" "receiver" {
       }
       env {
         name  = "SLASHID_DATABASE"
-        value = var.firestore_database
+        value = var.database
       }
       env {
         name  = "SLASHID_PENDING_COLLECTION"

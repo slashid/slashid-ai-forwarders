@@ -150,8 +150,8 @@ resource "google_cloudfunctions2_function" "forwarder" {
       SLASHID_PROJECT_ID              = var.project_id
       SLASHID_GCP_REGIONS             = jsonencode(var.regions)
       SLASHID_BQ_DATASET_PREFIX       = var.bq_dataset_prefix
-      SLASHID_DATABASE                = var.firestore_database
-      SLASHID_CHECKPOINT_COLLECTION   = var.firestore_checkpoint_collection
+      SLASHID_DATABASE                = var.database
+      SLASHID_CHECKPOINT_COLLECTION   = var.checkpoint_collection
       SLASHID_AUDIT_BUFFER_SECONDS    = tostring(var.audit_buffer_seconds)
       SLASHID_INCLUDE_RAW_CONTENT     = tostring(var.include_raw_content)
       SLASHID_MAX_CONTENT_SIZE        = tostring(var.max_content_size)

@@ -5,7 +5,7 @@
 # ``(default)`` database. Keeps the forwarder isolated from any other
 # Firestore usage in the customer's project.
 #
-# ``create_firestore_database`` defaults to true. Set to false if the
+# ``create_database`` defaults to true. Set to false if the
 # named database already exists (e.g. after ``terraform destroy`` +
 # re-apply — Firestore databases are hard to fully delete, so many
 # customers will leave them around and reuse across cycles).
@@ -15,10 +15,10 @@
 # TF resource creates it up-front.
 
 resource "google_firestore_database" "vertex" {
-  count = var.create_firestore_database ? 1 : 0
+  count = var.create_database ? 1 : 0
 
   project     = var.project_id
-  name        = var.firestore_database
+  name        = var.database
   location_id = local.deployment_region
   type        = "FIRESTORE_NATIVE"
 

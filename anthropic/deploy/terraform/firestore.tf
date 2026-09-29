@@ -7,10 +7,10 @@
 # first save and need no resource here.
 
 resource "google_firestore_database" "pending" {
-  count = var.create_firestore_database ? 1 : 0
+  count = var.create_database ? 1 : 0
 
   project     = var.project_id
-  name        = var.firestore_database
+  name        = var.database
   location_id = var.region
   type        = "FIRESTORE_NATIVE"
 
@@ -34,7 +34,7 @@ resource "google_firestore_database" "pending" {
 # index has two terms rather than three.
 resource "google_firestore_index" "due" {
   project     = var.project_id
-  database    = var.firestore_database
+  database    = var.database
   collection  = var.pending_collection
   query_scope = "COLLECTION"
 
@@ -69,7 +69,7 @@ resource "google_firestore_index" "due" {
 # nothing queries it and Firestore recommends the exemption.
 resource "google_firestore_field" "tombstone_ttl" {
   project    = var.project_id
-  database   = var.firestore_database
+  database   = var.database
   collection = var.pending_collection
   field      = "tombstone_expires_at"
 
