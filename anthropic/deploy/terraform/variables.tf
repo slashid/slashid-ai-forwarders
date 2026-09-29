@@ -197,6 +197,12 @@ variable "tick_attempt_deadline_seconds" {
 
 # --- Service shape ---------------------------------------------------------
 
+variable "memory" {
+  description = "Memory per instance. The hook and the tick share an instance, so a tick that exhausts it takes in-flight verdicts down too."
+  type        = string
+  default     = "1Gi"
+}
+
 variable "min_instances" {
   description = "Applies only when the hook is enabled: a cold start inside Anthropic's verdict timeout risks a webhook failure, and enough of those trip its circuit breaker. A compliance-only deployment pins this to 0 regardless."
   type        = number

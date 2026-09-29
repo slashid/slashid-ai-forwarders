@@ -80,6 +80,10 @@ class Config(BaseConfig):
     # and Cloud Run's request timeout, so the reader stops here and holds its
     # watermarks rather than taking the tick down with it.
     response_reader_budget_seconds: float = 300.0
+    # The most transcript the response reader holds in memory at once. A
+    # turn in a longer session is emitted with the transcript's tail as its
+    # input rather than fetching the whole thing.
+    max_transcript_messages: int = 2_000
     # One document per feed, in its own collection: a watermark is a
     # different lifetime from a pending record, and the pending
     # collection carries a TTL policy that would delete these.

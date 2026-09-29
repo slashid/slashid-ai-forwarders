@@ -68,7 +68,13 @@ from ..record import COMPLIANCE, FILE_DIGESTS, PARSED_AS_COMPLIANCE, Append, eve
 from ..store import PendingStore, Seen
 from .attachments import files_from_listing, listed_files
 from .checkpoint import Cursors
-from .client import ComplianceClient, ComplianceError, chat_session_id, decode_session_id
+from .client import (
+    ComplianceClient,
+    ComplianceError,
+    TranscriptTooLong,
+    chat_session_id,
+    decode_session_id,
+)
 from .schema import (
     Chat,
     ChatMessage,
@@ -117,6 +123,9 @@ class ResponseCounters:
     chat_failed: int = 0
     # The reader stopped at its time budget this tick.
     budget_exhausted: bool = False
+    # Turns emitted with the tail as their input, because the full
+    # transcript was past `max_transcript_messages`.
+    emitted_from_tail: int = 0
     # Turns older than the tombstone horizon, skipped: see `_walk`.
     before_horizon: int = 0
     # How far the latest-arriving turn trailed its `created_at` when this
@@ -230,6 +239,9 @@ class _SessionWork:
     user_id: str | None
     surface: str | None
     runs: list[_Deferred]
+    # Pass one's read, oldest-first: the fallback input when the full
+    # transcript is too long to hold.
+    tail: list[SessionMessage]
 
 
 async def read_responses(
@@ -354,7 +366,7 @@ async def _read_session_tails(
         if deferred:
             work.append(
                 _SessionWork(
-                    session.id, conversation_id, user_id, session.product_surface, deferred
+                    session.id, conversation_id, user_id, session.product_surface, deferred, tail
                 )
             )
     return work, ok
@@ -374,7 +386,20 @@ async def _emit_deferred(
     ok = True
     for item in work:
         try:
-            full = await client.session_messages(item.session_id)
+            full: Sequence[SessionMessage] = await client.session_messages(
+                item.session_id, max_messages=config.max_transcript_messages
+            )
+        except TranscriptTooLong:
+            # Held in memory whole, a long enough session takes the instance
+            # down with it. The event's input is truncated to
+            # `max_content_size` regardless, so the tail is what ships.
+            log.warning(
+                "compliance: session %s is over %s messages; emitting from its tail",
+                item.session_id,
+                config.max_transcript_messages,
+            )
+            full = item.tail
+            counters.emitted_from_tail += len(item.runs)
         except ComplianceError as exc:
             log.warning("compliance: session %s unread this tick: %s", item.session_id, exc)
             counters.session_failed += 1

@@ -7,8 +7,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+import pytest
 
-from slashid_anthropic_forwarder.compliance.client import ComplianceClient
+from slashid_anthropic_forwarder.compliance.client import ComplianceClient, TranscriptTooLong
 from slashid_anthropic_forwarder.compliance.responses import read_responses
 from slashid_anthropic_forwarder.store import Retirement
 from tests.compliance_fixtures import transport
@@ -145,3 +146,26 @@ async def test_the_budget_stops_the_reader_and_holds_its_watermarks() -> None:
     assert asyncio.get_running_loop().time() - started < 2
     assert counters.budget_exhausted
     assert sessions.saves == [] and chats.saves == []
+
+
+async def test_a_transcript_over_the_cap_stops_being_read() -> None:
+    """Memory is what the cap protects: at most one page past it is held."""
+    http, pages = _paged(TRANSCRIPT, per_page=2)
+    with pytest.raises(TranscriptTooLong):
+        await ComplianceClient(http, api_key="k").session_messages("clls_x", max_messages=3)
+    assert len(pages) == 2
+
+
+async def test_a_session_too_long_to_hold_is_emitted_from_its_tail(monkeypatch) -> None:
+    """The 0.1.3 reader ran out of memory holding two long sessions whole.
+    Past the cap, the turn ships with the tail as its input."""
+
+    async def too_long(self, session_id, **_):
+        raise TranscriptTooLong(session_id)
+
+    monkeypatch.setattr(ComplianceClient, "session_messages", too_long)
+    client, seen = transport()
+    counters = await _run(a_store(), client)
+    assert counters.emitted >= 5
+    assert counters.emitted_from_tail == counters.emitted - counters.from_chats
+    assert _full_reads(seen) == []

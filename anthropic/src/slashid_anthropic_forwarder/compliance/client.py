@@ -291,7 +291,11 @@ class ComplianceClient:
         return chat.chat_messages
 
     async def session_messages(
-        self, session_id: str, *, tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES
+        self,
+        session_id: str,
+        *,
+        tool_block_bytes: int = TOOL_BLOCK_DEFAULT_BYTES,
+        max_messages: int | None = None,
     ) -> list[SessionMessage]:
         """A local-session transcript, ``{session, data, next_page}``.
 
@@ -307,6 +311,8 @@ class ComplianceClient:
             messages.extend(page.data)
             if not page.next_page or not page.data:
                 return messages
+            if max_messages is not None and len(messages) >= max_messages:
+                raise TranscriptTooLong(f"{session_id}: over {max_messages} messages")
             params = {**params, "page": page.next_page}
 
     async def session_tail(
@@ -364,6 +370,10 @@ def _tool_caps(tool_block_bytes: int) -> dict[str, Any]:
         "tool_result_max_bytes": tool_block_bytes,
         "tool_use_input_max_bytes": tool_block_bytes,
     }
+
+
+class TranscriptTooLong(ComplianceError):
+    """A transcript past the size the caller will hold in memory."""
 
 
 def _before(created_at: str | None, horizon: datetime) -> bool:
