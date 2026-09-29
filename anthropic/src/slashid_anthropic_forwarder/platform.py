@@ -3,8 +3,8 @@
 ``main.py`` asks this module for everything stateful and never imports a
 cloud SDK itself. The generic pieces (checkpoints, the tick lease, blobs,
 the scheduler's identity) come from the platform ``config.platform``
-names; the pending store is this adapter's own interface, so its cloud
-implementations are chosen here.
+names; the pending store is this adapter's own interface, so its
+implementation for that platform, from ``store/``, is chosen here.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
 from .compliance.checkpoint import ACTIVITIES, CHATS, SESSIONS, Cursors, FeedCursor
 from .config import Config
-from .store import FirestorePendingStore, PendingStore
+from .store import PendingStore
 
 
 @dataclass(frozen=True)
@@ -63,11 +63,14 @@ def _pending_store(platform: Platform, config: Config) -> PendingStore:
     the store, and leaving it there would make
     ``SLASHID_TOMBSTONE_TTL_SECONDS`` an environment variable with no effect
     on anything."""
-    if isinstance(platform, GcpPlatform):
-        return FirestorePendingStore(
-            client=platform.firestore_async,
-            collection=config.pending_collection,
-            join_wait=timedelta(seconds=config.join_wait_seconds),
-            tombstone_ttl=timedelta(seconds=config.tombstone_ttl_seconds),
-        )
+    match platform:
+        case GcpPlatform():
+            from .store.gcp import FirestorePendingStore
+
+            return FirestorePendingStore(
+                client=platform.firestore_async,
+                collection=config.pending_collection,
+                join_wait=timedelta(seconds=config.join_wait_seconds),
+                tombstone_ttl=timedelta(seconds=config.tombstone_ttl_seconds),
+            )
     raise NotImplementedError(f"no pending store for {type(platform).__name__}")

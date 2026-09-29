@@ -21,7 +21,8 @@ from slashid_anthropic_forwarder.compliance.responses import (
 )
 from slashid_anthropic_forwarder.compliance.schema import Chat, SessionMessage
 from slashid_anthropic_forwarder.hook.frame import PromptFrame, split_transcript
-from slashid_anthropic_forwarder.store import FirestorePendingStore, Retirement, Seen
+from slashid_anthropic_forwarder.store import Retirement, Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.compliance_fixtures import PAIRED, body, transport
 from tests.test_cursors import LAG
 from tests.test_cursors import _FakeStore as FakeCheckpoints

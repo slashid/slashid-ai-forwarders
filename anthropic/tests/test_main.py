@@ -17,7 +17,7 @@ from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
-from slashid_anthropic_forwarder.store import FirestorePendingStore
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed

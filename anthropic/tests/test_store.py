@@ -20,12 +20,8 @@ from slashid_anthropic_forwarder.record import (
     PendingRecord,
     event_fields,
 )
-from slashid_anthropic_forwarder.store import (
-    FirestorePendingStore,
-    PendingStore,
-    Retirement,
-    Seen,
-)
+from slashid_anthropic_forwarder.store import PendingStore, Retirement, Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.fake_firestore import FakeFirestore
 
 NOW = datetime(2026, 9, 20, 23, 8, 20, tzinfo=UTC)

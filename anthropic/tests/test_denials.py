@@ -10,7 +10,8 @@ from slashid_anthropic_forwarder.compliance.client import ComplianceClient
 from slashid_anthropic_forwarder.compliance.denials import DenialCounters, read_denials
 from slashid_anthropic_forwarder.compliance.schema import Activity
 from slashid_anthropic_forwarder.record import DENIAL_ACTIVITY
-from slashid_anthropic_forwarder.store import FirestorePendingStore, Retirement, Seen
+from slashid_anthropic_forwarder.store import Retirement, Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.compliance_fixtures import body, transport
 from tests.test_cursors import LAG
 from tests.test_cursors import _FakeStore as FakeCheckpoints
