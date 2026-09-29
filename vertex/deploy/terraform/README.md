@@ -25,13 +25,13 @@ dataset all live in the one region:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.7"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.8"
 
   project_id         = "customer-project-123456"
   regions            = ["us-central1"]
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-  release_version    = "vertex-v0.1.7"
+  release_version    = "vertex-v0.1.8"
 }
 ```
 
@@ -42,7 +42,7 @@ non-`global` entry:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.7"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.8"
 
   project_id      = "customer-project-123456"
   regions         = ["us-central1", "europe-west1", "asia-northeast1"]

@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 
 # Correlation offsets, measured over 530 tagged calls on 2026-09-17.
 # The audit entry consistently PRECEDES ``logging_time - latency``, so the
-# bias pulls the prediction forward onto it. Only two factors move the
+# bias is subtracted, pulling the prediction back onto it. Only two factors move the
 # offset: global vs regional routing, and unary vs streaming. Dataset
 # storage region, payload size and model tier were all measured and do
 # not. Windows carry ~100ms of extra slack because the offset drifts
@@ -71,10 +71,10 @@ def _correlation(row: Entry) -> tuple[timedelta, timedelta]:
 
 def _predict_audit_ts(row: Entry) -> datetime:
     """Predicted audit-log timestamp for a BQ payload row: rolls back
-    from ``logging_time`` by ``request_latency_ms`` and applies the
-    bucket's bias."""
+    from ``logging_time`` by ``request_latency_ms``, then by the bucket's
+    bias, since the audit entry lands before that point."""
     latency = timedelta(milliseconds=row.request_latency_ms or 0)
-    return row.logging_time - latency + _correlation(row)[0]
+    return row.logging_time - latency - _correlation(row)[0]
 
 
 def _consensus(vals: set[str | None]) -> str | None:
