@@ -114,6 +114,12 @@ class ResponseCounters:
     # watermark, so the next tick reads it again.
     session_failed: int = 0
     chat_failed: int = 0
+    # Turns older than the tombstone horizon, skipped: see `_walk`.
+    before_horizon: int = 0
+    # How far the latest-arriving turn trailed its `created_at` when this
+    # reader first saw it. Measures how late transcripts become visible,
+    # which is what the horizon has to tolerate.
+    max_first_seen_lag_s: float = 0.0
     models: dict[str, str] = field(default_factory=dict)
 
 
@@ -232,6 +238,7 @@ async def read_responses(
             messages = await client.session_messages(session_id)
             await _walk(
                 produced_runs(messages),
+                now=now,
                 messages=messages,
                 conversation_id=decode_session_id(session_id) or session_id,
                 # A message carries no user; the listing item does.
@@ -258,7 +265,13 @@ async def read_responses(
             continue
         try:
             await _read_chat(
-                listed, client=client, store=store, config=config, http=http, counters=counters
+                listed,
+                now=now,
+                client=client,
+                store=store,
+                config=config,
+                http=http,
+                counters=counters,
             )
         except ComplianceError as exc:
             log.warning("compliance: chat %s unread this tick: %s", listed.id, exc)
@@ -271,6 +284,7 @@ async def read_responses(
 async def _read_chat(
     listed: Chat,
     *,
+    now: datetime,
     client: ComplianceClient,
     store: PendingStore,
     config: Config,
@@ -282,6 +296,7 @@ async def _read_chat(
     before = counters.emitted + counters.enriched
     await _walk(
         chat_turns(chat),
+        now=now,
         messages=messages,
         # The uuid the chat's `href` ends with, which is what a frame
         # calls `session_id` — three of three, measured. The
@@ -304,9 +319,25 @@ async def _read_chat(
             counters.soft_abstained += 1
 
 
+# Slack on the tombstone horizon for clock skew between Anthropic's
+# `created_at` and our own clock.
+_HORIZON_MARGIN = timedelta(minutes=5)
+
+
+def _created(run: ProducedRun) -> datetime | None:
+    raw = run.messages[0].created_at if run.messages else None
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
 async def _walk(
     runs: Sequence[ProducedRun],
     *,
+    now: datetime,
     messages: Sequence[TranscriptMessage],
     conversation_id: str,
     user_id: str | None,
@@ -317,8 +348,21 @@ async def _walk(
     http: httpx.AsyncClient,
     counters: ResponseCounters,
 ) -> None:
+    # A conversation is re-read whole whenever it changes, but a tombstone
+    # lives only `tombstone_ttl_seconds`. A turn older than that may have
+    # lost its tombstone and would be emitted again, and after the
+    # server's 72h dedup expires, ingested again. Such a turn was already
+    # handled: watermarks never pass an unfinished pass, and a cold start
+    # deliberately does not backfill. Anything newer is still covered by
+    # its tombstone, so this only drops turns that arrive later than the
+    # TTL, which `max_first_seen_lag_s` measures.
+    horizon = now - timedelta(seconds=config.tombstone_ttl_seconds) + _HORIZON_MARGIN
     for run in runs:
         counters.models[conversation_id] = run.model
+        created = _created(run)
+        if created is not None and created < horizon:
+            counters.before_horizon += 1
+            continue
         address = joinable_address(to_anthropic(run.messages))
         if address is None:
             # Not addressable from this side, so it is the hook's, under a
@@ -364,6 +408,12 @@ async def _walk(
             address, {**event_fields(event), "contributed": Append((COMPLIANCE,))}, ()
         )
         counters.emitted += 1
+        if created is not None:
+            # First sighting: an ABSENT address that is now tombstoned is
+            # never ABSENT again.
+            lag = (now - created).total_seconds()
+            log.info("compliance: %s first seen %.0fs after created_at", address, lag)
+            counters.max_first_seen_lag_s = max(counters.max_first_seen_lag_s, lag)
         # No expectations, so the record is born ready: this pushes it and
         # the retire inside leaves the tombstone the next tick honours.
         await push_if_ready(address, outcome, store=store, config=config, client=http)

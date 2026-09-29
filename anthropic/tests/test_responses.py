@@ -33,6 +33,10 @@ from tests.test_pending import config as a_config
 
 NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)
 ORG = "11111111-1111-1111-1111-111111111111"
+# The recorded corpus runs 2026-09-20 23:10 to 09-21 06:38, older than
+# NOW minus the default 2h tombstone TTL, so replaying it needs a horizon
+# behind it. The horizon itself is tested at the default below.
+CORPUS_TTL = {"tombstone_ttl_seconds": 2 * 24 * 3600}
 
 
 def session_messages(n: int) -> list[SessionMessage]:
@@ -74,7 +78,9 @@ async def run(
         cursors=cursors or built,
         # Splatted, not passed as keywords: a case overriding
         # `organization_uuid` would otherwise pass it twice.
-        config=a_config(**{"compliance_key": "sk-ant-api01-x", "organization_uuid": ORG, **over}),
+        config=a_config(
+            **{"compliance_key": "sk-ant-api01-x", "organization_uuid": ORG, **CORPUS_TTL, **over}
+        ),
         http=sink.client(),
         now=NOW,
     )
@@ -268,7 +274,7 @@ async def _run_with(fail: Callable[[str], bool], cursors: Cursors) -> ResponseCo
         client,
         store=a_store(),
         cursors=cursors,
-        config=a_config(compliance_key="sk-ant-api01-x", organization_uuid=ORG),
+        config=a_config(compliance_key="sk-ant-api01-x", organization_uuid=ORG, **CORPUS_TTL),
         http=Sink().client(),
         now=NOW,
     )
@@ -318,3 +324,33 @@ async def test_the_compliance_client_sets_its_own_timeout() -> None:
     await ComplianceClient(shared, api_key="k", timeout=60.0).session_messages("clls_x")
     assert seen[0].extensions["timeout"]["read"] == 60.0
     assert seen[0].url.params["limit"] == "200"
+
+
+async def test_turns_older_than_the_tombstone_horizon_are_not_re_emitted() -> None:
+    """A conversation is re-read whole when it changes, but tombstones live
+    two hours. Its old turns would come back ABSENT and be emitted again,
+    and after the server's 72h dedup, ingested again. At the default TTL
+    the whole recorded corpus is older than the horizon."""
+    store, sink = a_store(), Sink()
+    client, cursors = a_reader()
+    counters = await read_responses(
+        client,
+        store=store,
+        cursors=cursors,
+        config=a_config(compliance_key="sk-ant-api01-x", organization_uuid=ORG),
+        http=sink.client(),
+        now=NOW,
+    )
+    assert counters.before_horizon > 0
+    assert counters.emitted == 0 and counters.enriched == 0
+    assert sink.request_ids == []
+
+
+async def test_a_turn_first_seen_is_measured() -> None:
+    """How far a new turn trails its `created_at` is what the horizon must
+    tolerate, so every first sighting is measured."""
+    store, sink = a_store(), Sink()
+    counters = await run(store, sink)
+    assert counters.emitted >= 1
+    # The corpus was recorded at least five hours before NOW.
+    assert counters.max_first_seen_lag_s > 5 * 3600

@@ -28,7 +28,16 @@ def cursors() -> Cursors:
 
 
 def enabled(**over: Any) -> Any:
-    return a_config(**{"compliance_key": "sk-ant-api01-x", "organization_uuid": ORG, **over})
+    # A 2-day tombstone TTL puts the horizon behind the recorded corpus;
+    # see CORPUS_TTL in test_responses.
+    return a_config(
+        **{
+            "compliance_key": "sk-ant-api01-x",
+            "organization_uuid": ORG,
+            "tombstone_ttl_seconds": 2 * 24 * 3600,
+            **over,
+        }
+    )
 
 
 async def test_without_a_key_the_readers_do_not_run() -> None:
