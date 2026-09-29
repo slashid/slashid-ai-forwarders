@@ -88,8 +88,11 @@ gotchas to plan around. Extend as new ones are discovered.
   `completions` / `embeddings` siblings) do produce Cloud Audit Log
   entries, but the request body is opaque `HttpBody` — the model
   isn't captured anywhere in the log, and there's no downstream
-  audit trail for the resolved publisher/model either. Identity
-  and timestamp are available; the *what* is not. Route via
+  audit trail for the resolved publisher/model either. The entries
+  carry identity and timestamp but not the *what*, and the forwarder
+  emits nothing for them. This is the default way to call most
+  model-as-a-service models (gpt-oss, Llama, DeepSeek, Qwen), so that
+  traffic goes unrecorded. Route via
   `/publishers/{publisher}/models/{model}:rawPredict` where the
   publisher supports it if you need model-attributed observability.
 - **Streaming `stop_reason` is heuristic.** Vertex's BQ log for
