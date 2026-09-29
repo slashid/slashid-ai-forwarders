@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -109,7 +110,7 @@ async def test_frame_is_captured_raw_with_its_headers(sign: Signer) -> None:
         await c.post("/", content=body, headers=sign(body, "req_test"))
     [(name, data)] = capture.objects.items()
     stored = json.loads(data)
-    assert name.endswith("_req_test.json")
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z_req_test\.json", name)
     assert stored["body"].encode() == body  # the raw frame, not a re-encoding
     assert stored["headers"]["webhook-id"] == "req_test"
 
