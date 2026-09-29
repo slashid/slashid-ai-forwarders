@@ -24,7 +24,7 @@ from .handler import run_tick
 log = logging.getLogger(__name__)
 
 # Firestore document names are hardcoded — one per source under the
-# customer-configurable ``firestore_checkpoint_collection``. Watermarks
+# customer-configurable ``checkpoint_collection``. Watermarks
 # are internal state, not a public API surface; renaming them would
 # be a breaking migration whether they were env-configurable or not.
 # BQ path has a checkpoint per region (its BQ dataset is regional);
@@ -73,20 +73,18 @@ def _sources() -> list[EventSource]:
 
     config = load_config()
 
-    platform = GcpPlatform(
-        project=config.gcp_project_id, firestore_database=config.firestore_database
-    )
-    bq_client = bigquery.Client(project=config.gcp_project_id)
+    platform = GcpPlatform(project=config.project_id, firestore_database=config.database)
+    bq_client = bigquery.Client(project=config.project_id)
 
     sources: list[EventSource] = [
         BqEventSource(
             client=bq_client,
             checkpoint_store=platform.checkpoint_store(
-                collection=config.firestore_checkpoint_collection,
+                collection=config.checkpoint_collection,
                 document=_bq_checkpoint_doc(region),
             ),
             config=config,
-            project_id=config.gcp_project_id,
+            project_id=config.project_id,
             dataset_id=_bq_dataset_id(config.bq_dataset_prefix, region),
             region=region,
             max_rows_per_tick=config.max_rows_per_tick,
@@ -98,15 +96,15 @@ def _sources() -> list[EventSource]:
     if config.audit_observed_models:
         audit_source = AuditOnlyEventSource(
             logging_client=gcp_logging.Client(
-                project=config.gcp_project_id,
+                project=config.project_id,
                 _use_grpc=False,
             ),
             checkpoint_store=platform.checkpoint_store(
-                collection=config.firestore_checkpoint_collection,
+                collection=config.checkpoint_collection,
                 document=_AUDIT_ONLY_CHECKPOINT_DOC,
             ),
             config=config,
-            project_id=config.gcp_project_id,
+            project_id=config.project_id,
             regions=config.gcp_regions,
             observed_models=config.audit_observed_models,
             max_entries_per_tick=config.max_rows_per_tick,

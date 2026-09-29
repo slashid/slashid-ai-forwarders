@@ -54,11 +54,11 @@ resource "google_cloud_run_v2_service" "receiver" {
         value = var.slashid_endpoint
       }
       env {
-        name  = "SLASHID_GCP_PROJECT_ID"
+        name  = "SLASHID_PROJECT_ID"
         value = var.project_id
       }
       env {
-        name  = "SLASHID_FIRESTORE_DATABASE"
+        name  = "SLASHID_DATABASE"
         value = var.firestore_database
       }
       env {
@@ -102,7 +102,7 @@ resource "google_cloud_run_v2_service" "receiver" {
       # Google signature is the authorization; where ingress is internal,
       # Cloud Run checks the audience itself.
       env {
-        name  = "SLASHID_TICK_SERVICE_ACCOUNT"
+        name  = "SLASHID_TICK_PRINCIPAL"
         value = google_service_account.scheduler.email
       }
       env {

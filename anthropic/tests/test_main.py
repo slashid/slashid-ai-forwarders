@@ -51,7 +51,7 @@ def _config(**overrides: Any) -> Config:
         "endpoint": "https://api.slashid.com",
         "push_token": "tok",
         "hook_signing_secret": SECRET,
-        "gcp_project_id": "proj",
+        "project_id": "proj",
     }
     base.update(overrides)
     return Config(**base)

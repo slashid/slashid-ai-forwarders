@@ -22,7 +22,7 @@ def _config() -> Config:
     return Config(
         endpoint="https://api.slashid.com",
         push_token="t" * 32,
-        gcp_project_id="vertex-test-507702",
+        project_id="vertex-test-507702",
         gcp_regions=["us-central1"],
     )
 

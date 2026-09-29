@@ -43,7 +43,7 @@ def config(**overrides: Any) -> Config:
         endpoint="https://api.slashid.com",
         push_token="t",
         hook_signing_secret=SECRET,
-        gcp_project_id="proj",
+        project_id="proj",
         **overrides,
     )
 

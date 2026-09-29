@@ -49,7 +49,7 @@ def config(**overrides: Any) -> Config:
         "endpoint": "https://api.slashid.com",
         "push_token": "tok",
         "hook_signing_secret": "whsec_AAAA",
-        "gcp_project_id": "proj",
+        "project_id": "proj",
         "max_retries": 0,
     }
     base.update(overrides)

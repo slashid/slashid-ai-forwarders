@@ -33,8 +33,8 @@ class Backends:
 def build_backends(config: Config) -> Backends:
     platform = platforms.get(
         config.platform,
-        project=config.gcp_project_id,
-        firestore_database=config.firestore_database,
+        project=config.project_id,
+        firestore_database=config.database,
     )
 
     def cursor(feed: str) -> FeedCursor:
@@ -52,7 +52,7 @@ def build_backends(config: Config) -> Backends:
             activities=cursor(ACTIVITIES), chats=cursor(CHATS), sessions=cursor(SESSIONS)
         ),
         tick_auth=platform.scheduler_auth(
-            principal=config.tick_service_account, audience=config.tick_audience
+            principal=config.tick_principal, audience=config.tick_audience
         ),
         capture=platform.blob_sink(config.capture_bucket) if config.capture_bucket else None,
     )

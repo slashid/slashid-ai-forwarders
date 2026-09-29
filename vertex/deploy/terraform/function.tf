@@ -145,19 +145,19 @@ resource "google_cloudfunctions2_function" "forwarder" {
     ingress_settings                 = "ALLOW_INTERNAL_ONLY"
 
     environment_variables = {
-      LOG_LEVEL                               = var.log_level
-      SLASHID_ENDPOINT                        = var.slashid_endpoint
-      SLASHID_GCP_PROJECT_ID                  = var.project_id
-      SLASHID_GCP_REGIONS                     = jsonencode(var.regions)
-      SLASHID_BQ_DATASET_PREFIX               = var.bq_dataset_prefix
-      SLASHID_FIRESTORE_DATABASE              = var.firestore_database
-      SLASHID_FIRESTORE_CHECKPOINT_COLLECTION = var.firestore_checkpoint_collection
-      SLASHID_AUDIT_BUFFER_SECONDS            = tostring(var.audit_buffer_seconds)
-      SLASHID_INCLUDE_RAW_CONTENT             = tostring(var.include_raw_content)
-      SLASHID_MAX_CONTENT_SIZE                = tostring(var.max_content_size)
-      SLASHID_MAX_ROWS_PER_TICK               = tostring(var.max_rows_per_tick)
-      SLASHID_REQUEST_TIMEOUT_SECONDS         = tostring(var.request_timeout_seconds)
-      SLASHID_AUDIT_OBSERVED_MODELS           = jsonencode(local.effective_observed_models)
+      LOG_LEVEL                       = var.log_level
+      SLASHID_ENDPOINT                = var.slashid_endpoint
+      SLASHID_PROJECT_ID              = var.project_id
+      SLASHID_GCP_REGIONS             = jsonencode(var.regions)
+      SLASHID_BQ_DATASET_PREFIX       = var.bq_dataset_prefix
+      SLASHID_DATABASE                = var.firestore_database
+      SLASHID_CHECKPOINT_COLLECTION   = var.firestore_checkpoint_collection
+      SLASHID_AUDIT_BUFFER_SECONDS    = tostring(var.audit_buffer_seconds)
+      SLASHID_INCLUDE_RAW_CONTENT     = tostring(var.include_raw_content)
+      SLASHID_MAX_CONTENT_SIZE        = tostring(var.max_content_size)
+      SLASHID_MAX_ROWS_PER_TICK       = tostring(var.max_rows_per_tick)
+      SLASHID_REQUEST_TIMEOUT_SECONDS = tostring(var.request_timeout_seconds)
+      SLASHID_AUDIT_OBSERVED_MODELS   = jsonencode(local.effective_observed_models)
     }
 
     secret_environment_variables {

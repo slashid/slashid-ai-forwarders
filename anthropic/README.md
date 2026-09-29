@@ -283,7 +283,7 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_ENDPOINT` | yes | — |
 | `SLASHID_PUSH_TOKEN` | yes | — |
 | `SLASHID_PLATFORM` | no | `gcp` (the only one today) |
-| `SLASHID_GCP_PROJECT_ID` | yes | — |
+| `SLASHID_PROJECT_ID` | yes | — |
 | `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |
 | `SLASHID_COMPLIANCE_KEY` | one capability required | — |
 | `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |
@@ -293,14 +293,14 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_PUSH_BUDGET_MS` | no | `2000` |
 | `SLASHID_SHADOW_MODE` | no | `true` |
 | `SLASHID_MAX_BODY_BYTES` | no | `33554432` (Cloud Run's HTTP/1 cap) |
-| `SLASHID_FIRESTORE_DATABASE` | no | `slashid-anthropic` |
+| `SLASHID_DATABASE` | no | `slashid-anthropic` |
 | `SLASHID_PENDING_COLLECTION` | no | `anthropic_pending` |
 | `SLASHID_CHECKPOINT_COLLECTION` | no | `anthropic_checkpoints` |
 | `SLASHID_JOIN_WAIT_SECONDS` | no | `3600` |
 | `SLASHID_TOMBSTONE_TTL_SECONDS` | no | `7200` — must exceed `JOIN_WAIT + POLL_LAG + TICK_INTERVAL`, asserted at startup |
 | `SLASHID_MAX_FLUSHES_PER_TICK` | no | `500` |
 | `SLASHID_TICK_INTERVAL_SECONDS` | no | `300` |
-| `SLASHID_TICK_SERVICE_ACCOUNT` | no | — (unset refuses every tick) |
+| `SLASHID_TICK_PRINCIPAL` | no | — (unset refuses every tick) |
 | `SLASHID_TICK_AUDIENCE` | no | — (Cloud Run checks it where ingress is not public) |
 | `SLASHID_POLL_LAG_SECONDS` | no | `120` |
 | `SLASHID_MAX_SESSIONS_PER_TICK` | no | `200` |

@@ -130,11 +130,11 @@ All env vars use the `SLASHID_` prefix:
 | --- | --- | --- |
 | `SLASHID_ENDPOINT` | yes | — |
 | `SLASHID_PUSH_TOKEN` | yes | — |
-| `SLASHID_GCP_PROJECT_ID` | yes | — |
+| `SLASHID_PROJECT_ID` | yes | — |
 | `SLASHID_GCP_REGIONS` | yes | — (JSON list, e.g. `["us-central1","europe-west1"]`) |
 | `SLASHID_BQ_DATASET_PREFIX` | no | `slashid_vertex_reqresp_logs` (per-region dataset name = `{prefix}_{region_slug}`) |
-| `SLASHID_FIRESTORE_DATABASE` | no | `slashid-vertex` |
-| `SLASHID_FIRESTORE_CHECKPOINT_COLLECTION` | no | `slashid_vertex` |
+| `SLASHID_DATABASE` | no | `slashid-vertex` |
+| `SLASHID_CHECKPOINT_COLLECTION` | no | `slashid_vertex` |
 | `SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT` | no | `checkpoint` |
 | `SLASHID_MAX_ROWS_PER_TICK` | no | `1000` |
 | `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |

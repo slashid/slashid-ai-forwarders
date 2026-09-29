@@ -89,10 +89,10 @@ class Config(BaseConfig):
     # The project holding Firestore; vertex/ has the same field. Required:
     # this chunk builds the client, and ``project=None`` is a client that
     # talks to nothing.
-    gcp_project_id: str = Field(..., min_length=1)
+    project_id: str = Field(..., min_length=1)
     # The named database, as vertex/ names its own slashid-vertex rather
     # than using (default).
-    firestore_database: str = "slashid-anthropic"
+    database: str = "slashid-anthropic"
     # Collection holding pending records and their tombstones.
     pending_collection: str = "anthropic_pending"
     # Deadline before an unsettled record is pushed as it stands.
@@ -107,7 +107,7 @@ class Config(BaseConfig):
     # refuses every tick, which is the right way round: Cloud Run cannot
     # scope an invoker to one path, so on a service the hook can reach,
     # this check is the only thing guarding the route.
-    tick_service_account: str | None = None
+    tick_principal: str | None = None
     # The audience that token must carry, when the deployment can name it.
     # The service's own URI is not available to the Terraform that sets
     # this service's environment, so it may be left unset: the signature
