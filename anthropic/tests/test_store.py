@@ -10,7 +10,7 @@ from slashid_ai_forwarder_core.events import (
     AIModel,
     AnthropicIdentityDetails,
 )
-from slashid_ai_forwarder_core.lease import FirestoreTickLease
+from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 from slashid_anthropic_forwarder.record import (
     FILE_DIGESTS,

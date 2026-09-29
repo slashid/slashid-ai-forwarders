@@ -10,10 +10,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from slashid_ai_forwarder_core.checkpoint import (
-    Checkpoint,
-    FirestoreCheckpointStore,
-)
+from slashid_ai_forwarder_core.platform import Checkpoint
+from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreCheckpointStore
 
 
 class _FakeSnapshot:

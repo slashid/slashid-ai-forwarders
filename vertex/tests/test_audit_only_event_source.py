@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from slashid_ai_forwarder_core.checkpoint import Checkpoint
+from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_vertex_forwarder.config import Config
 

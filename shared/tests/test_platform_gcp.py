@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from slashid_ai_forwarder_core.checkpoint import Checkpoint
+from slashid_ai_forwarder_core.platform import Checkpoint
 from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
 
@@ -48,3 +48,19 @@ def test_checkpoint_stores_share_the_client_and_keep_their_own_documents() -> No
 async def test_scheduler_auth_without_a_principal_refuses_every_token() -> None:
     check = _platform(_FakeFirestoreClient()).scheduler_auth(principal=None, audience=None)
     assert await check("any-token") is False
+
+
+def test_get_resolves_a_platform_by_name() -> None:
+    from slashid_ai_forwarder_core import platform
+
+    built = platform.get("gcp", project="p", firestore_database="d")
+    assert isinstance(built, GcpPlatform)
+
+
+def test_get_names_the_known_platforms_for_an_unknown_one() -> None:
+    import pytest
+
+    from slashid_ai_forwarder_core import platform
+
+    with pytest.raises(ValueError, match=r"unknown platform 'azure'; known: \['gcp'\]"):
+        platform.get("azure")

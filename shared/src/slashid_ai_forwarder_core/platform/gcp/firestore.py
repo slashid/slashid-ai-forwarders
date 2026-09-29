@@ -1,13 +1,4 @@
-"""The guard one tick takes before it does any work — its port and its
-Firestore adapter, side by side as in ``checkpoint.py``.
-
-A scheduler can start a second tick while the first is still running:
-Cloud Run hands a concurrent request to a second instance, and nothing in
-Cloud Scheduler serializes them. Two readers walking the same window
-spend the same rate limit twice and both write a checkpoint that has no
-precondition, so the watermark can move backwards. The lease is what
-makes an overlapping tick a no-op instead.
-"""
+"""Firestore implementations of the checkpoint store and the tick lease."""
 
 from __future__ import annotations
 
@@ -15,20 +6,62 @@ import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
+
+from ..checkpoint import Checkpoint
 
 log = logging.getLogger(__name__)
 
 
-class TickLease(Protocol):
-    def hold(self, lease: timedelta) -> AbstractAsyncContextManager[bool]:
-        """``async with lease.hold(duration) as held:``. ``held`` is False
-        when another tick is running, which is not an error: the body should
-        skip, and the next scheduled tick picks the work up. When True, the
-        lease is handed back on every way out of the block."""
-        ...
+class FirestoreCheckpointStore:
+    """Firestore-backed ``CheckpointStore`` — one document per forwarder.
+
+    Firestore Native mode is a singleton database per GCP project (until
+    multi-database GA); ``vertex/``'s Terraform module provisions it
+    conditionally via ``var.create_firestore_database``.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: Any,  # google.cloud.firestore.Client — untyped for the same reason as BqEventSource
+        collection: str,
+        document: str,
+    ) -> None:
+        self._doc_ref = client.collection(collection).document(document)
+
+    def load(self) -> Checkpoint:
+        snap = self._doc_ref.get()
+        if not snap.exists:
+            return Checkpoint(timestamp=None, id=None)
+        data = snap.to_dict() or {}
+        return _from_dict(data)
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        self._doc_ref.set(_to_dict(checkpoint))
+
+
+def _to_dict(checkpoint: Checkpoint) -> dict[str, Any]:
+    # Firestore stores datetimes as UTC-normalized timestamps; ensure the
+    # tz is set (BQ returns tz-aware ``datetime`` objects but be defensive
+    # in case a caller synthesizes one for testing).
+    if checkpoint.timestamp is None:
+        return {"timestamp": None, "id": checkpoint.id}
+    dt = checkpoint.timestamp
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return {"timestamp": dt, "id": checkpoint.id}
+
+
+def _from_dict(data: dict[str, Any]) -> Checkpoint:
+    ts = data.get("timestamp")
+    if isinstance(ts, datetime) and ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return Checkpoint(
+        timestamp=ts if isinstance(ts, datetime) else None,
+        id=data.get("id"),
+    )
 
 
 class FirestoreTickLease:

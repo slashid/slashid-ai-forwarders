@@ -35,11 +35,11 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from slashid_ai_forwarder_core.checkpoint import Checkpoint, CheckpointStore
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     EventEnvelope,
 )
+from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
 
 from .audit_source import AuditEntry
 

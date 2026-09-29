@@ -9,7 +9,8 @@ from typing import Any
 
 import httpx
 import pytest
-from slashid_ai_forwarder_core.lease import FirestoreTickLease, TickLease
+from slashid_ai_forwarder_core.platform import TickLease
+from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config

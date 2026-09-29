@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from slashid_ai_forwarder_core.checkpoint import CheckpointStore
+from slashid_ai_forwarder_core.platform import CheckpointStore
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 from slashid_anthropic_forwarder.address import joinable_address

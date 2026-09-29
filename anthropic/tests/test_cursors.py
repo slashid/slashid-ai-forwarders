@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from slashid_ai_forwarder_core.checkpoint import Checkpoint
+from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_anthropic_forwarder.compliance.checkpoint import (
     ACTIVITIES,

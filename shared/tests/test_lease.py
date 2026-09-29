@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
 
-from slashid_ai_forwarder_core.lease import FirestoreTickLease
+from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 NOW = datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
 TICK = timedelta(minutes=10)

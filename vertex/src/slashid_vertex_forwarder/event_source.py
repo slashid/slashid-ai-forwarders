@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
-from slashid_ai_forwarder_core.checkpoint import Checkpoint, CheckpointStore
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     GCPCredential,
@@ -34,6 +33,7 @@ from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
 )
+from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
 
 from .audit_source import AuditEntry, _credential_chain
 

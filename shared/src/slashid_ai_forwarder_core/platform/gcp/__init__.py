@@ -11,9 +11,10 @@ import logging
 from functools import cached_property
 from typing import Any
 
-from ..checkpoint import CheckpointStore, FirestoreCheckpointStore
-from ..lease import FirestoreTickLease, TickLease
-from . import BlobSink, SchedulerAuth
+from .. import BlobSink, SchedulerAuth
+from ..checkpoint import CheckpointStore
+from ..lease import TickLease
+from .firestore import FirestoreCheckpointStore, FirestoreTickLease
 
 log = logging.getLogger(__name__)
 

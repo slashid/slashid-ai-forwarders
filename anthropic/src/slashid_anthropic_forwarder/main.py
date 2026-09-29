@@ -21,8 +21,7 @@ from typing import Any
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from slashid_ai_forwarder_core.lease import TickLease
-from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth
+from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth, TickLease
 
 from .compliance.checkpoint import Cursors
 from .compliance.readers import run_readers
