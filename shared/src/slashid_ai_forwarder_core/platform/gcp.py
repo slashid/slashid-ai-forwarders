@@ -36,9 +36,9 @@ class GcpPlatform:
     rather than opening a second one.
     """
 
-    def __init__(self, *, project: str, database: str) -> None:
+    def __init__(self, *, project: str, firestore_database: str) -> None:
         self._project = project
-        self._database = database
+        self._firestore_database = firestore_database
 
     @cached_property
     def firestore(self) -> Any:
@@ -46,13 +46,13 @@ class GcpPlatform:
         and writes per tick, on a path with no latency budget."""
         from google.cloud import firestore
 
-        return firestore.Client(project=self._project, database=self._database)
+        return firestore.Client(project=self._project, database=self._firestore_database)
 
     @cached_property
     def firestore_async(self) -> Any:
         from google.cloud import firestore
 
-        return firestore.AsyncClient(project=self._project, database=self._database)
+        return firestore.AsyncClient(project=self._project, database=self._firestore_database)
 
     def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore:
         return FirestoreCheckpointStore(

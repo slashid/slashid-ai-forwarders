@@ -30,7 +30,7 @@ class _FakeFirestoreClient:
 
 
 def _platform(client: Any) -> GcpPlatform:
-    platform = GcpPlatform(project="p", database="d")
+    platform = GcpPlatform(project="p", firestore_database="d")
     platform.__dict__["firestore"] = client  # what the cached property would build
     return platform
 

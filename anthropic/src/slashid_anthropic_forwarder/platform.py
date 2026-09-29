@@ -37,7 +37,9 @@ def build_backends(config: Config) -> Backends:
 
 
 def _gcp(config: Config) -> Backends:
-    platform = GcpPlatform(project=config.gcp_project_id, database=config.firestore_database)
+    platform = GcpPlatform(
+        project=config.gcp_project_id, firestore_database=config.firestore_database
+    )
 
     def cursor(feed: str) -> FeedCursor:
         return FeedCursor(

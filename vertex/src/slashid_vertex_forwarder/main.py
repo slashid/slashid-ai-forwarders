@@ -73,7 +73,9 @@ def _sources() -> list[EventSource]:
 
     config = load_config()
 
-    platform = GcpPlatform(project=config.gcp_project_id, database=config.firestore_database)
+    platform = GcpPlatform(
+        project=config.gcp_project_id, firestore_database=config.firestore_database
+    )
     bq_client = bigquery.Client(project=config.gcp_project_id)
 
     sources: list[EventSource] = [
