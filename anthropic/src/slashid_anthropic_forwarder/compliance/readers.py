@@ -78,6 +78,8 @@ async def run_readers(
             "responses_chat_failed": responses.chat_failed,
             "responses_before_horizon": responses.before_horizon,
             "responses_max_first_seen_lag_s": round(responses.max_first_seen_lag_s),
+            "responses_budget_exhausted": int(responses.budget_exhausted),
+            "responses_emitted_from_tail": responses.emitted_from_tail,
         }
 
     try:

@@ -207,3 +207,32 @@ async def _drain(client: ComplianceClient, feed: str) -> None:
         [_ async for _ in client.iter_chats(since=SINCE)]
     else:
         await client.drain_local_sessions(since=SINCE, limit=10)
+
+
+async def test_a_chat_is_read_whole_without_tool_caps() -> None:
+    """The chat endpoint rejects the session transcript's tool caps with a
+    400, which failed every chat until 2026-09-29, and pages with
+    ``after_id``, the previous page's last message id."""
+    seen: list[httpx.Request] = []
+    pages = {
+        None: {
+            "id": "c",
+            "model": "m",
+            "has_more": True,
+            "chat_messages": [{"id": "a"}, {"id": "b"}],
+        },
+        "b": {"id": "c", "model": "m", "has_more": False, "chat_messages": [{"id": "c1"}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("after_id")])
+
+    client = ComplianceClient(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)), api_key="k"
+    )
+    chat = await client.chat("c")
+    assert [m.id for m in chat.chat_messages] == ["a", "b", "c1"]
+    assert chat.model == "m"
+    assert all("tool_result_max_bytes" not in r.url.params for r in seen)
+    assert [r.url.params.get("after_id") for r in seen] == [None, "b"]

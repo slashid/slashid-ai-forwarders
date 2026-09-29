@@ -94,6 +94,11 @@ def transport(
         if name is None:
             return httpx.Response(404, json={"type": "error", "path": path})
         entry = recorded(name)
-        return httpx.Response(entry["status"], json=entry["body"])
+        payload = entry["body"]
+        if request.url.params.get("order") == "desc" and isinstance(payload.get("data"), list):
+            # The recordings are oldest-first; the API serves newest-first
+            # when asked, and the tail read asks.
+            payload = {**payload, "data": payload["data"][::-1]}
+        return httpx.Response(entry["status"], json=payload)
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler)), seen

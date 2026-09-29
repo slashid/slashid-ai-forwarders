@@ -42,7 +42,7 @@ resource "google_cloud_run_v2_service" "receiver" {
       resources {
         limits = {
           cpu    = "1"
-          memory = "512Mi"
+          memory = var.memory
         }
         # The push runs after the response has gone out, so CPU stays
         # allocated between requests.
