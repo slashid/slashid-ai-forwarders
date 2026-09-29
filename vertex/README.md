@@ -22,6 +22,13 @@ logging on each configured publisher model via `setPublisherModelConfig`.
 Vertex + GCP constraints that shape the v1 architecture. Not bugs —
 gotchas to plan around. Extend as new ones are discovered.
 
+- **Request-response logging validates its table asynchronously.**
+  `setPublisherModelConfig` answers with an operation, and Vertex checks
+  the destination table's schema inside it. A column it doesn't expect as
+  `REQUIRED` (it wants `logging_time` and `request_id` NULLABLE) fails the
+  operation, so logging silently stays off. The module waits for each
+  operation and fails the apply on an error.
+
 - **Polling delivery, not push.** Cloud Scheduler ticks every minute
   by default (configurable via `poll_schedule`, a unix-cron string);
   BigQuery has no native row-level Pub/Sub, and Cloud Scheduler

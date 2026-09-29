@@ -53,12 +53,14 @@ resource "google_bigquery_table" "per_model" {
   # Schema mirrors Vertex request-response logging output. Only the
   # columns BqEventSource projects (``request_id``, ``logging_time``,
   # ``model``, ``full_request``, ``full_response``) are strictly needed
-  # — the rest are captured for future correlation phases.
+  # — the rest are captured for future correlation phases. Every column
+  # is NULLABLE (or REPEATED): setPublisherModelConfig validates the
+  # destination against Vertex's own schema and rejects a REQUIRED column.
   schema = jsonencode([
     { name = "endpoint", type = "STRING", mode = "NULLABLE" },
     { name = "deployed_model_id", type = "STRING", mode = "NULLABLE" },
-    { name = "logging_time", type = "TIMESTAMP", mode = "REQUIRED" },
-    { name = "request_id", type = "NUMERIC", mode = "REQUIRED" },
+    { name = "logging_time", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "request_id", type = "NUMERIC", mode = "NULLABLE" },
     { name = "request_payload", type = "STRING", mode = "REPEATED" },
     { name = "response_payload", type = "STRING", mode = "REPEATED" },
     { name = "model", type = "STRING", mode = "NULLABLE" },
@@ -112,6 +114,9 @@ resource "null_resource" "publisher_model_logging" {
     region        = each.value.region
     sampling_rate = "1.0"
     config_schema = "curl-v1beta1"
+    # Vertex checks the table when the config is set, so a schema change
+    # has to set it again.
+    table_schema = sha1(google_bigquery_table.per_model[each.key].schema)
   }
 
   provisioner "local-exec" {
@@ -119,11 +124,30 @@ resource "null_resource" "publisher_model_logging" {
     command     = <<-EOT
       set -euo pipefail
       BODY='{"publisherModelConfig":{"loggingConfig":{"enabled":true,"samplingRate":1.0,"bigqueryDestination":{"outputUri":"bq://${var.project_id}.${each.value.dataset_id}.slashid_vertex_reqresp_${each.value.model_slug}"},"enableOtelLogging":true}}}'
-      curl -sS --fail-with-body -X POST \
-        -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+      HOST="https://${local.vertex_host[each.value.region]}/v1beta1"
+      TOKEN="$(gcloud auth print-access-token)"
+      OP="$(curl -sS --fail-with-body -X POST \
+        -H "Authorization: Bearer $${TOKEN}" \
         -H "Content-Type: application/json" \
         --data "$${BODY}" \
-        "https://${local.vertex_host[each.value.region]}/v1beta1/projects/${var.project_id}/locations/${each.value.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig"
+        "$${HOST}/projects/${var.project_id}/locations/${each.value.region}/publishers/${each.value.publisher}/models/${each.value.model}:setPublisherModelConfig" \
+        | grep -o '"name": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+      # The call returns an operation, and Vertex validates the table
+      # inside it: a rejected schema fails there, not in the response.
+      # Without waiting, the apply reports success and nothing is logged.
+      for _ in $(seq 1 30); do
+        STATUS="$(curl -sS --fail-with-body -H "Authorization: Bearer $${TOKEN}" "$${HOST}/$${OP}")"
+        if printf '%s' "$${STATUS}" | grep -q '"done": *true'; then
+          if printf '%s' "$${STATUS}" | grep -q '"error"'; then
+            printf '%s\n' "$${STATUS}" >&2
+            exit 1
+          fi
+          exit 0
+        fi
+        sleep 2
+      done
+      echo "setPublisherModelConfig for ${each.value.full} did not finish: $${OP}" >&2
+      exit 1
     EOT
   }
 

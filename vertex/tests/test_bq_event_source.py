@@ -566,7 +566,7 @@ def _mk_audit(
 
 
 def test_predict_audit_ts_applies_bias_and_latency() -> None:
-    """predicted = logging_time - latency + the bucket's bias."""
+    """predicted = logging_time - latency - the bucket's bias."""
     from slashid_vertex_forwarder.event_source import _REGIONAL, _predict_audit_ts
 
     entry = _mk_entry(
@@ -574,7 +574,7 @@ def test_predict_audit_ts_applies_bias_and_latency() -> None:
         request_latency_ms=2000.0,
     )
     predicted = _predict_audit_ts(entry)
-    assert predicted == datetime(2026, 9, 9, 12, 0, 1, tzinfo=UTC) + _REGIONAL[0]
+    assert predicted == datetime(2026, 9, 9, 12, 0, 1, tzinfo=UTC) - _REGIONAL[0]
 
 
 def test_predict_audit_ts_no_latency_defaults_to_bias_only() -> None:
@@ -586,7 +586,24 @@ def test_predict_audit_ts_no_latency_defaults_to_bias_only() -> None:
         request_latency_ms=None,
     )
     predicted = _predict_audit_ts(entry)
-    assert predicted == datetime(2026, 9, 9, 12, 0, 3, tzinfo=UTC) + _REGIONAL[0]
+    assert predicted == datetime(2026, 9, 9, 12, 0, 3, tzinfo=UTC) - _REGIONAL[0]
+
+
+def test_a_measured_regional_call_finds_its_audit_entry() -> None:
+    """Real timestamps from a gemini-2.5-flash-lite call in us-central1,
+    2026-09-29: the audit entry landed 84ms before logging_time - latency.
+    Adding the bias instead of subtracting it put the prediction 214ms
+    away, outside the window, and the event shipped with no identity."""
+    from slashid_vertex_forwarder.event_source import _resolve_identity
+
+    entry = _mk_entry(
+        logging_time=datetime(2026, 9, 29, 3, 31, 57, 154214, tzinfo=UTC),
+        request_latency_ms=318.376307,
+    )
+    audit = _mk_audit(timestamp=datetime(2026, 9, 29, 3, 31, 56, 751405, tzinfo=UTC))
+    result = _resolve_identity(entry, [audit])
+    assert result.credential_chain is not None
+    assert result.credential_chain[0].principal_email == "alice@example.com"
 
 
 def test_correlation_buckets_by_location_and_method() -> None:
@@ -1037,8 +1054,8 @@ def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> 
     )
     source.fetch()
     lo, hi = captured[0]
-    assert lo == datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC) + bias - window
-    assert hi == datetime(2026, 9, 9, 12, 0, 5, tzinfo=UTC) + bias + window
+    assert lo == datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC) - bias - window
+    assert hi == datetime(2026, 9, 9, 12, 0, 5, tzinfo=UTC) - bias + window
 
 
 def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:

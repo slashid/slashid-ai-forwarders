@@ -1777,7 +1777,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-vertex-forwarder"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "vertex" }
 dependencies = [
     { name = "functions-framework" },
