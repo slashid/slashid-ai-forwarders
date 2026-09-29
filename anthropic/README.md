@@ -306,6 +306,7 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_MAX_SESSIONS_PER_TICK` | no | `200` |
 | `SLASHID_ATTACHMENT_HASHING` | no | `md5` (or `full`) |
 | `SLASHID_MAX_ATTACHMENT_FETCH_BYTES` | no | `10485760` |
+| `SLASHID_COMPLIANCE_TIMEOUT_SECONDS` | no | `60` (per Compliance API request) |
 | `SLASHID_SOFT_JOIN_WINDOW_SECONDS` | no | `15` |
 | `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |
 | `SLASHID_MAX_CONTENT_SIZE` | no | `100000` |

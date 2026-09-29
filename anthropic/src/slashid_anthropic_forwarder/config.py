@@ -72,6 +72,9 @@ class Config(BaseConfig):
     # file is never started, and falls back to the listing's md5 rather
     # than to no digest. A ranged read yields a snippet, never a digest.
     max_attachment_fetch_bytes: int = 10 * 1024 * 1024
+    # Per request to the Compliance API. Its own, because the shared
+    # client's timeout is tuned for the hook, and a transcript page is not.
+    compliance_timeout_seconds: float = 60.0
     # One document per feed, in its own collection: a watermark is a
     # different lifetime from a pending record, and the pending
     # collection carries a TTL policy that would delete these.

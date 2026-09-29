@@ -13,7 +13,7 @@ identify them).
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +67,9 @@ ROUTES = _routes()
 
 
 def transport(
-    *, files: Mapping[str, bytes] | None = None
+    *,
+    files: Mapping[str, bytes] | None = None,
+    fail: Callable[[str], bool] | None = None,
 ) -> tuple[httpx.AsyncClient, list[httpx.Request]]:
     """A client serving the corpus by path, and the requests it saw.
 
@@ -81,6 +83,8 @@ def transport(
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         path = request.url.path.removeprefix("/v1/compliance")
+        if fail is not None and fail(path):
+            raise httpx.ReadTimeout("simulated", request=request)
         if "/files/" in path:
             file_id = path.split("/files/")[1].split("/")[0]
             if file_id not in bodies:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from slashid_ai_forwarder_core.platform import CheckpointStore
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
@@ -253,3 +255,66 @@ def test_unknown_blocks_survive_translation() -> None:
         ]
     )
     assert len(translated) == 1 and len(translated[0].content) >= 1
+
+
+def _failing_reader(fail: Callable[[str], bool]) -> tuple[ComplianceClient, Cursors]:
+    client, _ = transport(fail=fail)
+    return ComplianceClient(client, api_key="k"), _cursors()
+
+
+async def _run_with(fail: Callable[[str], bool], cursors: Cursors) -> ResponseCounters:
+    client, _ = _failing_reader(fail)
+    return await read_responses(
+        client,
+        store=a_store(),
+        cursors=cursors,
+        config=a_config(compliance_key="sk-ant-api01-x", organization_uuid=ORG),
+        http=Sink().client(),
+        now=NOW,
+    )
+
+
+async def test_a_session_that_times_out_costs_only_itself() -> None:
+    """One transcript outliving its timeout used to end the reader: every
+    later session and the whole chats feed went unread, every tick."""
+    first = body("sessions_list.json")["data"][0]["id"]
+    sessions, chats = FakeCheckpoints(), FakeCheckpoints()
+    counters = await _run_with(
+        lambda path: path == f"/apps/sessions/local/{first}/messages",
+        _cursors(sessions=sessions, chats=chats),
+    )
+    assert counters.session_failed == 1
+    assert counters.from_chats >= 1
+    # Held, so the next tick reads the failed session again; the chats
+    # feed, which did finish, moves on.
+    assert sessions.saves == []
+    assert chats.saves != []
+
+
+async def test_a_chat_that_times_out_holds_the_chats_watermark() -> None:
+    """The chats feed resumes from its watermark, so moving it past a chat
+    that was never read would lose that chat until it next changed."""
+    first = body("chats_list.json")["data"][0]["id"]
+    sessions, chats = FakeCheckpoints(), FakeCheckpoints()
+    counters = await _run_with(
+        lambda path: path == f"/apps/chats/{first}/messages",
+        _cursors(sessions=sessions, chats=chats),
+    )
+    assert counters.chat_failed == 1
+    assert chats.saves == []
+    assert sessions.saves != []
+
+
+async def test_the_compliance_client_sets_its_own_timeout() -> None:
+    """The shared client's timeout is the hook's. Transcript pages get the
+    compliance one on every request, the page size keeps each one small."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [], "next_page": None})
+
+    shared = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=10.0)
+    await ComplianceClient(shared, api_key="k", timeout=60.0).session_messages("clls_x")
+    assert seen[0].extensions["timeout"]["read"] == 60.0
+    assert seen[0].url.params["limit"] == "200"
