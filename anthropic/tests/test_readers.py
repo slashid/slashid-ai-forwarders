@@ -96,3 +96,11 @@ async def test_a_failing_reader_a_does_not_fail_the_pass(
         compliance=client,
     )
     assert counters["responses_emitted"] >= 1
+
+
+async def test_compliance_without_a_checkpoint_store_is_an_error_not_a_skip() -> None:
+    client, _ = transport()
+    with pytest.raises(ValueError, match="no checkpoint store"):
+        await readers.run_readers(
+            store=a_store(), config=enabled(), http=client, cursors=None, now=NOW
+        )

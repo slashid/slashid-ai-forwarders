@@ -28,9 +28,9 @@ output "image" {
   value       = local.image
 }
 
-output "firestore_database" {
+output "database" {
   description = "Named Firestore database holding the pending records and the reader checkpoints."
-  value       = var.firestore_database
+  value       = var.database
 }
 
 output "capabilities" {

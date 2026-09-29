@@ -9,38 +9,38 @@ circuit breaker and disable enforcement entirely.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
 import logging
 import os
 import sys
 import time
-import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import timedelta
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth, TickLease
 
+from .compliance.checkpoint import Cursors
 from .compliance.readers import run_readers
 from .config import Config, load_config
-from .hook.capture import Capture, GcsCapture
+from .hook.capture import capture_frame
 from .hook.checks import ALLOW, Decision
 from .hook.frame import PromptFrame
 from .hook.signature import verify
 from .hook.verdict import decide
 from .pending import TICK_LEASE, flush_due, unanswered_round, write_from_frame
-from .store import FirestorePendingStore, PendingStore, TickLease
+from .platform import build_backends
+from .store import PendingStore
 
 log = logging.getLogger(__name__)
 
 
-async def _capture_safely(capture: Capture, request_id: str, headers: dict, body: bytes) -> None:
+async def _capture_safely(capture: BlobSink, request_id: str, headers: dict, body: bytes) -> None:
     try:
-        await capture.store(request_id, headers, body)
+        await capture_frame(capture, request_id, headers, body)
     except Exception:
         log.exception("capture failed for %s", request_id)
 
@@ -70,73 +70,11 @@ def _signed_at(headers: dict[str, str]) -> int:
         return int(time.time())
 
 
-TickAuth = Callable[[str], Awaitable[bool]]
-
-
-def firestore_client(config: Config) -> Any:
-    """One client for the store and the tick lease. They share a named
-    database and a collection, so they share the connection too."""
-    from google.cloud import firestore
-
-    return firestore.AsyncClient(project=config.gcp_project_id, database=config.firestore_database)
-
-
-def pending_store(config: Config, client: Any) -> PendingStore:
-    """Build the store from configuration. It lives here rather than in
-    ``store.py`` because nothing below the port reads ``Config``.
-
-    Both durations are passed: ``tombstone_ttl`` defaults to two hours in
-    the adapter, and leaving it there would make
-    ``SLASHID_TOMBSTONE_TTL_SECONDS`` — and the Terraform that sets it —
-    an environment variable with no effect on anything.
-    """
-    return FirestorePendingStore(
-        client=client,
-        collection=config.pending_collection,
-        join_wait=timedelta(seconds=config.join_wait_seconds),
-        tombstone_ttl=timedelta(seconds=config.tombstone_ttl_seconds),
-    )
-
-
 def _bearer(header: str | None) -> str | None:
     if not header:
         return None
     scheme, _, token = header.partition(" ")
     return token.strip() if scheme.lower() == "bearer" and token.strip() else None
-
-
-def google_oidc_check(config: Config) -> TickAuth:
-    """Accept only Cloud Scheduler's own token on ``/tick``.
-
-    Google signs it, we check who it names. The audience is verified only
-    when one is configured: the service's URI is an attribute of the very
-    resource whose environment would carry it, so the Terraform cannot
-    set it without a cycle — and wherever the service is not public,
-    Cloud Run has already checked the audience itself. The email is the
-    authorization either way, and an unset one refuses everything.
-    """
-    from google.auth.transport import requests as google_requests
-    from google.oauth2 import id_token
-
-    transport = google_requests.Request()
-
-    async def check(token: str) -> bool:
-        if not config.tick_service_account:
-            log.error("SLASHID_TICK_SERVICE_ACCOUNT is unset; refusing every tick")
-            return False
-        try:
-            # Blocking: it fetches and caches Google's signing certificates.
-            claims = await asyncio.to_thread(
-                id_token.verify_oauth2_token, token, transport, config.tick_audience
-            )
-        except Exception:
-            log.warning("tick token rejected")
-            return False
-        return claims.get("email") == config.tick_service_account and bool(
-            claims.get("email_verified")
-        )
-
-    return check
 
 
 async def _refuse(_token: str) -> bool:
@@ -148,14 +86,15 @@ async def _refuse(_token: str) -> bool:
 def create_app(
     config: Config,
     *,
-    capture: Capture | None = None,
+    capture: BlobSink | None = None,
     store: PendingStore | None = None,
     lease: TickLease | None = None,
-    tick_auth: TickAuth | None = None,
+    cursors: Cursors | None = None,
+    tick_auth: SchedulerAuth | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> FastAPI:
-    if capture is None and config.capture_bucket:
-        capture = GcsCapture(config.capture_bucket)
+    """Every stateful piece is injected; ``app()`` builds them for the
+    configured platform, and tests hand in fakes."""
     authorize = tick_auth or _refuse
     held: dict[str, httpx.AsyncClient | None] = {"client": client}
 
@@ -251,27 +190,25 @@ def create_app(
             return Response(status_code=401)
         if store is None:
             return JSONResponse({"flushed": 0})
-        owner = f"tick-{uuid.uuid4().hex[:8]}"
-        if lease is not None and not await lease.take(TICK_LEASE, owner=owner):
-            # Not an error. Cloud Scheduler retries nothing, and the next
-            # fire picks the same work up from the store.
-            log.info("tick %s skipped: another holds the lease", owner)
-            return JSONResponse({"flushed": 0, "skipped": True})
-        counters: dict[str, int] = {}
-        try:
+        guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
+        async with guard as held:
+            if not held:
+                # Not an error. Cloud Scheduler retries nothing, and the
+                # next fire picks the same work up from the store.
+                return JSONResponse({"flushed": 0, "skipped": True})
+            counters: dict[str, int] = {}
             # Readers first: a `complete` here can make a record ready,
             # and it should go out on this tick rather than the next.
             try:
-                counters = await run_readers(store=store, config=config, http=http())
+                counters = await run_readers(
+                    store=store, config=config, http=http(), cursors=cursors
+                )
             except Exception:
                 # Never a failed tick. The scheduler does not retry
                 # (retry_count = 0); the next cron fire re-runs the pass
                 # from its watermark.
                 log.exception("tick: the reader pass failed; flushing anyway")
             flushed = await flush_due(store, config=config, client=http())
-        finally:
-            if lease is not None:
-                await lease.release(owner=owner)
         return JSONResponse({"flushed": flushed, **counters})
 
     @app.post("/{path:path}")
@@ -293,10 +230,12 @@ def app() -> FastAPI:
         format="%(levelname)s %(name)s: %(message)s",
     )
     config = load_config()
-    client = firestore_client(config)
+    backends = build_backends(config)
     return create_app(
         config,
-        store=pending_store(config, client),
-        lease=TickLease(client=client, collection=config.pending_collection),
-        tick_auth=google_oidc_check(config),
+        capture=backends.capture,
+        store=backends.store,
+        lease=backends.lease,
+        cursors=backends.cursors,
+        tick_auth=backends.tick_auth,
     )

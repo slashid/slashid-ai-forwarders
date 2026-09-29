@@ -8,7 +8,7 @@ Cloud Function:
 - `setPublisherModelConfig` on each (region, model) pair so Vertex
   routes request-response logs into the matching regional dataset.
 - Firestore Native database (optional — reuse an existing one by
-  setting `create_firestore_database = false`).
+  setting `create_database = false`).
 - Cloud Function 2nd gen (source zip fetched from GitHub Releases).
   Deployed to a single region (the first non-`global` entry in
   `regions`); observes every region in `regions` via API calls.
@@ -25,13 +25,13 @@ dataset all live in the one region:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.6"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.7"
 
   project_id         = "customer-project-123456"
   regions            = ["us-central1"]
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-  release_version    = "vertex-v0.1.6"
+  release_version    = "vertex-v0.1.7"
 }
 ```
 
@@ -42,7 +42,7 @@ non-`global` entry:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.6"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.7"
 
   project_id      = "customer-project-123456"
   regions         = ["us-central1", "europe-west1", "asia-northeast1"]

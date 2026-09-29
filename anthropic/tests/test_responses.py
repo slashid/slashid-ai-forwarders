@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from slashid_ai_forwarder_core.checkpoint import CheckpointStore
+from slashid_ai_forwarder_core.platform import CheckpointStore
 from slashid_ai_forwarder_core.testing import yaml_pytest
 
 from slashid_anthropic_forwarder.address import joinable_address
@@ -21,7 +21,8 @@ from slashid_anthropic_forwarder.compliance.responses import (
 )
 from slashid_anthropic_forwarder.compliance.schema import Chat, SessionMessage
 from slashid_anthropic_forwarder.hook.frame import PromptFrame, split_transcript
-from slashid_anthropic_forwarder.store import FirestorePendingStore, Retirement, Seen
+from slashid_anthropic_forwarder.store import Retirement, Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.compliance_fixtures import PAIRED, body, transport
 from tests.test_cursors import LAG
 from tests.test_cursors import _FakeStore as FakeCheckpoints

@@ -26,7 +26,7 @@ def test_sources_is_cached_and_config_need_not_be_hashable(
 
     monkeypatch.setenv("SLASHID_ENDPOINT", "https://api.slashid.com")
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "t" * 32)
-    monkeypatch.setenv("SLASHID_GCP_PROJECT_ID", "smoke-project")
+    monkeypatch.setenv("SLASHID_PROJECT_ID", "smoke-project")
     monkeypatch.setenv("SLASHID_GCP_REGIONS", '["us-central1"]')
     monkeypatch.setenv(
         "SLASHID_AUDIT_OBSERVED_MODELS",
@@ -75,7 +75,7 @@ def test_sources_omits_audit_source_when_observed_models_empty(
 
     monkeypatch.setenv("SLASHID_ENDPOINT", "https://api.slashid.com")
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "t" * 32)
-    monkeypatch.setenv("SLASHID_GCP_PROJECT_ID", "smoke-project")
+    monkeypatch.setenv("SLASHID_PROJECT_ID", "smoke-project")
     monkeypatch.setenv("SLASHID_GCP_REGIONS", '["us-central1"]')
     monkeypatch.delenv("SLASHID_AUDIT_OBSERVED_MODELS", raising=False)
 
@@ -115,7 +115,7 @@ def test_sources_builds_one_bq_per_region_plus_one_audit(
 
     monkeypatch.setenv("SLASHID_ENDPOINT", "https://api.slashid.com")
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "t" * 32)
-    monkeypatch.setenv("SLASHID_GCP_PROJECT_ID", "smoke-project")
+    monkeypatch.setenv("SLASHID_PROJECT_ID", "smoke-project")
     monkeypatch.setenv(
         "SLASHID_GCP_REGIONS",
         '["us-central1", "europe-west1", "asia-northeast1"]',

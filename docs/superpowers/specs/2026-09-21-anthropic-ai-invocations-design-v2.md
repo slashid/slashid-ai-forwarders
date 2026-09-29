@@ -477,8 +477,8 @@ Five shared additions: `AnthropicIdentityDetails` in the `IdentityDetails` union
 | `SLASHID_MAX_BODY_BYTES` | `33554432` | Cloud Run's HTTP/1 limit |
 | `SLASHID_JOIN_WAIT_SECONDS` | `3600` | deadline before an unsettled record is pushed as it stands |
 | `SLASHID_TOMBSTONE_TTL_SECONDS` | `7200` | how long a pushed record's tombstone suppresses a late reader's duplicate; must exceed `JOIN_WAIT` + `POLL_LAG` + one tick |
-| `SLASHID_GCP_PROJECT_ID` | required with the store | the project holding Firestore; `vertex/` has the same field and the anthropic `Config` does not yet |
-| `SLASHID_FIRESTORE_DATABASE` | `slashid-anthropic` | the named database. `vertex/` names its own `slashid-vertex` rather than using `(default)`, and this follows that. |
+| `SLASHID_PROJECT_ID` | required with the store | the project holding Firestore; `vertex/` has the same field and the anthropic `Config` does not yet |
+| `SLASHID_DATABASE` | `slashid-anthropic` | the named database. `vertex/` names its own `slashid-vertex` rather than using `(default)`, and this follows that. |
 | `SLASHID_PENDING_COLLECTION` | `anthropic_pending` | collection holding pending records and their tombstones |
 | `SLASHID_MAX_FLUSHES_PER_TICK` | `500` | bounds `due` so one tick cannot stall behind a backlog |
 | `SLASHID_PUSH_BUDGET_MS` | `2000` | bounds the push task; the sink's own retries are inert under it |

@@ -36,7 +36,8 @@ from slashid_anthropic_forwarder.record import (
     PARSED_AS_HOOK,
     open_fields,
 )
-from slashid_anthropic_forwarder.store import FirestorePendingStore, Seen
+from slashid_anthropic_forwarder.store import Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.fake_firestore import FakeFirestore
 
 JOIN_WAIT = timedelta(hours=1)
@@ -49,7 +50,7 @@ def config(**overrides: Any) -> Config:
         "endpoint": "https://api.slashid.com",
         "push_token": "tok",
         "hook_signing_secret": "whsec_AAAA",
-        "gcp_project_id": "proj",
+        "project_id": "proj",
         "max_retries": 0,
     }
     base.update(overrides)

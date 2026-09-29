@@ -14,7 +14,7 @@ from functools import cache
 
 import functions_framework
 from cloudevents.http import CloudEvent
-from slashid_ai_forwarder_core.checkpoint import FirestoreCheckpointStore
+from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
 from .audit_only_source import AuditOnlyEventSource
 from .config import load_config
@@ -24,7 +24,7 @@ from .handler import run_tick
 log = logging.getLogger(__name__)
 
 # Firestore document names are hardcoded — one per source under the
-# customer-configurable ``firestore_checkpoint_collection``. Watermarks
+# customer-configurable ``checkpoint_collection``. Watermarks
 # are internal state, not a public API surface; renaming them would
 # be a breaking migration whether they were env-configurable or not.
 # BQ path has a checkpoint per region (its BQ dataset is regional);
@@ -68,27 +68,23 @@ def _sources() -> list[EventSource]:
     hash the raw dict and chokes on lists). ``load_config()`` is
     itself cached, so pulling it inside is free.
     """
-    from google.cloud import bigquery, firestore
+    from google.cloud import bigquery
     from google.cloud import logging as gcp_logging
 
     config = load_config()
 
-    firestore_client = firestore.Client(
-        project=config.gcp_project_id,
-        database=config.firestore_database,
-    )
-    bq_client = bigquery.Client(project=config.gcp_project_id)
+    platform = GcpPlatform(project=config.project_id, firestore_database=config.database)
+    bq_client = bigquery.Client(project=config.project_id)
 
     sources: list[EventSource] = [
         BqEventSource(
             client=bq_client,
-            checkpoint_store=FirestoreCheckpointStore(
-                client=firestore_client,
-                collection=config.firestore_checkpoint_collection,
+            checkpoint_store=platform.checkpoint_store(
+                collection=config.checkpoint_collection,
                 document=_bq_checkpoint_doc(region),
             ),
             config=config,
-            project_id=config.gcp_project_id,
+            project_id=config.project_id,
             dataset_id=_bq_dataset_id(config.bq_dataset_prefix, region),
             region=region,
             max_rows_per_tick=config.max_rows_per_tick,
@@ -100,16 +96,15 @@ def _sources() -> list[EventSource]:
     if config.audit_observed_models:
         audit_source = AuditOnlyEventSource(
             logging_client=gcp_logging.Client(
-                project=config.gcp_project_id,
+                project=config.project_id,
                 _use_grpc=False,
             ),
-            checkpoint_store=FirestoreCheckpointStore(
-                client=firestore_client,
-                collection=config.firestore_checkpoint_collection,
+            checkpoint_store=platform.checkpoint_store(
+                collection=config.checkpoint_collection,
                 document=_AUDIT_ONLY_CHECKPOINT_DOC,
             ),
             config=config,
-            project_id=config.gcp_project_id,
+            project_id=config.project_id,
             regions=config.gcp_regions,
             observed_models=config.audit_observed_models,
             max_entries_per_tick=config.max_rows_per_tick,

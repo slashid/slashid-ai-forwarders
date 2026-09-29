@@ -10,6 +10,7 @@ from slashid_ai_forwarder_core.events import (
     AIModel,
     AnthropicIdentityDetails,
 )
+from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 from slashid_anthropic_forwarder.record import (
     FILE_DIGESTS,
@@ -19,13 +20,8 @@ from slashid_anthropic_forwarder.record import (
     PendingRecord,
     event_fields,
 )
-from slashid_anthropic_forwarder.store import (
-    FirestorePendingStore,
-    PendingStore,
-    Retirement,
-    Seen,
-    TickLease,
-)
+from slashid_anthropic_forwarder.store import PendingStore, Retirement, Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.fake_firestore import FakeFirestore
 
 NOW = datetime(2026, 9, 20, 23, 8, 20, tzinfo=UTC)
@@ -372,44 +368,9 @@ def test_the_adapter_satisfies_the_port() -> None:
 TICK = timedelta(minutes=10)
 
 
-def a_lease(client: FakeFirestore | None = None) -> tuple[TickLease, FakeFirestore]:
+def a_lease(client: FakeFirestore | None = None) -> tuple[FirestoreTickLease, FakeFirestore]:
     fake = client or FakeFirestore()
-    return TickLease(client=fake, collection="anthropic_pending", document="tick"), fake
-
-
-async def test_one_tick_takes_the_lease_and_the_next_is_turned_away() -> None:
-    lease, client = a_lease()
-    assert await lease.take(TICK, owner="tick-1", now=NOW) is True
-    second, _ = a_lease(client)
-    assert await second.take(TICK, owner="tick-2", now=NOW + timedelta(minutes=1)) is False
-
-
-async def test_the_lease_is_released_at_the_end_of_a_tick() -> None:
-    lease, client = a_lease()
-    await lease.take(TICK, owner="tick-1", now=NOW)
-    await lease.release(owner="tick-1")
-    second, _ = a_lease(client)
-    assert await second.take(TICK, owner="tick-2", now=NOW + timedelta(minutes=1)) is True
-
-
-async def test_a_lease_nobody_released_lapses() -> None:
-    """A tick that died mid-pass costs one cycle, not the service."""
-    lease, client = a_lease()
-    await lease.take(TICK, owner="crashed", now=NOW)
-    second, _ = a_lease(client)
-    assert await second.take(TICK, owner="next", now=NOW + TICK + timedelta(seconds=1)) is True
-
-
-async def test_releasing_a_lease_someone_else_holds_does_nothing() -> None:
-    """After a lapse the lease belongs to the next tick; a straggler
-    finishing its own pass must not hand it away."""
-    lease, client = a_lease()
-    await lease.take(TICK, owner="crashed", now=NOW)
-    second, _ = a_lease(client)
-    await second.take(TICK, owner="next", now=NOW + TICK + timedelta(seconds=1))
-    await lease.release(owner="crashed")
-    third, _ = a_lease(client)
-    assert await third.take(TICK, owner="third", now=NOW + TICK + timedelta(minutes=1)) is False
+    return FirestoreTickLease(client=fake, collection="anthropic_pending", document="tick"), fake
 
 
 async def test_the_lease_document_is_invisible_to_the_sweep() -> None:

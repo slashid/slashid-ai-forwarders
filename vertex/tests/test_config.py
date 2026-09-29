@@ -11,7 +11,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
     base = {
         "SLASHID_ENDPOINT": "http://test",
         "SLASHID_PUSH_TOKEN": "token",
-        "SLASHID_GCP_PROJECT_ID": "vertex-test-507702",
+        "SLASHID_PROJECT_ID": "vertex-test-507702",
         "SLASHID_GCP_REGIONS": '["us-central1"]',
     }
     base.update(overrides)
@@ -22,7 +22,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
 def test_required_fields_populate_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     cfg = Config()
-    assert cfg.gcp_project_id == "vertex-test-507702"
+    assert cfg.project_id == "vertex-test-507702"
     assert cfg.gcp_regions == ["us-central1"]
     assert cfg.endpoint == "http://test"
     assert cfg.push_token == "token"
@@ -32,8 +32,8 @@ def test_dataset_and_checkpoint_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     _env(monkeypatch)
     cfg = Config()
     assert cfg.bq_dataset_prefix == "slashid_vertex_reqresp_logs"
-    assert cfg.firestore_database == "slashid-vertex"
-    assert cfg.firestore_checkpoint_collection == "slashid_vertex"
+    assert cfg.database == "slashid-vertex"
+    assert cfg.checkpoint_collection == "slashid_vertex"
     assert cfg.max_rows_per_tick == 1000
 
 
@@ -41,14 +41,14 @@ def test_dataset_and_checkpoint_overrides(monkeypatch: pytest.MonkeyPatch) -> No
     _env(
         monkeypatch,
         SLASHID_BQ_DATASET_PREFIX="custom_dataset",
-        SLASHID_FIRESTORE_DATABASE="custom-db",
-        SLASHID_FIRESTORE_CHECKPOINT_COLLECTION="custom_col",
+        SLASHID_DATABASE="custom-db",
+        SLASHID_CHECKPOINT_COLLECTION="custom_col",
         SLASHID_MAX_ROWS_PER_TICK="500",
     )
     cfg = Config()
     assert cfg.bq_dataset_prefix == "custom_dataset"
-    assert cfg.firestore_database == "custom-db"
-    assert cfg.firestore_checkpoint_collection == "custom_col"
+    assert cfg.database == "custom-db"
+    assert cfg.checkpoint_collection == "custom_col"
     assert cfg.max_rows_per_tick == 500
 
 
@@ -66,7 +66,7 @@ def test_gcp_regions_missing_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     """``SLASHID_GCP_REGIONS`` unset → validation fails at load."""
     monkeypatch.setenv("SLASHID_ENDPOINT", "http://test")
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "token")
-    monkeypatch.setenv("SLASHID_GCP_PROJECT_ID", "vertex-test-507702")
+    monkeypatch.setenv("SLASHID_PROJECT_ID", "vertex-test-507702")
     monkeypatch.delenv("SLASHID_GCP_REGIONS", raising=False)
     with pytest.raises(ValueError, match="at least one region"):
         Config()

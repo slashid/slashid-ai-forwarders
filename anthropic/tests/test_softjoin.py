@@ -20,7 +20,8 @@ from slashid_anthropic_forwarder.record import (
     open_fields,
     to_event,
 )
-from slashid_anthropic_forwarder.store import FirestorePendingStore, Outcome, Seen
+from slashid_anthropic_forwarder.store import Outcome, Seen
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.compliance_fixtures import body, transport
 from tests.test_pending import Sink, a_store, an_event, fake
 from tests.test_pending import config as a_config

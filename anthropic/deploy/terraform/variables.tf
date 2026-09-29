@@ -258,13 +258,13 @@ variable "ghcr_token" {
 
 # --- Naming overrides ------------------------------------------------------
 
-variable "create_firestore_database" {
+variable "create_database" {
   description = "Provision the named Firestore database. False reuses an existing one — Firestore databases are hard to fully delete, so a destroy/re-apply cycle usually leaves one behind."
   type        = bool
   default     = true
 }
 
-variable "firestore_database" {
+variable "database" {
   description = "Named Firestore database, kept isolated from the project's (default) database as vertex/ does."
   type        = string
   default     = "slashid-anthropic"

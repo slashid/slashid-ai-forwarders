@@ -13,7 +13,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
         "SLASHID_ENDPOINT": "https://api.slashid.com",
         "SLASHID_PUSH_TOKEN": "token",
         "SLASHID_HOOK_SIGNING_SECRET": "whsec_AAA",
-        "SLASHID_GCP_PROJECT_ID": "proj",
+        "SLASHID_PROJECT_ID": "proj",
     }
     base.update(overrides)
     for k, v in base.items():
@@ -65,11 +65,11 @@ def test_the_store_knobs_have_the_designed_defaults(monkeypatch: pytest.MonkeyPa
     assert config.join_wait_seconds == 3600
     assert config.tombstone_ttl_seconds == 7200
     assert config.pending_collection == "anthropic_pending"
-    assert config.firestore_database == "slashid-anthropic"
+    assert config.database == "slashid-anthropic"
     assert config.max_flushes_per_tick == 500
-    assert config.gcp_project_id == "proj"
+    assert config.project_id == "proj"
     # Fail closed: with no scheduler identity named, every tick is refused.
-    assert config.tick_service_account is None
+    assert config.tick_principal is None
     assert config.tick_audience is None
 
 
@@ -77,7 +77,7 @@ def test_the_project_id_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     """A Firestore client built with ``project=None`` fails on the first
     write, in a background task whose exception reaches no response."""
     _env(monkeypatch)
-    monkeypatch.delenv("SLASHID_GCP_PROJECT_ID")
+    monkeypatch.delenv("SLASHID_PROJECT_ID")
     with pytest.raises(ValidationError):
         Config()
 

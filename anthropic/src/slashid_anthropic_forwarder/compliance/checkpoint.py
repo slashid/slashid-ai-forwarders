@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from slashid_ai_forwarder_core.checkpoint import Checkpoint, CheckpointStore
+from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
 
 log = logging.getLogger(__name__)
 

@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from datetime import timedelta
 from typing import Any
 
 import httpx
 import pytest
+from slashid_ai_forwarder_core.platform import TickLease
+from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
-from slashid_anthropic_forwarder.store import FirestorePendingStore, TickLease
+from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
@@ -32,15 +35,15 @@ FRAME: dict[str, Any] = {
 }
 
 
-class MemoryCapture:
+class MemorySink:
     def __init__(self, *, fail: bool = False) -> None:
-        self.stored: list[tuple[str, dict[str, str], bytes]] = []
+        self.objects: dict[str, bytes] = {}
         self.fail = fail
 
-    async def store(self, request_id: str, headers: dict[str, str], body: bytes) -> None:
+    async def put(self, name: str, data: bytes, *, content_type: str) -> None:
         if self.fail:
             raise RuntimeError("bucket unreachable")
-        self.stored.append((request_id, headers, body))
+        self.objects[name] = data
 
 
 def _config(**overrides: Any) -> Config:
@@ -48,7 +51,7 @@ def _config(**overrides: Any) -> Config:
         "endpoint": "https://api.slashid.com",
         "push_token": "tok",
         "hook_signing_secret": SECRET,
-        "gcp_project_id": "proj",
+        "project_id": "proj",
     }
     base.update(overrides)
     return Config(**base)
@@ -58,14 +61,14 @@ SCHEDULER = {"authorization": "Bearer scheduler-token"}
 
 
 async def _accepts_the_scheduler(token: str) -> bool:
-    """Stands in for `google_oidc_check`, which verifies a Google
+    """Stands in for `GcpPlatform.scheduler_auth`, which verifies a Google
     signature against Google's certificates and cannot run offline."""
     return token == "scheduler-token"
 
 
 def _client(
     config: Config,
-    capture: MemoryCapture | None = None,
+    capture: MemorySink | None = None,
     store: FirestorePendingStore | None = None,
     sink: Sink | None = None,
     lease: TickLease | None = None,
@@ -102,19 +105,19 @@ async def test_signed_prompt_frame_is_allowed(sign: Signer) -> None:
 
 async def test_frame_is_captured_raw_with_its_headers(sign: Signer) -> None:
     body = json.dumps(FRAME).encode()
-    capture = MemoryCapture()
+    capture = MemorySink()
     async with _client(_config(capture_bucket="b"), capture) as c:
         await c.post("/", content=body, headers=sign(body, "req_test"))
-    assert len(capture.stored) == 1
-    request_id, headers, stored_body = capture.stored[0]
-    assert request_id == "req_test"
-    assert stored_body == body  # raw bytes, not a re-encoding
-    assert headers["webhook-id"] == "req_test"
+    [(name, data)] = capture.objects.items()
+    stored = json.loads(data)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z_req_test\.json", name)
+    assert stored["body"].encode() == body  # the raw frame, not a re-encoding
+    assert stored["headers"]["webhook-id"] == "req_test"
 
 
 async def test_capture_failure_never_reaches_the_verdict(sign: Signer) -> None:
     body = json.dumps(FRAME).encode()
-    async with _client(_config(capture_bucket="b"), MemoryCapture(fail=True)) as c:
+    async with _client(_config(capture_bucket="b"), MemorySink(fail=True)) as c:
         r = await c.post("/", content=body, headers=sign(body, "req_test"))
     assert r.status_code == 200
     assert r.json() == {"action": "allow"}
@@ -295,7 +298,7 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
     Chunk 7 would not, and their checkpoint has no precondition."""
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
-    lease = TickLease(client=fake(store), collection="anthropic_pending")
+    lease = FirestoreTickLease(client=fake(store), collection="anthropic_pending")
     assert await lease.take(TICK_LEASE, owner="the-tick-already-running") is True
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
@@ -307,7 +310,7 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
 async def test_a_tick_releases_the_lease_so_the_next_one_runs() -> None:
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
-    lease = TickLease(client=fake(store), collection="anthropic_pending")
+    lease = FirestoreTickLease(client=fake(store), collection="anthropic_pending")
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 1}
