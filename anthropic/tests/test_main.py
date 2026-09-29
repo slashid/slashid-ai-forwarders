@@ -9,12 +9,13 @@ from typing import Any
 
 import httpx
 import pytest
+from slashid_ai_forwarder_core.lease import FirestoreTickLease, TickLease
 
 from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
-from slashid_anthropic_forwarder.store import FirestorePendingStore, FirestoreTickLease, TickLease
+from slashid_anthropic_forwarder.store import FirestorePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed

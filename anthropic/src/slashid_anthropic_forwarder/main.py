@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from slashid_ai_forwarder_core.lease import TickLease
 from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth
 
 from .compliance.checkpoint import Cursors
@@ -34,7 +35,7 @@ from .hook.signature import verify
 from .hook.verdict import decide
 from .pending import TICK_LEASE, flush_due, unanswered_round, write_from_frame
 from .platform import build_backends
-from .store import PendingStore, TickLease
+from .store import PendingStore
 
 log = logging.getLogger(__name__)
 

@@ -12,12 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+from slashid_ai_forwarder_core.lease import TickLease
 from slashid_ai_forwarder_core.platform import BlobSink, SchedulerAuth
 from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
 from .compliance.checkpoint import ACTIVITIES, CHATS, SESSIONS, Cursors, FeedCursor
 from .config import Config
-from .store import FirestorePendingStore, FirestoreTickLease, PendingStore, TickLease
+from .store import FirestorePendingStore, PendingStore
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,8 @@ def _gcp(config: Config) -> Backends:
             join_wait=timedelta(seconds=config.join_wait_seconds),
             tombstone_ttl=timedelta(seconds=config.tombstone_ttl_seconds),
         ),
-        lease=FirestoreTickLease(
-            client=platform.firestore_async, collection=config.pending_collection
-        ),
+        # In the pending collection, which no query of the store matches it in.
+        lease=platform.tick_lease(collection=config.pending_collection, document="tick"),
         cursors=Cursors(
             activities=cursor(ACTIVITIES), chats=cursor(CHATS), sessions=cursor(SESSIONS)
         ),

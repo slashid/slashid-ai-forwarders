@@ -2,9 +2,10 @@
 
 An adapter's logic — polling a feed, answering a hook, pushing events —
 does not care where it runs. What does is a short list: where watermarks
-live, where raw blobs go, and how the scheduler that drives a tick proves
-who it is. ``Platform`` names those, and one implementation per cloud
-supplies them; ``gcp.GcpPlatform`` is the only one today.
+live, how overlapping ticks are kept apart, where raw blobs go, and how
+the scheduler that drives a tick proves who it is. ``Platform`` names
+those, and one implementation per cloud supplies them;
+``gcp.GcpPlatform`` is the only one today.
 
 An adapter with state of its own (a pending store, a lease) declares its
 own interfaces next to its code and builds them from the same platform,
@@ -18,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from ..checkpoint import CheckpointStore
+from ..lease import TickLease
 
 # Whether a bearer token presented to a tick route belongs to the
 # scheduler allowed to drive it.
@@ -32,6 +34,8 @@ class BlobSink(Protocol):
 
 class Platform(Protocol):
     def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore: ...
+
+    def tick_lease(self, *, collection: str, document: str) -> TickLease: ...
 
     def blob_sink(self, bucket: str) -> BlobSink: ...
 

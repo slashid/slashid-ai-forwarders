@@ -12,6 +12,7 @@ from functools import cached_property
 from typing import Any
 
 from ..checkpoint import CheckpointStore, FirestoreCheckpointStore
+from ..lease import FirestoreTickLease, TickLease
 from . import BlobSink, SchedulerAuth
 
 log = logging.getLogger(__name__)
@@ -56,6 +57,11 @@ class GcpPlatform:
     def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore:
         return FirestoreCheckpointStore(
             client=self.firestore, collection=collection, document=document
+        )
+
+    def tick_lease(self, *, collection: str, document: str) -> TickLease:
+        return FirestoreTickLease(
+            client=self.firestore_async, collection=collection, document=document
         )
 
     def blob_sink(self, bucket: str) -> BlobSink:
