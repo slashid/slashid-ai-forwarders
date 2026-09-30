@@ -146,7 +146,7 @@ How files appear:
 
 **`platform/local/`** (new)
 
-- `LocalPlatform(state_dir: Path | None = None)` (`None` in production; tests pass a directory), registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`; `state_dir` defaults to `platformdirs.user_state_dir("slashid-ai-forwarder", "SlashID")` (Linux `~/.local/state/slashid-ai-forwarder`, macOS `~/Library/Application Support/slashid-ai-forwarder`, Windows `%LOCALAPPDATA%\SlashID\slashid-ai-forwarder`). Per user, since the hook runs as the user.
+- `LocalPlatform(state_dir: Path)`, registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`. The directory is the caller's choice, since it is named per forwarder; Codex's is below.
 - Concurrency: the daemon is the usual writer, but a hook running its in-process fallback (below) can write at the same time. Connections use WAL mode and a `busy_timeout`, and every read-modify-write is one `BEGIN IMMEDIATE` transaction.
 - `checkpoint_store(collection, document)`: the shared `CheckpointStore`, one row per `(collection, document)`. Codex keeps one watermark per session in it (below).
 - `created_at()`: when the state database was created, i.e. when the forwarder first ran on this machine for this user.
@@ -198,7 +198,7 @@ Install: MDM installs uv, then runs `uv tool install <wheel>` with `UV_TOOL_DIR=
 
 **Transport.** HTTP on `127.0.0.1`, port `0` (chosen by the OS), served by uvicorn. Loopback TCP works the same on Linux, macOS and Windows, where asyncio has no Unix-socket support; the protocol is Pydantic models on FastAPI routes.
 
-**Files.** `state_dir` is always the per-user `platformdirs.user_state_dir(...)`, never set by the MDM config (a shared path would put every user's daemon, lock and database in one place); `--state-dir` exists for tests only. On POSIX the directory is `0700` and files are created `0600` through `os.open(..., O_CREAT | O_EXCL, 0o600)` then renamed into place, never chmodded afterwards; on Windows it sits under `%LOCALAPPDATA%`, whose inherited ACL grants only the user, SYSTEM and administrators.
+**Files.** `state_dir` is always `platformdirs.user_data_dir("ai-forwarder-codex", "slashid")`: Linux `~/.local/share/ai-forwarder-codex`, macOS `~/Library/Application Support/ai-forwarder-codex`, Windows `%LOCALAPPDATA%\slashid\ai-forwarder-codex`. It is per user, since the hook runs as the user, and never set by the MDM config (a shared path would put every user's daemon, lock and database in one place); `--state-dir` exists for tests only. On POSIX the directory is `0700` and files are created `0600` through `os.open(..., O_CREAT | O_EXCL, 0o600)` then renamed into place, never chmodded afterwards; on Windows it sits under `%LOCALAPPDATA%`, whose inherited ACL grants only the user, SYSTEM and administrators.
 
 **Discovery and single instance.**
 
@@ -423,7 +423,7 @@ The hook client always exits 0 and prints valid JSON, so Codex never sees a cras
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
   - `get_file_read_by_tool` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
   - preflight rounds: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed tool results in `used_tools` and their reads in `accessed_files`; a normal prompt carrying neither;
-  - local platform: forward-only watermark save under two racing processes (the older save loses), WAL concurrency between the daemon and a fallback client, `platformdirs` default honoured, unsupported members raising;
+  - local platform: forward-only watermark save under two racing processes (the older save loses), WAL concurrency between the daemon and a fallback client, `state_dir` resolved from `platformdirs.user_data_dir("ai-forwarder-codex", "slashid")`, unsupported members raising;
   - preflight invocation per event, checked against the server's join rule (every `requested_tool_uses` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
   - MCP server listing: parsed from a captured `codex mcp list --json`, `env` never copied, and every failure mode leaving events otherwise unchanged;
   - verdict and fail-mode mapping;
