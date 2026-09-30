@@ -174,7 +174,7 @@ How files appear:
 | `cli.py` | `slashid-codex hook --config <path> --event <Name>`. Reads stdin (bounded), dispatches, prints Codex's JSON output, always exits 0. |
 | `hooks.py` | Pydantic models for the hook payloads above, one per event. |
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: parses the "Files mentioned by the user" section, only when the text starts with it (after leading blank lines), up to `## My request:`. Each `## ` line splits on the last `": "` followed by an absolute path (`/` or `X:\`), since names can contain `": "`. Used on the hook's `prompt` and on the rollout's user message. |
-| `reads.py` | `read_target(tool_name, tool_input, workdir) -> Path | None`: the file a tool call is about to read. `view_image` → `path`. `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'` command, split with `shlex`; anything with a pipe, `;`, `&&`, redirection, globbing or several paths → `None`. Relative paths resolve against `workdir`, the tool call's own working directory: the hook's `tool_input` drops it, so the caller takes it from the call's `workdir` argument in the rollout (function mode: the call is written before `PreToolUse` fires, found by `tool_use_id`), falling back to the payload's `cwd` when there is none (script mode, call not found). |
+| `reads.py` | `get_file_read_by_tool(tool_name, tool_input, workdir) -> Path | None`: the file a tool call is about to read. `view_image` → `path`. `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'` command, split with `shlex`; anything with a pipe, `;`, `&&`, redirection, globbing or several paths → `None`. Relative paths resolve against `workdir`, the tool call's own working directory: the hook's `tool_input` drops it, so the caller takes it from the call's `workdir` argument in the rollout (function mode: the call is written before `PreToolUse` fires, found by `tool_use_id`), falling back to the payload's `cwd` when there is none (script mode, call not found). |
 | `preflight.py` | Builds the preflight invocation, calls `sink.preflight_invocation`, maps the verdict. |
 | `rollout.py` | Pydantic models for rollout lines, and `rollout_invocations(lines) -> list[RolloutInvocation]`: one per `token_usage_record`, with the Responses request/response rebuilt from the items before it, tool calls renamed and files collected (two passes, below). |
 | `emit.py` | `Stop` / `SessionStart` sweep / `SessionEnd` hand-off: lock, read, build events, push, save the checkpoint. |
@@ -197,7 +197,7 @@ Both build a partial `AIInvocationObservedV1`:
 | `model` | `AIModel(id=model, provider="openai")` | same |
 | `parsed_as` | `codex-hook` | `codex-hook` |
 | `conversation_id` | `session_id` | `session_id` |
-| `accessed_files` | the round (below): this prompt's attachments, plus any unconsumed tool reads | `hash_local_file(read_target(…))` if any, `provenance: "tool_result"` |
+| `accessed_files` | the round (below): this prompt's attachments, plus any unconsumed tool reads | `hash_local_file(get_file_read_by_tool(…))` if any, `provenance: "tool_result"` |
 | `available_tool_servers`, `available_tools` | `resolve_tool` for each `used_tools` entry | `resolve_tool(tool_name)` |
 | `used_tools` | the round (below): tool calls whose results are unconsumed | — |
 | `requested_tool_uses` | — | `[AIToolUse(tool_id, tool_use_id)]` |
@@ -213,7 +213,7 @@ Both come from the rollout tail and are usually empty: a turn normally ends with
 
 `PreToolUse` checks only the file its own call is about to read. Parallel reads from one response are each checked by their own `PreToolUse`.
 
-Client-side caps keep hashing inside the 10 s hook with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in the `FileRecordStore` under its `turn_id`, and `PreToolUse` stores a read target's entry under its `tool_use_id`, so a file that changes between the check and the emit is reported as it was checked.
+Client-side caps keep hashing inside the 10 s hook with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in the `FileRecordStore` under its `turn_id`, and `PreToolUse` stores the entry for the file it reads under its `tool_use_id`, so a file that changes between the check and the emit is reported as it was checked.
 
 Nothing else leaves the machine: no prompt text, tool arguments, file content, `cwd` or transcript. File names and hashes do, which codex-client never sent; the README must say so.
 
@@ -349,7 +349,7 @@ Non-managed hooks need the user's approval (recorded in `config.toml` as `[hooks
 | Preflight unreachable, non-200, bad body, over budget | `fail_mode` (`deny` default) |
 | Bad config or token file | Preflight: `fail_mode`. Collection: exit, nothing saved |
 | Invalid hook stdin | Preflight: `fail_mode`. Collection: exit |
-| Attachment or read target missing, unreadable, over `max_file_bytes` | Entry sent without hashes (the server counts it unchecked); never a hook failure |
+| Attachment or file read by the tool missing, unreadable, over `max_file_bytes` | Entry sent without hashes (the server counts it unchecked); never a hook failure |
 | Rollout line that fails to parse | Skipped and counted on stderr; a truncated last line is left for the next run |
 | Push fails | Checkpoint not advanced; retried by the next `Stop` or `SessionStart` sweep |
 | Rollout moved or deleted | Relocated by `session_id` under `sessions/` and `archived_sessions/`; if absent, the checkpoint expires after 7 days |
@@ -364,7 +364,7 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
 - **bedrock:** `normalize_record` picks `openai-responses` and `openai-responses-stream`.
 - **codex:**
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
-  - `read_target` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
+  - `get_file_read_by_tool` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
   - preflight rounds: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed tool results in `used_tools` and their reads in `accessed_files`; a normal prompt carrying neither;
   - local platform: two processes racing for one lease (one wins), an expired lease taken over, WAL concurrency across processes, `platformdirs` default honoured and overridable;
   - preflight invocation per event, checked against the server's join rule (every `requested_tool_uses` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
