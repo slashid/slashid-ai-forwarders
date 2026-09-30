@@ -189,12 +189,18 @@ Both build a partial `AIInvocationObservedV1`:
 | `parsed_as` | `codex-hook` | `codex-hook` |
 | `conversation_id` | `session_id` | `session_id` |
 | `accessed_files` | the round (below): this prompt's attachments, plus any unconsumed tool reads | `hash_local_file(read_target(…))` if any, `provenance: "tool_result"` |
-| `available_tool_servers`, `available_tools` | — | `resolve_tool(tool_name)` |
+| `available_tool_servers`, `available_tools` | `resolve_tool` for each `used_tools` entry | `resolve_tool(tool_name)` |
+| `used_tools` | the round (below): tool calls whose results are unconsumed | — |
 | `requested_tool_uses` | — | `[AIToolUse(tool_id, tool_use_id)]` |
 
 The server normalizes this to `invoke_model`, one `use_attachment` per accessed file, and for `PreToolUse` an `mcp_call{server, "tools/call", tool}` (e.g. `mcp__payroll__read` → `mcp_call{payroll, read}`, `Bash` → `mcp_call{builtin, Bash}`), and runs the sensitive-file check on the hashes.
 
-`UserPromptSubmit` lists every file new in the model's input since its last response (the last `token_usage_record` in the rollout), the same rule the events and the other adapters use: this prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`), plus the file records of tool calls whose outputs follow that record, which only happens when the user interrupted a response before it consumed them. The prompt itself is not in the rollout yet when the hook fires.
+`UserPromptSubmit` lists everything new in the model's input since its last response (the last `token_usage_record` in the rollout), the same round rule the events and the other adapters use:
+
+- `accessed_files`: this prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`), plus the file records of the tool calls below.
+- `used_tools`: the tool calls whose outputs follow that record, built with `rollout.py` exactly as collection builds them (renamed to their logical tool, `tool_use_id`, `is_error` from the item's `exit_code`/`status`), each with its `resolve_tool` entry in `available_tools`.
+
+Both come from the rollout tail and are usually empty: a turn normally ends with a response that consumed every tool result. They are non-empty when the user interrupted a response before it consumed its tools' results, which the next prompt's first model call then sees. The prompt itself is not in the rollout yet when the hook fires.
 
 `PreToolUse` checks only the file its own call is about to read. Parallel reads from one response are each checked by their own `PreToolUse`.
 
@@ -262,7 +268,7 @@ The pair goes through `responses_to_normalized_invocation`, then `build_event_fr
 
 and `accessed_files` set from the file rules above (the builder's own `accessed_files` from `NormalizedInvocation` is replaced, not merged).
 
-Attribution follows the existing rule: `input` is the full history, `used_tools` and `accessed_files` come from the round the response consumed.
+Attribution follows the existing rule: `input` is the full history, `used_tools` and `accessed_files` come from the round the response consumed, i.e. every tool result and file new in its input since the previous response. The turn's final response therefore lists the last round's tools, and the first response after an interrupt lists the results the interrupted response never consumed.
 
 The rollout records no tool definitions, so the request has no `tools`, and `_used_tools` (which resolves ids only through `input.tools_declared`) would drop every result. As the Anthropic hook does (`hook/envelope.py`, `build_tools_declared((name, None, None) …)`), the Codex path fills `tools_declared` and `tool_servers` itself from the names of every tool call in the history, after renaming. Name-only declaration makes these ids equal the preflight's `resolve_tool` ids. `available_tools` is therefore the set of tools used so far in the session.
 
@@ -350,7 +356,7 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
 - **codex:**
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
   - `read_target` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
-  - preflight files: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed reads;
+  - preflight rounds: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed tool results in `used_tools` and their reads in `accessed_files`; a normal prompt carrying neither;
   - preflight invocation per event, checked against the server's join rule (every `requested_tool_uses` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
   - MCP server listing: parsed from a captured `codex mcp list --json`, `env` never copied, and every failure mode leaving events otherwise unchanged;
   - verdict and fail-mode mapping;
