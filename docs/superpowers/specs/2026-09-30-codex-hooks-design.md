@@ -5,6 +5,7 @@
 **Target repo:** `slashid-ai-forwarder`, new workspace member `codex/`, plus `shared/` and `bedrock/`.
 **Replaces:** `ng-evangelion/backend/modules/detections/components/aiauthorization/codex-client` (removal happens in ng-evangelion once this ships).
 **Server side, already on main:** `POST /ip/nhi/events/ai-invocations/preflight` runs the sensitive-file check and the AI hook policy ([ng-evangelion#7847](https://github.com/slashid/ng-evangelion/pull/7847)), `NormalizeAIInvocation` (#7846) and the OpenAI adapter's `ResolveAIInvocationIdentity`.
+**Server side, needed first:** `requested_tool_uses` on `AIInvocationObservedV1`, mapped to `mcp_call` by `NormalizeAIInvocation` (see Wire schema). Until it ships the server ignores the field, and `PreToolUse` enforces model and file rules but not tool rules.
 
 ## Overview
 
@@ -132,6 +133,13 @@ How files appear:
 **`events.py`**
 
 - `OpenAIIdentityDetails(kind="openai", service_account_id, user_id, api_key_id, api_key_hash)`, with the same at-least-one-identifier validator as `AnthropicIdentityDetails`. Mirrors the server's `OpenAIIdentityDetails`; `kind` is client-side. Added to the `IdentityDetails` union.
+- `AIRequestedToolUse(tool_id, tool_use_id)` and `AIInvocationObservedV1.requested_tool_uses: list[AIRequestedToolUse] | None`: the tool calls the model asked for in this invocation's output, which have not run yet. `used_tools` keeps its meaning, calls whose results this invocation consumed; a round's request and its consumption share `tool_use_id` across two events. `build_event_from_normalized` fills it for every adapter from the `tool_use` blocks in `normalized.output.message`, joined to `tools_declared` the way `_used_tools` joins results (a call whose tool cannot be identified is skipped). Codex's `PreToolUse` preflight sets it directly.
+
+**Wire schema** (ng-evangelion `spec/ai-schemas.yaml`, `aievent`, `aiauthorization`)
+
+- `AIRequestedToolUse {tool_id (required), tool_use_id}` and the optional `requested_tool_uses` array on `AIInvocationObservedV1`.
+- `NormalizeAIInvocation` emits one `mcp_call{server, "tools/call", tool}` per `requested_tool_uses` entry, through the same `available_tools` → `available_tool_servers` join as `used_tools`, with the same `tool_unresolved` error. `used_tools` keeps producing `mcp_call` too, so the Anthropic hook's tail round keeps working.
+- This change cannot wait for the batched schema sync: tool rules in Codex depend on it.
 
 **`normalize/normalized/tools.py`**
 
@@ -150,7 +158,7 @@ How files appear:
 
 | Module | Responsibility |
 |---|---|
-| `config.py` | `CodexConfig(BaseConfig)` loaded from a file passed as `--config` (TOML): `endpoint`, `push_token_file`, `user_id`, `fail_mode` (`deny` default), `preflight_timeout_seconds` (4.0), `state_dir`, `include_raw_content`, `max_file_bytes` (50 MiB). Environment variables are not read, for config or transport: hooks inherit the user's environment. `endpoint` must be `https://` with no userinfo, query or fragment; the token must be at least 32 non-whitespace characters. |
+| `config.py` | `CodexConfig(BaseConfig)` loaded from a file passed as `--config` (TOML): `endpoint`, `push_token_file`, `user_id`, `fail_mode` (`deny` default), `preflight_timeout_seconds` (4.0), `state_dir`, `include_raw_content`, `max_file_bytes` (50 MiB), `codex_bin` (optional). Environment variables are not read, for config or transport: hooks inherit the user's environment. `endpoint` must be `https://` with no userinfo, query or fragment; the token must be at least 32 non-whitespace characters. |
 | `http.py` | The one `httpx.AsyncClient` factory: `trust_env=False` (ignores `HTTPS_PROXY`, `SSL_CERT_FILE`, `.netrc`), `follow_redirects=False`, system CA store, explicit timeouts. Keeps codex-client's transport hardening. |
 | `cli.py` | `slashid-codex hook --config <path> --event <Name>`. Reads stdin (bounded), dispatches, prints Codex's JSON output, always exits 0. |
 | `hooks.py` | Pydantic models for the hook payloads above, one per event. |
@@ -180,9 +188,9 @@ Both build a partial `AIInvocationObservedV1`:
 | `conversation_id` | `session_id` | `session_id` |
 | `accessed_files` | the round (below): this prompt's attachments, plus any unconsumed tool reads | `hash_local_file(read_target(…))` if any, `provenance: "tool_result"` |
 | `available_tool_servers`, `available_tools` | — | `resolve_tool(tool_name)` |
-| `used_tools` | — | `[AIToolUse(tool_id, tool_use_id, is_error=False)]` |
+| `requested_tool_uses` | — | `[AIRequestedToolUse(tool_id, tool_use_id)]` |
 
-The server normalizes this to `invoke_model`, one `use_attachment` per accessed file, and for `PreToolUse` an `mcp_call{server, "tools/call", tool}` (e.g. `mcp__payroll__read` → `mcp_call{payroll, read}`, `Bash` → `mcp_call{builtin, Bash}`), and runs the sensitive-file check on the hashes. The server documents `used_tools` as tools that already ran; sending the pending call there before it runs is a deliberate reuse, since it is the only field `NormalizeAIInvocation` turns into `mcp_call`.
+The server normalizes this to `invoke_model`, one `use_attachment` per accessed file, and for `PreToolUse` an `mcp_call{server, "tools/call", tool}` (e.g. `mcp__payroll__read` → `mcp_call{payroll, read}`, `Bash` → `mcp_call{builtin, Bash}`), and runs the sensitive-file check on the hashes.
 
 `UserPromptSubmit` lists every file new in the model's input since its last response (the last `token_usage_record` in the rollout), the same rule the events and the other adapters use: this prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`), plus the file records of tool calls whose outputs follow that record, which only happens when the user interrupted a response before it consumed them. The prompt itself is not in the rollout yet when the hook fires.
 
@@ -255,6 +263,8 @@ and `accessed_files` set from the file rules above (the builder's own `accessed_
 Attribution follows the existing rule: `input` is the full history, `used_tools` and `accessed_files` come from the round the response consumed.
 
 The rollout records no tool definitions, so the request has no `tools`, and `_used_tools` (which resolves ids only through `input.tools_declared`) would drop every result. As the Anthropic hook does (`hook/envelope.py`, `build_tools_declared((name, None, None) …)`), the Codex path fills `tools_declared` and `tool_servers` itself from the names of every tool call in the history, after renaming. Name-only declaration makes these ids equal the preflight's `resolve_tool` ids. `available_tools` is therefore the set of tools used so far in the session.
+
+`available_tool_servers` also lists the MCP servers the user has configured, used or not, best effort. Each `emit.run` calls `codex mcp list --json` once (5 s timeout) and adds every `enabled` server as `AIToolServer(name, kind="mcp")`, with the same id recipe as `build_tools_declared` (`short_hash({name, kind})`), so a tool later used on that server joins to the same entry. Only `name` and `enabled` are read; `command`, `args` and `env` (which can hold credentials) are never sent. The binary is `config.codex_bin` if set, else `codex` on `PATH`, else the desktop bundle (`/usr/lib/chatgpt/resources/codex` on Linux; macOS and Windows paths found in the plan). Any failure (not found, non-zero exit, timeout, unparseable output) leaves the list out and changes nothing else.
 
 With `include_raw_content` on, every event carries the full history in `input.redacted_text`, cut by the existing `max_content_size` (100 000 characters, middle-truncated) and batched under the 1 MB push limit by `push_invocations`. Hashes are always over the full, untruncated body. File content is never sent (`redacted_content` stays empty).
 
@@ -333,13 +343,14 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
 ## Testing
 
 - **Fixtures** from the captures of 2026-09-30: the hook payloads from both tool modes (including the four-attachment prompt and `view_image`), the script-mode and function-mode rollouts, and the Bedrock MIL records (non-stream and stream). Rollout fixtures are trimmed of `base_instructions`, environment context and personal file content; image data is replaced by a small PNG whose hash the test knows.
-- **shared:** Responses normalizer on both Bedrock records; stop reasons; usage; `resolve_tool`; `hash_local_file` (cap, missing file); `OpenAIIdentityDetails` validation.
+- **shared:** Responses normalizer on both Bedrock records; stop reasons; usage; `resolve_tool`; `hash_local_file` (cap, missing file); `OpenAIIdentityDetails` validation; `requested_tool_uses` built from output `tool_use` blocks for the Anthropic, Converse, Gemini and Responses fixtures, unresolvable calls skipped.
 - **bedrock:** `normalize_record` picks `openai-responses` and `openai-responses-stream`.
 - **codex:**
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
   - `read_target` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
   - preflight files: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed reads;
-  - preflight invocation per event, checked against the server's join rule (every `used_tools` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
+  - preflight invocation per event, checked against the server's join rule (every `requested_tool_uses` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
+  - MCP server listing: parsed from a captured `codex mcp list --json`, `env` never copied, and every failure mode leaving events otherwise unchanged;
   - verdict and fail-mode mapping;
   - rollout → invocations in both modes (tool calls renamed to `Bash` with the hook's id and `tool_input.command`; attachments on the first response of their turn; reads on the response after the output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; four parallel `exec_command` calls in one response; an interrupted turn dropping its unclosed response without losing its tool results);
   - checkpoint, first-push failure found by the sweep, relocation to `archived_sessions/`, retry and lock contention;
