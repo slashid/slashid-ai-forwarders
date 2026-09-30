@@ -14,12 +14,12 @@ A CLI, `slashid-codex`, that Codex runs as a managed hook on every endpoint. It 
 ```
  Codex ──UserPromptSubmit──► slashid-codex ──hash attachments, preflight──► SlashID ──► allow / block
        ──PreToolUse───────►       "        ──hash simple reads, preflight──►    "
-       ──Stop (async)─────► slashid-codex ──read rollout from offset──► push AIInvocationObservedV1
+       ──Stop (async)─────► slashid-codex ──read rollout past watermark─► push AIInvocationObservedV1
        ──SessionStart/End─►       "        ──sweep / hand off─────────►    "
 ```
 
 1. **Enforcement.** `UserPromptSubmit` and `PreToolUse` become preflight requests, carrying the hashes of any file the user attached or a tool is about to read. The server's `deny_reasons` become Codex's block decision, so a sensitive file is stopped before the model sees it.
-2. **Collection.** `Stop` reads the session's rollout JSONL (`transcript_path`) from a saved offset and pushes one `AIInvocationObservedV1` per model response, with attachments and read files in `accessed_files`. The rollout is Codex's own append-only session log under `~/.codex/sessions/`, the file `codex resume` replays; it holds every model item, the system prompt and per-response token usage, none of which hooks carry.
+2. **Collection.** `Stop` reads the session's rollout JSONL (`transcript_path`) and pushes one `AIInvocationObservedV1` per model response past the session's watermark, with attachments and read files in `accessed_files`. The rollout is Codex's own append-only session log under `~/.codex/sessions/`, the file `codex resume` replays; it holds every model item, the system prompt and per-response token usage, none of which hooks carry.
 
 The OpenAI Responses format mapping lives in `shared/`, so the same normalizer also parses Bedrock MIL records for OpenAI models called through the Responses API.
 
@@ -147,7 +147,8 @@ How files appear:
 
 - `LocalPlatform(state_dir: Path | None = None)`, registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`; `state_dir` defaults to `platformdirs.user_state_dir("slashid-ai-forwarder", "SlashID")` (Linux `~/.local/state/slashid-ai-forwarder`, macOS `~/Library/Application Support/slashid-ai-forwarder`, Windows `%LOCALAPPDATA%\SlashID\slashid-ai-forwarder`). Per user, since the hook runs as the user.
 - Concurrency: several hook processes open the database at once (parallel `PreToolUse`, an async `Stop` beside a `UserPromptSubmit`). Connections use WAL mode and a `busy_timeout`, and every read-modify-write is one `BEGIN IMMEDIATE` transaction.
-- `checkpoint_store(collection, document)`: the shared `CheckpointStore`, one row per `(collection, document)`. Codex does not use it (see below) but it keeps the platform complete.
+- `checkpoint_store(collection, document)`: the shared `CheckpointStore`, one row per `(collection, document)`. Codex keeps one watermark per session in it (below).
+- `created_at()`: when the state database was created, i.e. when the forwarder first ran on this machine for this user.
 - `tick_lease(collection, document)`: a lease row with an expiry, taken in one transaction when absent or expired and deleted on exit. A holder that crashes stops blocking once the lease expires.
 - `blob_sink` and `scheduler_auth`: not supported locally; `blob_sink` raises and `scheduler_auth` refuses every token, so a misuse fails closed.
 - Stores stay synchronous like the current `CheckpointStore` protocol; if the parked async-checkpoint follow-up lands first, they wrap `sqlite3` in `asyncio.to_thread`.
@@ -178,7 +179,7 @@ How files appear:
 | `preflight.py` | Builds the preflight invocation, calls `sink.preflight_invocation`, maps the verdict. |
 | `rollout.py` | Pydantic models for rollout lines, and `rollout_invocations(lines) -> list[RolloutInvocation]`: one per `token_usage_record`, with the Responses request/response rebuilt from the items before it, tool calls renamed and files collected (two passes, below). |
 | `emit.py` | `Stop` / `SessionStart` sweep / `SessionEnd` hand-off: lock, read, build events, push, save the checkpoint. |
-| `state.py` | The codex-specific stores, declared here as protocols as the platform module prescribes and implemented on the local platform's SQLite database: `RolloutCheckpointStore` (per session: `path`, `emitted_through_offset`, `updated_at`; the shared `Checkpoint` is a timestamp watermark and documented as never a position, so the byte offset does not go there) and `FileRecordStore` (per session: attachment entries keyed by `turn_id`, pre-read entries keyed by `tool_use_id`). The session lock is the platform's `tick_lease("codex-sessions", <session_id>)`. |
+| `state.py` | The codex-specific stores, declared here as protocols as the platform module prescribes and implemented on the local platform's SQLite database: `FileRecordStore` (per session: attachment entries keyed by `turn_id`, pre-read entries keyed by `tool_use_id`). The session lock is the platform's `tick_lease("codex-sessions", <session_id>)`, and the emit watermark is the shared `checkpoint_store("codex-rollouts", <session_id>)`. |
 | `deploy/requirements.toml` | The managed hook block (below). |
 
 Install: MDM installs uv, then runs `uv tool install <wheel>` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows: `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), as an administrator, so the executable lands at the path the managed block names and users cannot modify it. The wheel is published with each release. MDM also installs the config and the token file.
@@ -230,12 +231,12 @@ Consequences to document: a time-window rule on `invoke_model` also blocks tool 
 `emit.run(transcript_path, session_id)`:
 
 1. Take the session lease (`tick_lease("codex-sessions", session_id).hold(5 min)`; if not held, exit: the holder will cover this turn or the next run will).
-2. Load the checkpoint `{session_id, path, emitted_through_offset}`. With none, write `{session_id, transcript_path, 0}` before doing anything else, so a session whose first push fails is still found by the sweep. If `path` no longer exists, look for `*-<session_id>*.jsonl` under `~/.codex/sessions/` and `~/.codex/archived_sessions/` and update `path`; if it is nowhere, leave the checkpoint for the 7-day expiry.
-3. Parse the rollout from byte 0 up to the last complete line. Input for a response needs the whole history, so the file is always read from the start; only responses whose `token_usage_record` sits past `emitted_through_offset` are emitted. Re-parsing grows with the session; this is accepted (a 10 MB rollout parses well inside the async hook's budget), and a cached history snapshot is a later optimisation if measurements call for it.
+2. Load the session's watermark, `Checkpoint(timestamp, id)`: the line `timestamp` and `response_id` of the last emitted `token_usage_record`. Use `transcript_path` if it exists; otherwise find `*-<session_id>*.jsonl` under `~/.codex/sessions/` and `~/.codex/archived_sessions/` (archiving moves the file); if it is nowhere, exit.
+3. Parse the rollout from byte 0 up to the last complete line. Input for a response needs the whole history, so the file is always read from the start. Emit the responses after the `token_usage_record` whose `response_id` equals the watermark's `id`; if no record has that id, those whose line `timestamp` is later than the watermark's. File order breaks ties, since `resp_…` ids are not ordered. An empty watermark emits the whole file. Re-parsing grows with the session; this is accepted (a 10 MB rollout parses well inside the async hook's budget), and a cached history snapshot is a later optimisation if measurements call for it.
 4. For each such `RolloutInvocation`, build the event (below), then `push_invocations` in batches.
-5. On success, save the checkpoint at the offset after the last emitted `token_usage_record` and delete the file records the emitted responses used. On failure, leave the checkpoint as it was: the next `Stop` or sweep retries.
+5. On success, save the watermark at the last emitted `token_usage_record` and delete the file records the emitted responses used. On failure, leave the checkpoint as it was: the next `Stop` or sweep retries.
 
-`Stop` (async) runs it for its own session. `SessionStart` (async) sweeps every checkpointed session whose rollout has grown past `emitted_through_offset` whose lease it can take; this is what pushes a session's last turn when its `Stop` push failed, since the desktop app ends sessions late and `SessionEnd` gets only 3 s. `SessionEnd` never pushes inline: it detaches `emit.run` as a background child (`start_new_session` on POSIX, `DETACHED_PROCESS` on Windows, payload in a temp file) and returns within the 3 s. Checkpoints, file records and expired leases older than 7 days are deleted by the sweep.
+`Stop` (async) runs it for its own session. `SessionStart` (async) sweeps the rollout files under `~/.codex/sessions/` and `~/.codex/archived_sessions/` modified in the last 7 days and after the state database's `created_at()`, and runs `emit.run` for each session whose lease it can take and whose file holds a `token_usage_record` past its watermark; this is what pushes a session's last turn when its `Stop` push failed, since the desktop app ends sessions late and `SessionEnd` gets only 3 s. `SessionEnd` never pushes inline: it detaches `emit.run` as a background child (`start_new_session` on POSIX, `DETACHED_PROCESS` on Windows, payload in a temp file) and returns within the 3 s. The `created_at()` bound keeps a fresh install from backfilling sessions from before it. Watermarks, file records and expired leases older than 7 days are deleted by the sweep.
 
 ### Rollout → `RolloutInvocation`
 
@@ -352,7 +353,7 @@ Non-managed hooks need the user's approval (recorded in `config.toml` as `[hooks
 | Attachment or file read by the tool missing, unreadable, over `max_file_bytes` | Entry sent without hashes (the server counts it unchecked); never a hook failure |
 | Rollout line that fails to parse | Skipped and counted on stderr; a truncated last line is left for the next run |
 | Push fails | Checkpoint not advanced; retried by the next `Stop` or `SessionStart` sweep |
-| Rollout moved or deleted | Relocated by `session_id` under `sessions/` and `archived_sessions/`; if absent, the checkpoint expires after 7 days |
+| Rollout moved or deleted | Found by `session_id` under `sessions/` and `archived_sessions/`; if absent, nothing is emitted and the watermark expires after 7 days |
 | Session lease held | Exit without work |
 
 The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hook as a nonblocking failure.
@@ -371,7 +372,7 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
   - MCP server listing: parsed from a captured `codex mcp list --json`, `env` never copied, and every failure mode leaving events otherwise unchanged;
   - verdict and fail-mode mapping;
   - rollout → invocations in both modes (tool calls renamed to `Bash` with the hook's id and `tool_input.command`; attachments on the first response of their turn; reads on the response after the output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; four parallel `exec_command` calls in one response; an interrupted turn dropping its unclosed response without losing its tool results);
-  - checkpoint, first-push failure found by the sweep, relocation to `archived_sessions/`, retry and lock contention;
+  - watermark: resume after a known `response_id`, fall back to the timestamp when that record is gone, empty watermark, first-push failure found by the sweep, relocation to `archived_sessions/`, sweep ignoring files older than `created_at()`, retry and lease contention;
   - CLI end to end through a subprocess with a stub server.
 - **Live:** before merge, run Codex with the managed block against a dev SlashID endpoint and a pilot `user_id`; check allow, deny by model rule, deny by tool rule, deny by a sensitive attachment and by a sensitive `sed` read, fail-closed with the server down, and that the events land with their `accessed_files`.
 
@@ -379,6 +380,6 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
 
 1. **Identity id space.** Does the configured `user-…` id (ChatGPT workspace user) match what the OpenAI connection syncs as `IdentifierFromSource`? If not, every preflight with a policy denies as `identity_absent`.
 2. **Tool calls beyond `exec_command` and `view_image`.** Capture MCP calls, `apply_patch`, web search, a failing command, parallel calls and one script-mode `exec` running several commands. For each: whether `PreToolUse` fires, its `tool_name` (the `mcp__payroll__read` example assumes the documented `mcp__<server>__<tool>`), and its `item_completed` type, to replace the raw-call fallback. Include a turn with reasoning to check the token math.
-3. **Compaction, resume and fork.** Capture their rollout shapes. A forked session copies history into a new rollout; if that includes old `token_usage_record`s, the checkpoint must also store emitted `response_id`s and skip them to avoid re-emitting.
+3. **Compaction, resume and fork.** Capture their rollout shapes. A forked session copies history into a new rollout; if that includes old `token_usage_record`s, the new session's empty watermark would re-emit them; the plan then skips copied records by `response_id` (a fork keeps its parent's ids) or by the fork's creation time.
 4. **Subagents.** Whether their tool hooks fire and which `session_id` / rollout they use.
 5. **Which mode is where.** The desktop app used function mode and `codex exec` used script mode; whether the CLI, the IDE extension and future versions switch between them is not known, which is why both are supported.
