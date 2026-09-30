@@ -197,7 +197,7 @@ The server normalizes this to `invoke_model`, one `use_attachment` per accessed 
 
 `UserPromptSubmit` lists everything new in the model's input since its last response (the last `token_usage_record` in the rollout), the same round rule the events and the other adapters use:
 
-- `accessed_files`: this prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`), plus the file records of the tool calls below.
+- `accessed_files`: this prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`), plus the file records of the tool calls below (`provenance: "tool_result"`).
 - `used_tools`: the tool calls whose outputs follow that record, built with `rollout.py` exactly as collection builds them (renamed to their logical tool, `tool_use_id`, `is_error` from the item's `exit_code`/`status`), each with its `resolve_tool` entry in `available_tools`.
 
 Both come from the rollout tail and are usually empty: a turn normally ends with a response that consumed every tool result. They are non-empty when the user interrupted a response before it consumed its tools' results, which the next prompt's first model call then sees. The prompt itself is not in the rollout yet when the hook fires.
