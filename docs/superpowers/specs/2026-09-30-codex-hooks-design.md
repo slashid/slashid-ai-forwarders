@@ -155,7 +155,7 @@ How files appear:
 | `cli.py` | `slashid-codex hook --config <path> --event <Name>`. Reads stdin (bounded), dispatches, prints Codex's JSON output, always exits 0. |
 | `hooks.py` | Pydantic models for the hook payloads above, one per event. |
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: parses the "Files mentioned by the user" section, only when the text starts with it (after leading blank lines), up to `## My request:`. Each `## ` line splits on the last `": "` followed by an absolute path (`/` or `X:\`), since names can contain `": "`. Used on the hook's `prompt` and on the rollout's user message. |
-| `reads.py` | `read_target(tool_name, tool_input) -> Path | None`: the file a tool call is about to read. `view_image` → `path`. `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'` command, split with `shlex`; anything with a pipe, `;`, `&&`, redirection, globbing or several paths → `None`. Relative paths resolve against the payload's `cwd`. |
+| `reads.py` | `read_target(tool_name, tool_input, workdir) -> Path | None`: the file a tool call is about to read. `view_image` → `path`. `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'` command, split with `shlex`; anything with a pipe, `;`, `&&`, redirection, globbing or several paths → `None`. Relative paths resolve against `workdir`, the tool call's own working directory: the hook's `tool_input` drops it, so the caller takes it from the call's `workdir` argument in the rollout (function mode: the call is written before `PreToolUse` fires, found by `tool_use_id`), falling back to the payload's `cwd` when there is none (script mode, call not found). |
 | `preflight.py` | Builds the preflight invocation, calls `sink.preflight_invocation`, maps the verdict. |
 | `rollout.py` | Pydantic models for rollout lines, and `rollout_invocations(lines) -> list[RolloutInvocation]`: one per `token_usage_record`, with the Responses request/response rebuilt from the items before it, tool calls renamed and files collected (two passes, below). |
 | `emit.py` | `Stop` / `SessionStart` sweep / `SessionEnd` hand-off: lock, read, build events, push, save the checkpoint. |
@@ -178,11 +178,18 @@ Both build a partial `AIInvocationObservedV1`:
 | `model` | `AIModel(id=model, provider="openai")` | same |
 | `parsed_as` | `codex-hook` | `codex-hook` |
 | `conversation_id` | `session_id` | `session_id` |
-| `accessed_files` | every attachment in `prompt`, `hash_local_file`, `provenance: "attachment"` | `hash_local_file(read_target(…))` if any, `provenance: "tool_result"` |
+| `accessed_files` | the round (below): this prompt's attachments, plus any unconsumed tool reads | the round (below): this call's read target plus its siblings' |
 | `available_tool_servers`, `available_tools` | — | `resolve_tool(tool_name)` |
 | `used_tools` | — | `[AIToolUse(tool_id, tool_use_id, is_error=False)]` |
 
 The server normalizes this to `invoke_model`, one `use_attachment` per accessed file, and for `PreToolUse` an `mcp_call{server, "tools/call", tool}` (e.g. `mcp__payroll__read` → `mcp_call{payroll, read}`, `Bash` → `mcp_call{builtin, Bash}`), and runs the sensitive-file check on the hashes. The server documents `used_tools` as tools that already ran; sending the pending call there before it runs is a deliberate reuse, since it is the only field `NormalizeAIInvocation` turns into `mcp_call`.
+
+`accessed_files` lists every file new in the model's input since its last response, the same rule the events and the other adapters use (the Anthropic hook sends its tail round). The last response is the last `token_usage_record` in the rollout before the hook's own item:
+
+- `UserPromptSubmit`: this prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`), plus the file records of tool calls whose outputs follow the last `token_usage_record`, which only happens when the user interrupted a response before it consumed them. The prompt itself is not in the rollout yet when the hook fires.
+- `PreToolUse`: this call's read target (`hash_local_file(read_target(…))`, `provenance: "tool_result"`), plus the file records of the other calls after that same `token_usage_record` boundary, i.e. the parallel calls the same response issued, which their own `PreToolUse` already checked and recorded. In script mode the rollout's calls do not carry the hook's ids, so only this call's target is sent.
+
+Records come from `state_dir` (below), so a file is hashed once, when it is first checked, and re-sent as the round grows. Each preflight is therefore the whole round the next model call will consume, and a deny on any of it blocks the current action.
 
 Client-side caps keep hashing inside the 10 s hook with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in `state_dir/<session_id>/files/turn-<turn_id>.json`, and `PreToolUse` stores a read target's entry in `…/files/call-<tool_use_id>.json`, so a file that changes between the check and the emit is reported as it was checked.
 
@@ -227,10 +234,10 @@ In the build pass:
 - A response that never gets a `token_usage_record` (the user interrupted it) is not emitted: without a `response_id` and usage there is no invocation to report. Its model-produced items (`reasoning`, assistant text) are dropped from the rebuilt history, so they neither land in the next response's output nor split the tool results before them from `_used_tools`. Tool outputs and reads written after the last closed response stay in the history, where the next closed response consumes them. The injected `<turn_aborted>` user message is kept as the user message it is.
 - A compaction record resets the running history to the compacted replacement (**unverified**: shape to be captured).
 
-Files, attributed to the response that consumed them:
+Files, attributed to the response that consumed them: an event's `accessed_files` lists every file new in that response's input since the previous response, the same round preflight checked:
 
 - **Attachments** belong to the first response after the user message that carries them. Entries come from the attachment record `UserPromptSubmit` saved for that `turn_id`. With no record (hook missed, state lost), they come from `parse_attachments` on the rollout's user message and `hash_local_file` at emit time; an `input_image` part is hashed from its decoded data instead, which equals the file. `provenance: "attachment"`, whether or not the model ever reads the file.
-- **Tool reads** belong to the first response after the call's output. `CommandExecution` with `parsed_cmd[].type == "read"`: name from `parsed_cmd`, path from `parsed_cmd[].path` resolved against the item's `cwd` (a `file://` URL, decoded). Hashes come from the `PreToolUse` record for that `tool_use_id`; with none, from `hash_local_file` at emit time. The file is hashed rather than `stdout` because a ranged `sed -n '1,240p'` returns only part of a long file and a partial hash never matches a sensitive-file hash; when the read covers the whole file the two agree. `ImageView`: name from `path`, hashes from the decoded `input_image` output. `provenance: "tool_result"`.
+- **Tool reads** belong to the first response after the call's output. `CommandExecution` with `parsed_cmd[].type == "read"`: name from `parsed_cmd`, path from `parsed_cmd[].path` resolved against the item's `cwd` (a `file://` URL, decoded). Hashes come from the `PreToolUse` record for that `tool_use_id`; with none, from `hash_local_file` at emit time. The file is hashed rather than `stdout` because a ranged `sed -n '1,240p'` returns only part of a long file and a partial hash never matches a sensitive-file hash; when the read covers the whole file the two agree. `ImageView`: name from `path` (a percent-encoded `file://` URL, decoded), hashes from the decoded `input_image` output. `provenance: "tool_result"`.
 - Any other command, even one naming a file (`pdftotext …`), contributes no file.
 
 The pair goes through `responses_to_normalized_invocation`, then `build_event_from_normalized` with:
@@ -333,7 +340,8 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
 - **bedrock:** `normalize_record` picks `openai-responses` and `openai-responses-stream`.
 - **codex:**
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
-  - `read_target` on the captured commands and on the refusals (pipes, `&&`, several paths);
+  - `read_target` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
+  - preflight rounds: parallel reads from one response each re-sending the earlier siblings' records; a prompt after an interrupted response carrying the unconsumed reads;
   - preflight invocation per event, checked against the server's join rule (every `used_tools` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
   - verdict and fail-mode mapping;
   - rollout → invocations in both modes (tool calls renamed to `Bash` with the hook's id and `tool_input.command`; attachments on the first response of their turn; reads on the response after the output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; four parallel `exec_command` calls in one response; an interrupted turn dropping its unclosed response without losing its tool results);
