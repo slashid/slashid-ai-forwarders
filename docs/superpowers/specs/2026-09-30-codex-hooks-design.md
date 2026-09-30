@@ -143,6 +143,15 @@ How files appear:
 - `NormalizeAIInvocation` emits one `mcp_call{server, "tools/call", tool}` per `requested_tool_uses` entry, through the same `available_tools` → `available_tool_servers` join as `used_tools`, with the same `tool_unresolved` error. `used_tools` keeps producing `mcp_call` too, so the Anthropic hook's tail round keeps working.
 - This change cannot wait for the batched schema sync: tool rules in Codex depend on it.
 
+**`platform/local/`** (new)
+
+- `LocalPlatform(state_dir: Path | None = None)`, registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`; `state_dir` defaults to `platformdirs.user_state_dir("slashid-ai-forwarder", "SlashID")` (Linux `~/.local/state/slashid-ai-forwarder`, macOS `~/Library/Application Support/slashid-ai-forwarder`, Windows `%LOCALAPPDATA%\SlashID\slashid-ai-forwarder`). Per user, since the hook runs as the user.
+- Concurrency: several hook processes open the database at once (parallel `PreToolUse`, an async `Stop` beside a `UserPromptSubmit`). Connections use WAL mode and a `busy_timeout`, and every read-modify-write is one `BEGIN IMMEDIATE` transaction.
+- `checkpoint_store(collection, document)`: the shared `CheckpointStore`, one row per `(collection, document)`. Codex does not use it (see below) but it keeps the platform complete.
+- `tick_lease(collection, document)`: a lease row with an expiry, taken in one transaction when absent or expired and deleted on exit. A holder that crashes stops blocking once the lease expires.
+- `blob_sink` and `scheduler_auth`: not supported locally; `blob_sink` raises and `scheduler_auth` refuses every token, so a misuse fails closed.
+- Stores stay synchronous like the current `CheckpointStore` protocol; if the parked async-checkpoint follow-up lands first, they wrap `sqlite3` in `asyncio.to_thread`.
+
 **`normalize/normalized/tools.py`**
 
 - `resolve_tool(raw_name) -> (AITool, AIToolServer)`: `build_tools_declared([(raw_name, None, None)])` for one tool, so it reuses `parse_tool_name` unchanged (`mcp__s__t` → server `s`; `s__t` → runtime server `s`; bare names → synthetic `builtin`). Every tool lands on a named server, which is what the server's `joinAIToolUse` needs (see the parked "tool resolution in preflight policy" follow-up). Codex declares tools by name only everywhere, so a tool's id is the same in preflight and in pushed events.
@@ -160,7 +169,7 @@ How files appear:
 
 | Module | Responsibility |
 |---|---|
-| `config.py` | `CodexConfig(BaseConfig)` loaded from a file passed as `--config` (TOML): `endpoint`, `push_token_file`, `user_id`, `fail_mode` (`deny` default), `preflight_timeout_seconds` (4.0), `state_dir`, `include_raw_content`, `max_file_bytes` (50 MiB), `codex_bin` (optional). Environment variables are not read, for config or transport: hooks inherit the user's environment. `endpoint` must be `https://` with no userinfo, query or fragment; the token must be at least 32 non-whitespace characters. |
+| `config.py` | `CodexConfig(BaseConfig)` loaded from a file passed as `--config` (TOML): `endpoint`, `push_token_file`, `user_id`, `fail_mode` (`deny` default), `preflight_timeout_seconds` (4.0), `state_dir` (optional; the local platform's `platformdirs` default otherwise), `include_raw_content`, `max_file_bytes` (50 MiB), `codex_bin` (optional). Environment variables are not read, for config or transport: hooks inherit the user's environment. `endpoint` must be `https://` with no userinfo, query or fragment; the token must be at least 32 non-whitespace characters. |
 | `http.py` | The one `httpx.AsyncClient` factory: `trust_env=False` (ignores `HTTPS_PROXY`, `SSL_CERT_FILE`, `.netrc`), `follow_redirects=False`, system CA store, explicit timeouts. Keeps codex-client's transport hardening. |
 | `cli.py` | `slashid-codex hook --config <path> --event <Name>`. Reads stdin (bounded), dispatches, prints Codex's JSON output, always exits 0. |
 | `hooks.py` | Pydantic models for the hook payloads above, one per event. |
@@ -169,7 +178,7 @@ How files appear:
 | `preflight.py` | Builds the preflight invocation, calls `sink.preflight_invocation`, maps the verdict. |
 | `rollout.py` | Pydantic models for rollout lines, and `rollout_invocations(lines) -> list[RolloutInvocation]`: one per `token_usage_record`, with the Responses request/response rebuilt from the items before it, tool calls renamed and files collected (two passes, below). |
 | `emit.py` | `Stop` / `SessionStart` sweep / `SessionEnd` hand-off: lock, read, build events, push, save the checkpoint. |
-| `state.py` | Per-session checkpoint, lock and file records (attachments by `turn_id`, pre-read hashes by `tool_use_id`) under `state_dir`. |
+| `state.py` | The codex-specific stores, declared here as protocols as the platform module prescribes and implemented on the local platform's SQLite database: `RolloutCheckpointStore` (per session: `path`, `emitted_through_offset`, `updated_at`; the shared `Checkpoint` is a timestamp watermark and documented as never a position, so the byte offset does not go there) and `FileRecordStore` (per session: attachment entries keyed by `turn_id`, pre-read entries keyed by `tool_use_id`). The session lock is the platform's `tick_lease("codex-sessions", <session_id>)`. |
 | `deploy/requirements.toml` | The managed hook block (below). |
 
 Install: MDM installs uv, then runs `uv tool install <wheel>` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows: `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), as an administrator, so the executable lands at the path the managed block names and users cannot modify it. The wheel is published with each release. MDM also installs the config and the token file.
@@ -204,7 +213,7 @@ Both come from the rollout tail and are usually empty: a turn normally ends with
 
 `PreToolUse` checks only the file its own call is about to read. Parallel reads from one response are each checked by their own `PreToolUse`.
 
-Client-side caps keep hashing inside the 10 s hook with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in `state_dir/<session_id>/files/turn-<turn_id>.json`, and `PreToolUse` stores a read target's entry in `…/files/call-<tool_use_id>.json`, so a file that changes between the check and the emit is reported as it was checked.
+Client-side caps keep hashing inside the 10 s hook with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in the `FileRecordStore` under its `turn_id`, and `PreToolUse` stores a read target's entry under its `tool_use_id`, so a file that changes between the check and the emit is reported as it was checked.
 
 Nothing else leaves the machine: no prompt text, tool arguments, file content, `cwd` or transcript. File names and hashes do, which codex-client never sent; the README must say so.
 
@@ -220,13 +229,13 @@ Consequences to document: a time-window rule on `invoke_model` also blocks tool 
 
 `emit.run(transcript_path, session_id)`:
 
-1. Take the session lock (`state_dir/<session_id>/lock`, non-blocking; if held, exit: the holder will cover this turn or the next run will).
+1. Take the session lease (`tick_lease("codex-sessions", session_id).hold(5 min)`; if not held, exit: the holder will cover this turn or the next run will).
 2. Load the checkpoint `{session_id, path, emitted_through_offset}`. With none, write `{session_id, transcript_path, 0}` before doing anything else, so a session whose first push fails is still found by the sweep. If `path` no longer exists, look for `*-<session_id>*.jsonl` under `~/.codex/sessions/` and `~/.codex/archived_sessions/` and update `path`; if it is nowhere, leave the checkpoint for the 7-day expiry.
 3. Parse the rollout from byte 0 up to the last complete line. Input for a response needs the whole history, so the file is always read from the start; only responses whose `token_usage_record` sits past `emitted_through_offset` are emitted. Re-parsing grows with the session; this is accepted (a 10 MB rollout parses well inside the async hook's budget), and a cached history snapshot is a later optimisation if measurements call for it.
 4. For each such `RolloutInvocation`, build the event (below), then `push_invocations` in batches.
 5. On success, save the checkpoint at the offset after the last emitted `token_usage_record` and delete the file records the emitted responses used. On failure, leave the checkpoint as it was: the next `Stop` or sweep retries.
 
-`Stop` (async) runs it for its own session. `SessionStart` (async) sweeps every checkpointed session whose rollout has grown past `emitted_through_offset` and is not locked; this is what pushes a session's last turn when its `Stop` push failed, since the desktop app ends sessions late and `SessionEnd` gets only 3 s. `SessionEnd` never pushes inline: it detaches `emit.run` as a background child (`start_new_session` on POSIX, `DETACHED_PROCESS` on Windows, payload in a temp file) and returns within the 3 s. Checkpoints and attachment records older than 7 days are deleted by the sweep.
+`Stop` (async) runs it for its own session. `SessionStart` (async) sweeps every checkpointed session whose rollout has grown past `emitted_through_offset` whose lease it can take; this is what pushes a session's last turn when its `Stop` push failed, since the desktop app ends sessions late and `SessionEnd` gets only 3 s. `SessionEnd` never pushes inline: it detaches `emit.run` as a background child (`start_new_session` on POSIX, `DETACHED_PROCESS` on Windows, payload in a temp file) and returns within the 3 s. Checkpoints, file records and expired leases older than 7 days are deleted by the sweep.
 
 ### Rollout → `RolloutInvocation`
 
@@ -344,7 +353,7 @@ Non-managed hooks need the user's approval (recorded in `config.toml` as `[hooks
 | Rollout line that fails to parse | Skipped and counted on stderr; a truncated last line is left for the next run |
 | Push fails | Checkpoint not advanced; retried by the next `Stop` or `SessionStart` sweep |
 | Rollout moved or deleted | Relocated by `session_id` under `sessions/` and `archived_sessions/`; if absent, the checkpoint expires after 7 days |
-| Lock held | Exit without work |
+| Session lease held | Exit without work |
 
 The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hook as a nonblocking failure.
 
@@ -357,6 +366,7 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
   - `read_target` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
   - preflight rounds: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed tool results in `used_tools` and their reads in `accessed_files`; a normal prompt carrying neither;
+  - local platform: two processes racing for one lease (one wins), an expired lease taken over, WAL concurrency across processes, `platformdirs` default honoured and overridable;
   - preflight invocation per event, checked against the server's join rule (every `requested_tool_uses` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
   - MCP server listing: parsed from a captured `codex mcp list --json`, `env` never copied, and every failure mode leaving events otherwise unchanged;
   - verdict and fail-mode mapping;
