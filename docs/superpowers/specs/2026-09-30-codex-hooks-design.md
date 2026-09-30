@@ -9,13 +9,14 @@
 
 ## Overview
 
-A CLI, `slashid-codex`, that Codex runs as a managed hook on every endpoint. It does two jobs.
+`slashid-codex`, installed on every endpoint. Codex runs it as a managed hook; each hook is a thin client that hands the payload to a per-user background daemon, starting it on first use. The daemon keeps its HTTPS connection and parsed sessions warm, does the work, and exits after a period of inactivity. It does two jobs.
 
 ```
- Codex ──UserPromptSubmit──► slashid-codex ──hash attachments, preflight──► SlashID ──► allow / block
-       ──PreToolUse───────►       "        ──hash simple reads, preflight──►    "
-       ──Stop (async)─────► slashid-codex ──read rollout past watermark─► push AIInvocationObservedV1
-       ──SessionStart/End─►       "        ──sweep / hand off─────────►    "
+ Codex ──hook──► slashid-codex hook ──HTTP, 127.0.0.1──► slashid-codex daemon
+                  (thin client)                              │
+   UserPromptSubmit / PreToolUse  ◄── verdict ───────────────┤ hash files, preflight ──► SlashID
+   Stop / SessionEnd / SessionStart ◄── ack at once ─────────┤ read rollout past watermark,
+                                                              │ push AIInvocationObservedV1 ──► SlashID
 ```
 
 1. **Enforcement.** `UserPromptSubmit` and `PreToolUse` become preflight requests, carrying the hashes of any file the user attached or a tool is about to read. The server's `deny_reasons` become Codex's block decision, so a sensitive file is stopped before the model sees it.
@@ -145,13 +146,12 @@ How files appear:
 
 **`platform/local/`** (new)
 
-- `LocalPlatform(state_dir: Path | None = None)`, registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`; `state_dir` defaults to `platformdirs.user_state_dir("slashid-ai-forwarder", "SlashID")` (Linux `~/.local/state/slashid-ai-forwarder`, macOS `~/Library/Application Support/slashid-ai-forwarder`, Windows `%LOCALAPPDATA%\SlashID\slashid-ai-forwarder`). Per user, since the hook runs as the user.
-- Concurrency: several hook processes open the database at once (parallel `PreToolUse`, an async `Stop` beside a `UserPromptSubmit`). Connections use WAL mode and a `busy_timeout`, and every read-modify-write is one `BEGIN IMMEDIATE` transaction.
+- `LocalPlatform(state_dir: Path | None = None)` (`None` in production; tests pass a directory), registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`; `state_dir` defaults to `platformdirs.user_state_dir("slashid-ai-forwarder", "SlashID")` (Linux `~/.local/state/slashid-ai-forwarder`, macOS `~/Library/Application Support/slashid-ai-forwarder`, Windows `%LOCALAPPDATA%\SlashID\slashid-ai-forwarder`). Per user, since the hook runs as the user.
+- Concurrency: the daemon is the usual writer, but a hook running its in-process fallback (below) can write at the same time. Connections use WAL mode and a `busy_timeout`, and every read-modify-write is one `BEGIN IMMEDIATE` transaction.
 - `checkpoint_store(collection, document)`: the shared `CheckpointStore`, one row per `(collection, document)`. Codex keeps one watermark per session in it (below).
 - `created_at()`: when the state database was created, i.e. when the forwarder first ran on this machine for this user.
-- `tick_lease(collection, document)`: a lease row with an expiry, taken in one transaction when absent or expired and deleted on exit. Implemented so the `Platform` protocol is complete; Codex does not take one (see Collection).
 - `checkpoint_store(...).save` only moves forward: in one `BEGIN IMMEDIATE` transaction it writes the new `Checkpoint` only when its `timestamp` is later than the stored one (or nothing is stored), so a slower run cannot move a watermark backwards.
-- `blob_sink` and `scheduler_auth`: not supported locally; `blob_sink` raises and `scheduler_auth` refuses every token, so a misuse fails closed.
+- `tick_lease`, `blob_sink` and `scheduler_auth`: not supported locally; `tick_lease` and `blob_sink` raise and `scheduler_auth` refuses every token, so a misuse fails closed.
 - Stores stay synchronous like the current `CheckpointStore` protocol; if the parked async-checkpoint follow-up lands first, they wrap `sqlite3` in `asyncio.to_thread`.
 
 **`normalize/normalized/tools.py`**
@@ -171,23 +171,71 @@ How files appear:
 
 | Module | Responsibility |
 |---|---|
-| `config.py` | `CodexConfig(BaseConfig)` loaded from a file passed as `--config` (TOML): `endpoint`, `push_token_file`, `user_id`, `fail_mode` (`deny` default), `preflight_timeout_seconds` (4.0), `state_dir` (optional; the local platform's `platformdirs` default otherwise), `include_raw_content`, `max_file_bytes` (50 MiB), `codex_bin` (optional). Environment variables are not read, for config or transport: hooks inherit the user's environment. `endpoint` must be `https://` with no userinfo, query or fragment; the token must be at least 32 non-whitespace characters. |
-| `http.py` | The one `httpx.AsyncClient` factory: `trust_env=False` (ignores `HTTPS_PROXY`, `SSL_CERT_FILE`, `.netrc`), `follow_redirects=False`, system CA store, explicit timeouts. Keeps codex-client's transport hardening. |
-| `cli.py` | `slashid-codex hook --config <path> --event <Name>`. Reads stdin (bounded), dispatches, prints Codex's JSON output, always exits 0. |
+| `config.py` | `CodexConfig(BaseConfig)` loaded from a file passed as `--config` (TOML): `endpoint`, `push_token_file`, `user_id`, `fail_mode` (`deny` default), `preflight_timeout_seconds` (4.0), `include_raw_content`, `max_file_bytes` (50 MiB), `codex_bin` (optional), `daemon_idle_seconds` (600). Environment variables are not read, for config or transport: hooks inherit the user's environment. `endpoint` must be `https://` with no userinfo, query or fragment; the token must be at least 32 non-whitespace characters. |
+| `http.py` | The one outbound `httpx.AsyncClient` factory (to SlashID): `trust_env=False` (ignores `HTTPS_PROXY`, `SSL_CERT_FILE`, `.netrc`), `follow_redirects=False`, system CA store, explicit timeouts. Keeps codex-client's transport hardening. |
+| `cli.py` | `slashid-codex hook --config <path> --event <Name>`: the thin client (see Daemon). Imports only the standard library on its fast path, reads stdin (bounded), sends it to the daemon, prints Codex's JSON output, always exits 0. `slashid-codex daemon --config <path>`: runs the daemon. |
+| `handler.py` | `handle(event, payload, config) -> output`: validation and all work for one hook event, shared by the daemon and the fallback. |
+| `daemon.py` | The FastAPI app the daemon serves on `127.0.0.1`: the routes, the guards, the collection worker thread, the watchdog and the idle timer. |
+| `discovery.py` | Finding, authenticating or starting the daemon: the single-instance lock, `daemon.json`, the `/ping` handshake, the detached spawn, the spawn backoff and stale-file recovery. The client's fast path imports only this, the standard library and `platformdirs` (pure Python, a few milliseconds). |
 | `hooks.py` | Pydantic models for the hook payloads above, one per event. |
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: parses the "Files mentioned by the user" section, only when the text starts with it (after leading blank lines), up to `## My request:`. Each `## ` line splits on the last `": "` followed by an absolute path (`/` or `X:\`), since names can contain `": "`. Used on the hook's `prompt` and on the rollout's user message. |
 | `reads.py` | `get_file_read_by_tool(tool_name, tool_input, workdir) -> Path | None`: the file a tool call is about to read. `view_image` → `path`. `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'` command, split with `shlex`; anything with a pipe, `;`, `&&`, redirection, globbing or several paths → `None`. Relative paths resolve against `workdir`, the tool call's own working directory: the hook's `tool_input` drops it, so the caller takes it from the call's `workdir` argument in the rollout (function mode: the call is written before `PreToolUse` fires, found by `tool_use_id`), falling back to the payload's `cwd` when there is none (script mode, call not found). |
 | `preflight.py` | Builds the preflight invocation, calls `sink.preflight_invocation`, maps the verdict. |
 | `rollout.py` | Pydantic models for rollout lines, and `rollout_invocations(lines) -> list[RolloutInvocation]`: one per `token_usage_record`, with the Responses request/response rebuilt from the items before it, tool calls renamed and files collected (two passes, below). |
-| `emit.py` | `Stop` / `SessionStart` sweep / `SessionEnd` hand-off: read, build events, push, save the watermark. |
+| `emit.py` | `emit.run(session)`: read the rollout, build events, push, save the watermark after each batch; and the sweep. Runs on the daemon's worker thread, or once, bounded, in the fallback. |
 | `state.py` | The codex-specific stores, declared here as protocols as the platform module prescribes and implemented on the local platform's SQLite database: `FileRecordStore` (per session: attachment entries keyed by `turn_id`, pre-read entries keyed by `tool_use_id`). The emit watermark is the shared `checkpoint_store("codex-rollouts", <session_id>)`. |
 | `deploy/requirements.toml` | The managed hook block (below). |
 
-Install: MDM installs uv, then runs `uv tool install <wheel>` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows: `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), as an administrator, so the executable lands at the path the managed block names and users cannot modify it. The wheel is published with each release. MDM also installs the config and the token file.
+Install: MDM installs uv, then runs `uv tool install <wheel>` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows: `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), as an administrator, so the executable lands at the path the managed block names and users cannot modify it. The wheel is published with each release. MDM also installs the config and the token file. Before upgrading, the install step stops running daemons (every process whose executable is under the tool directory): Windows cannot replace a running `.exe`, and an old daemon would otherwise keep serving until its idle exit. Stopping them loses nothing; the next hook starts the new version.
 
 ## Data flow
 
+### Daemon
+
+**Why.** A hook that does the work itself pays interpreter start, imports and a fresh TLS handshake on every call, several hundred milliseconds on every `PreToolUse`, and has to finish inside Codex's timeouts (3 s for `SessionEnd`). A warm daemon answers preflight in one round-trip over a kept-alive connection, and collection takes as long as it needs.
+
+**One handler, two hosts.** `handle(event, payload: bytes, config) -> output` does all validation and work. The daemon calls it for requests; the client calls it directly in the fallback. The client sends the raw stdin bytes and the event name and never parses the payload itself.
+
+**Transport.** HTTP on `127.0.0.1`, port `0` (chosen by the OS), served by uvicorn. Loopback TCP works the same on Linux, macOS and Windows, where asyncio has no Unix-socket support; the protocol is Pydantic models on FastAPI routes.
+
+**Files.** `state_dir` is always the per-user `platformdirs.user_state_dir(...)`, never set by the MDM config (a shared path would put every user's daemon, lock and database in one place); `--state-dir` exists for tests only. On POSIX the directory is `0700` and files are created `0600` through `os.open(..., O_CREAT | O_EXCL, 0o600)` then renamed into place, never chmodded afterwards; on Windows it sits under `%LOCALAPPDATA%`, whose inherited ACL grants only the user, SYSTEM and administrators.
+
+**Discovery and single instance.**
+
+1. The daemon takes an exclusive lock on `<state_dir>/daemon.lock` (`fcntl.flock` / `msvcrt.locking`) for its whole life; a second daemon that cannot take it exits.
+2. It binds `127.0.0.1:0`, generates a 32-byte random secret, and atomically writes `<state_dir>/daemon.json`: `{port, secret, pid, version, config_digest}`, where `config_digest` is the SHA-256 of the config file's and the token file's bytes.
+3. The client reads `daemon.json` and **authenticates the daemon before sending anything**: `GET /ping` with a random nonce; the daemon must answer `HMAC-SHA256(secret, nonce)`. A process that took over the port of a dead daemon cannot, so it never sees the secret or the payload. The client then sends the event on the same connection with `Authorization: Bearer <secret>`.
+4. If `daemon.json` is missing, the connection is refused or `/ping` fails, the client spawns `slashid-codex daemon` and polls `daemon.json` for up to 1.5 s. The spawn never inherits the hook's pipes (`stdin=DEVNULL`, output to `<state_dir>/daemon.log`, `close_fds=True`), or Codex would wait for them to close. POSIX: `start_new_session=True`, so closing a terminal running the CLI does not SIGHUP it. Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, retried without breakaway if the job forbids it.
+5. If a spawned daemon does not come up, the client writes `<state_dir>/spawn-failed` and skips spawning for 5 minutes, going straight to the fallback, so a daemon that can never start (bad config, blocked by endpoint security) does not cost every hook 1.5 s.
+6. If `version` or `config_digest` differ from the client's, the client sends `POST /shutdown` and spawns a new daemon, so an MDM upgrade, a config edit or a token rotation takes effect on the next hook.
+7. `daemon.log` rotates at 1 MB, three files.
+
+**Guards.** A loopback port, unlike a `0600` socket file, is reachable by every local user and by web pages in a browser. Every request other than `/ping` must carry `Authorization: Bearer <secret>`, compared in constant time; every request must have a `Host` of exactly `127.0.0.1:<port>` (defeats DNS rebinding) and no `Origin` header (rejects browser requests). Anything else gets 401/403 with no body. The daemon binds only `127.0.0.1`.
+
+**Routes.**
+
+| Route | Answer |
+|---|---|
+| `GET /ping?nonce=` | `HMAC-SHA256(secret, nonce)`: proves the daemon to the client |
+| `POST /hooks/UserPromptSubmit`, `POST /hooks/PreToolUse` | The verdict, synchronously: Codex's JSON output |
+| `POST /hooks/Stop`, `/hooks/SessionEnd`, `/hooks/SessionStart` | `{}` at once; the work is queued |
+| `POST /shutdown` | Stop accepting, flush for at most 2 s, exit |
+
+**Keeping preflight responsive.** Preflight runs on the event loop and its blocking parts (SQLite, hashing, reading the rollout tail) in `asyncio.to_thread`. Collection and the sweep run on one separate worker thread, so a long parse or a slow push never delays a verdict. A watchdog thread checks a heartbeat the event loop updates every second and calls `os._exit` if it is more than 10 s stale, so a daemon that hangs does not keep its lock; the next hook finds it gone and spawns a new one. Before a verdict, preflight appends any new rollout lines to the session's cached history, so the `workdir` lookup and the round see the call that triggered the hook.
+
+**Lifetime.** The idle timer counts hook requests only. After `daemon_idle_seconds` without one, the daemon stops accepting, flushes queued collection for at most 10 s, deletes `daemon.json`, releases the lock, and exits. Pushes still failing are abandoned; the watermark and file records are in SQLite, so the next sweep picks them up. A crash or kill loses only caches. On Linux (measured), a daemon spawned from a hook is adopted by `systemd --user` and keeps running after the desktop app quits: systemd keeps the app's scope alive while it has processes. It ends at logout, like any user process.
+
+**Fallback.** The client's whole budget is 9 s, inside the 10 s hook timeout.
+
+- Daemon unreachable, not startable within 1.5 s, or in the spawn backoff: the client runs `handle` in-process. Preflight gets the remaining budget minus a margin as its deadline; if it does not finish in time, `fail_mode`. `Stop` and `SessionEnd` run one collection attempt bounded by their 5 s and 3 s timeouts; the watermark is saved after each pushed batch, so partial progress sticks, and the next sweep does the rest.
+- The daemon accepted a preflight and the connection breaks before a verdict: preflight has no side effects, so the client retries in-process if budget remains, `fail_mode` otherwise.
+- The daemon accepted a preflight and is still silent at the deadline: `fail_mode`.
+- The daemon never caches file records: it reads them from SQLite when it emits, so records the fallback wrote are seen.
+- The fallback's cold-start cost (imports, TLS handshake, rollout read) is measured in the plan's first task against this budget.
+
 ### Preflight: `UserPromptSubmit` and `PreToolUse`
+
+`handle` builds the request, in the daemon or in the client's fallback. A connection-level error talking to SlashID (a kept-alive connection that died while the machine slept) is retried once; preflight has no side effects.
 
 Both build a partial `AIInvocationObservedV1`:
 
@@ -215,7 +263,7 @@ Both come from the rollout tail and are usually empty: a turn normally ends with
 
 `PreToolUse` checks only the file its own call is about to read. Parallel reads from one response are each checked by their own `PreToolUse`.
 
-Client-side caps keep hashing inside the 10 s hook with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in the `FileRecordStore` under its `turn_id`, and `PreToolUse` stores the entry for the file it reads under its `tool_use_id`, so a file that changes between the check and the emit is reported as it was checked.
+Caps keep hashing inside the client's 9 s budget with the 4 s preflight after it: at most 50 files and 200 MiB hashed per request, each file at most `max_file_bytes`. Files beyond a cap are sent without hashes (unchecked). The hashes taken here are what collection reports: `UserPromptSubmit` stores its entries in the `FileRecordStore` under its `turn_id`, and `PreToolUse` stores the entry for the file it reads under its `tool_use_id`, so a file that changes between the check and the emit is reported as it was checked.
 
 Nothing else leaves the machine: no prompt text, tool arguments, file content, `cwd` or transcript. File names and hashes do, which codex-client never sent; the README must say so.
 
@@ -225,20 +273,20 @@ Verdict:
 - non-empty → `{"decision":"block","reason": <reasons joined by a space>}`. The same shape blocks both events; `continue:false` is never used (Codex treats it as a nonblocking failure on `PreToolUse`).
 - `PreflightError`, config or token errors, invalid stdin, anything else → `fail_mode`. `deny` prints a block with a fixed reason; `allow` prints `{}`. The cause goes to stderr without payload content.
 
-Consequences to document: a time-window rule on `invoke_model` also blocks tool calls in a turn already running when the window closes, which codex-client did not do. Hooking every tool (matcher `.*`) adds one preflight round-trip per tool call; deployments can narrow the matcher, at the cost of the read checks. Hashing is bounded by `max_file_bytes`; a large attachment costs the read of up to 50 MiB inside the 10 s hook budget.
+Consequences to document: a time-window rule on `invoke_model` also blocks tool calls in a turn already running when the window closes, which codex-client did not do. Hooking every tool (matcher `.*`) adds one preflight round-trip per tool call, over the daemon's warm connection; deployments can narrow the matcher, at the cost of the read checks. Hashing is bounded by `max_file_bytes`; a large attachment costs the read of up to 50 MiB inside the 10 s hook budget.
 
 ### Collection: `Stop`, `SessionStart`, `SessionEnd`
 
-`emit.run(transcript_path, session_id)`:
+The daemon's worker thread runs one `emit.run` at a time, per queued session, retrying a failed push with backoff until the daemon's idle exit. `emit.run(transcript_path, session_id)`:
 
 1. Load the session's watermark, `Checkpoint(timestamp, id)`: the line `timestamp` and `response_id` of the last emitted `token_usage_record`. Use `transcript_path` if it exists; otherwise find `*-<session_id>*.jsonl` under `~/.codex/sessions/` and `~/.codex/archived_sessions/` (archiving moves the file); if it is nowhere, exit.
-2. Parse the rollout from byte 0 up to the last complete line. Input for a response needs the whole history, so the file is always read from the start. Emit the responses after the `token_usage_record` whose `response_id` equals the watermark's `id`; if no record has that id, those whose line `timestamp` is later than the watermark's. File order breaks ties, since `resp_…` ids are not ordered. An empty watermark emits the whole file. Re-parsing grows with the session; this is accepted (a 10 MB rollout parses well inside the async hook's budget), a cached history snapshot is a later optimisation if measurements call for it, and a follow-up to make `input` configurable as "only what is new since the last response" (for every source) would let collection checkpoint a byte offset and read only new lines.
+2. Parse the rollout from byte 0 up to the last complete line. Input for a response needs the whole history, so the file is always read from the start. Emit the responses after the `token_usage_record` whose `response_id` equals the watermark's `id`; if no record has that id, those whose line `timestamp` is later than the watermark's. File order breaks ties, since `resp_…` ids are not ordered. An empty watermark emits the whole file. Re-parsing grows with the session; the daemon keeps each active session's parsed history in memory and parses only lines appended since, re-parsing from byte 0 when the file shrank, was replaced or is new to it, and a follow-up to make `input` configurable as "only what is new since the last response" (for every source) would let collection checkpoint a byte offset and read only new lines.
 3. For each such `RolloutInvocation`, build the event (below), then `push_invocations` in batches.
-4. On success, save the watermark at the last emitted `token_usage_record`. On failure, leave it as it was: the next `Stop` or sweep retries. File records are not deleted here; the sweep expires them by age.
+4. After each successful batch, save the watermark at the last `token_usage_record` in it. On failure, leave it as it was: the daemon retries, and after it exits the next sweep does. File records are not deleted here; the sweep expires them by age.
 
-Runs for one session can overlap (a slow async `Stop` beside the next turn's, the sweep, a detached `SessionEnd`), and nothing serializes them. Two overlapping runs may push the same responses; the server deduplicates AI invocations on `(org_id, connection_id, request_id)` (`ai_invocations_processor.go`), and `request_id` is the `response_id`, so the second copy is dropped. The forward-only save keeps the watermark from regressing, and age-only expiry keeps one run from deleting the file records another is still using.
+The daemon serializes runs for a session, but a push can still repeat: a retry after a push whose response was lost, or a daemon killed between pushing and saving. The server deduplicates AI invocations on `(org_id, connection_id, request_id)` (`ai_invocations_processor.go`), and `request_id` is the `response_id`, so the second copy is dropped. The forward-only save keeps the watermark from regressing, and age-only expiry keeps file records available until every response that needs them is out.
 
-`Stop` (async) runs it for its own session. `SessionStart` (async) sweeps the rollout files under `~/.codex/sessions/` and `~/.codex/archived_sessions/` modified in the last 7 days and after the state database's `created_at()`, and runs `emit.run` for each session whose file holds a `token_usage_record` past its watermark; this is what pushes a session's last turn when its `Stop` push failed, since the desktop app ends sessions late and `SessionEnd` gets only 3 s. `SessionEnd` never pushes inline: it detaches `emit.run` as a background child (`start_new_session` on POSIX, `DETACHED_PROCESS` on Windows, payload in a temp file) and returns within the 3 s. The `created_at()` bound keeps a fresh install from backfilling sessions from before it. Watermarks and file records older than 7 days are deleted by the sweep.
+`Stop` and `SessionEnd` queue their own session. The sweep runs when the daemon starts and on every `SessionStart`: it scans the rollout files under `~/.codex/sessions/` and `~/.codex/archived_sessions/` modified in the last 7 days and after the state database's `created_at()`, skips files not modified since their watermark's `timestamp`, and queues each other session whose file holds a `token_usage_record` past its watermark. This is what pushes a session's last turn when the daemon exited or the machine slept before its push succeeded. The `created_at()` bound keeps a fresh install from backfilling sessions from before it. Watermarks and file records older than 7 days are deleted by the sweep.
 
 ### Rollout → `RolloutInvocation`
 
@@ -316,15 +364,13 @@ timeout = 10
 [[hooks.Stop.hooks]]
 type = "command"
 command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event Stop"
-async = true
-timeout = 120
+timeout = 5
 
 [[hooks.SessionStart]]
 [[hooks.SessionStart.hooks]]
 type = "command"
 command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event SessionStart"
-async = true
-timeout = 120
+timeout = 5
 
 [[hooks.SessionEnd]]
 [[hooks.SessionEnd.hooks]]
@@ -335,13 +381,14 @@ timeout = 3
 
 `allow_managed_hooks_only` sits under `[hooks]` as the documentation shows; codex-client puts it at the top level, which may be ignored (**unverified** either way; the plan tests it with a local `/etc/codex/requirements.toml`). Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event <Name>'`.
 
-Non-managed hooks need the user's approval (recorded in `config.toml` as `[hooks.state."<file>:<event>:<group>:<index>"]`); managed hooks skip it. `async = true` is documented but **unverified** on this build. If Codex ignores it, `Stop` would hold the end of every turn for up to 120 s. The first plan task checks it; if unsupported, `Stop` and `SessionStart` get `timeout = 5` and detach the same way `SessionEnd` does.
+Non-managed hooks need the user's approval (recorded in `config.toml` as `[hooks.state."<file>:<event>:<group>:<index>"]`); managed hooks skip it. `Stop`, `SessionStart` and `SessionEnd` only hand work to the daemon and return in milliseconds, so none needs `async = true`, and `SessionEnd`'s 3 s clamp is enough.
 
 ## Security
 
 - **Identity is claimed, not proven.** The push token is per OpenAI connection and readable by the user the hook runs as, so a user holding it can send any `user_id`, in preflight and in pushed events. This matches codex-client's stated posture ("managed client guardrails, not provider-signed attestations") but is weaker than its server-derived identity. Follow-up: per-user tokens that the server binds to a `user_id`.
 - **The attachment section is prompt text.** A user can type a fake "Files mentioned by the user" section; the hook then hashes files that user can already read, and the server answers whether they are tagged sensitive. The server already accepts this membership-oracle risk, bounded by the push token and counted per organization.
 - The config and token file are MDM-owned and not user-writable; the token never appears in hook arguments.
+- **The daemon's port is reachable by every local user and by browsers.** The per-start secret in a user-only file, the exact `Host` check and the `Origin` rejection keep other users and web pages from driving it. In the other direction, the `/ping` HMAC handshake keeps a process squatting a dead daemon's port from receiving the secret or any payload. The daemon runs as the user and holds nothing the user's own hook could not read.
 - Deny reasons are untrusted server text echoed to the user; they are passed through verbatim, never interpreted.
 - Pushed content follows `include_raw_content` (off by default: hashes, mime and length only). File names and hashes are always sent; file content never is.
 
@@ -350,15 +397,22 @@ Non-managed hooks need the user's approval (recorded in `config.toml` as `[hooks
 | Failure | Behavior |
 |---|---|
 | Preflight unreachable, non-200, bad body, over budget | `fail_mode` (`deny` default) |
-| Bad config or token file | Preflight: `fail_mode`. Collection: exit, nothing saved |
-| Invalid hook stdin | Preflight: `fail_mode`. Collection: exit |
+| Daemon unreachable, not startable within 1.5 s, or in spawn backoff | `handle` in-process: preflight within the remaining budget, one bounded collection attempt |
+| Daemon hung (loop blocked) | Its watchdog exits it within 10 s; meanwhile preflights reaching it get `fail_mode` at the deadline |
+| Connection to the daemon breaks mid-preflight | Retried in-process if budget remains, else `fail_mode` |
+| Stale `daemon.json`, port taken by another process | `/ping` fails the HMAC check; the client spawns a new daemon and sends nothing to the port |
+| Daemon accepted a preflight but no verdict by the client's deadline | `fail_mode` |
+| Daemon version or `config_digest` differs from the client's | Old daemon told to shut down (2 s flush); a new one is spawned |
+| Stale `daemon.json` (dead daemon) | Connection refused; the client spawns a new daemon, which takes the lock and rewrites the file |
+| Bad config or token file | The daemon logs it and exits at start; the client records a spawn failure (5-minute backoff) and runs the fallback, where preflight hits the same error and applies `fail_mode` and collection does nothing |
+| Invalid hook stdin | `handle` rejects it: preflight applies `fail_mode`, collection events are ignored |
 | Attachment or file read by the tool missing, unreadable, over `max_file_bytes` | Entry sent without hashes (the server counts it unchecked); never a hook failure |
-| Rollout line that fails to parse | Skipped and counted on stderr; a truncated last line is left for the next run |
-| Push fails | Checkpoint not advanced; retried by the next `Stop` or `SessionStart` sweep |
+| Rollout line that fails to parse | Skipped and counted in `daemon.log`; a truncated last line is left for the next run |
+| Push fails | Watermark not advanced; retried with backoff by the daemon, then by the next sweep |
 | Rollout moved or deleted | Found by `session_id` under `sessions/` and `archived_sessions/`; if absent, nothing is emitted and the watermark expires after 7 days |
-| Overlapping runs for one session | Both proceed; duplicate pushes are dropped by the server's `request_id` dedup; the watermark only moves forward |
+| A push repeated (retry after a lost response, daemon killed before saving) | Dropped by the server's `request_id` dedup; the watermark only moves forward |
 
-The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hook as a nonblocking failure.
+The hook client always exits 0 and prints valid JSON, so Codex never sees a crashed hook as a nonblocking failure.
 
 ## Testing
 
@@ -369,14 +423,17 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
   - `parse_attachments` on the captured prompt (spaces, non-ASCII, image marker, no section);
   - `get_file_read_by_tool` on the captured commands and on the refusals (pipes, `&&`, several paths), resolving a relative path against the call's `workdir` from the rollout rather than the session `cwd`;
   - preflight rounds: `PreToolUse` carrying only its own target; a prompt after an interrupted response carrying the unconsumed tool results in `used_tools` and their reads in `accessed_files`; a normal prompt carrying neither;
-  - local platform: forward-only watermark save under two racing processes (the older save loses), a lease raced by two processes and an expired lease taken over, WAL concurrency across processes, `platformdirs` default honoured and overridable;
+  - local platform: forward-only watermark save under two racing processes (the older save loses), WAL concurrency between the daemon and a fallback client, `platformdirs` default honoured, unsupported members raising;
   - preflight invocation per event, checked against the server's join rule (every `requested_tool_uses` entry resolves to a named tool on a named server) and carrying the expected `accessed_files`;
   - MCP server listing: parsed from a captured `codex mcp list --json`, `env` never copied, and every failure mode leaving events otherwise unchanged;
   - verdict and fail-mode mapping;
   - rollout → invocations in both modes (tool calls renamed to `Bash` with the hook's id and `tool_input.command`; attachments on the first response of their turn; reads on the response after the output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; four parallel `exec_command` calls in one response; an interrupted turn dropping its unclosed response without losing its tool results);
-  - watermark: resume after a known `response_id`, fall back to the timestamp when that record is gone, empty watermark, first-push failure found by the sweep, relocation to `archived_sessions/`, sweep ignoring files older than `created_at()`, retry, and two overlapping runs ending with the newer watermark;
-  - CLI end to end through a subprocess with a stub server.
-- **Live:** before merge, run Codex with the managed block against a dev SlashID endpoint and a pilot `user_id`; check allow, deny by model rule, deny by tool rule, deny by a sensitive attachment and by a sensitive `sed` read, fail-closed with the server down, and that the events land with their `accessed_files`.
+  - watermark: resume after a known `response_id`, fall back to the timestamp when that record is gone, empty watermark, first-push failure found by the sweep, relocation to `archived_sessions/`, sweep ignoring files older than `created_at()`, retry, a repeated push after a lost response (defensive; the daemon serializes runs), and the watermark advancing per batch;
+  - daemon: two clients racing to start it (one daemon, both served); stale `daemon.json` recovery; a squatted port failing `/ping` and receiving nothing; version, config-edit and token-rotation restarts; requests without the secret, with a wrong `Host` or with an `Origin` refused; a blocked event loop killed by the watchdog; a crash mid-request; a request arriving during idle exit; idle exit with a push still failing; spawn backoff; the spawned daemon holding none of the hook's pipes (the hook returns while the daemon runs); in-process fallback within the budget;
+  - Windows: a detached spawn surviving its parent, with and without a job that forbids breakaway;
+  - incremental parsing: appended lines extend the cached history; a shrunk or replaced file re-parses from byte 0;
+  - CLI end to end through subprocesses (client and daemon) with a stub SlashID server.
+- **Live:** before merge, run Codex with the managed block against a dev SlashID endpoint and a pilot `user_id`; check allow, deny by model rule, deny by tool rule, deny by a sensitive attachment and by a sensitive `sed` read, fail-closed with the server down, and that the events land with their `accessed_files`. Measure preflight latency with a warm daemon against the in-process path.
 
 ## Open questions
 
@@ -385,3 +442,4 @@ The hook always exits 0 and prints valid JSON, so Codex never sees a crashed hoo
 3. **Compaction, resume and fork.** Capture their rollout shapes. A forked session copies history into a new rollout; if that includes old `token_usage_record`s, the new session's empty watermark would re-emit them; the plan then skips copied records by `response_id` (a fork keeps its parent's ids) or by the fork's creation time.
 4. **Subagents.** Whether their tool hooks fire and which `session_id` / rollout they use.
 5. **Which mode is where.** The desktop app used function mode and `codex exec` used script mode; whether the CLI, the IDE extension and future versions switch between them is not known, which is why both are supported.
+6. **Daemon lifetime on macOS and Windows.** On Linux it survives the desktop app quitting (measured 2026-09-30, desktop `26.924.51851`; detaching was not even needed there). Still open: macOS, Windows (whether the app runs hooks in a kill-on-close job object, and whether breakaway is allowed), and how common endpoint-security tools treat the daemon. If it is killed with the app, the sweep on the next start still covers the gap.
