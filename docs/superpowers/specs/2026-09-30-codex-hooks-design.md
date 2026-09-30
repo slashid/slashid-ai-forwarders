@@ -133,11 +133,13 @@ How files appear:
 **`events.py`**
 
 - `OpenAIIdentityDetails(kind="openai", service_account_id, user_id, api_key_id, api_key_hash)`, with the same at-least-one-identifier validator as `AnthropicIdentityDetails`. Mirrors the server's `OpenAIIdentityDetails`; `kind` is client-side. Added to the `IdentityDetails` union.
-- `AIRequestedToolUse(tool_id, tool_use_id)` and `AIInvocationObservedV1.requested_tool_uses: list[AIRequestedToolUse] | None`: the tool calls the model asked for in this invocation's output, which have not run yet. `used_tools` keeps its meaning, calls whose results this invocation consumed; a round's request and its consumption share `tool_use_id` across two events. `build_event_from_normalized` fills it for every adapter from the `tool_use` blocks in `normalized.output.message`, joined to `tools_declared` the way `_used_tools` joins results (a call whose tool cannot be identified is skipped). Codex's `PreToolUse` preflight sets it directly.
+- `AIInvocationObservedV1.requested_tool_uses: list[AIToolUse] | None`, entries carrying only `tool_id` and `tool_use_id`: the tool calls the model asked for in this invocation's output, which have not run yet. `used_tools` keeps its meaning, calls whose results this invocation consumed; a round's request and its consumption share `tool_use_id` across two events. `build_event_from_normalized` fills it for every adapter from the `tool_use` blocks in `normalized.output.message`, joined to `tools_declared` the way `_used_tools` joins results (a call whose tool cannot be identified is skipped). Codex's `PreToolUse` preflight sets it directly.
+- `AIToolUse.is_error` becomes `bool | None = None`: a requested call has not run, so it has no outcome, and `false` would claim success. `_used_tools` keeps always setting it, so `used_tools` payloads are unchanged.
 
 **Wire schema** (ng-evangelion `spec/ai-schemas.yaml`, `aievent`, `aiauthorization`)
 
-- `AIRequestedToolUse {tool_id (required), tool_use_id}` and the optional `requested_tool_uses` array on `AIInvocationObservedV1`.
+- The optional `requested_tool_uses` array of `AIToolUse` on `AIInvocationObservedV1`.
+- `AIToolUse.required` becomes `[tool_id]`; the description says `is_error` is always set on `used_tools` entries and absent on `requested_tool_uses` entries. The generated Go `IsError` becomes `*bool`, and its readers are updated.
 - `NormalizeAIInvocation` emits one `mcp_call{server, "tools/call", tool}` per `requested_tool_uses` entry, through the same `available_tools` → `available_tool_servers` join as `used_tools`, with the same `tool_unresolved` error. `used_tools` keeps producing `mcp_call` too, so the Anthropic hook's tail round keeps working.
 - This change cannot wait for the batched schema sync: tool rules in Codex depend on it.
 
@@ -188,7 +190,7 @@ Both build a partial `AIInvocationObservedV1`:
 | `conversation_id` | `session_id` | `session_id` |
 | `accessed_files` | the round (below): this prompt's attachments, plus any unconsumed tool reads | `hash_local_file(read_target(…))` if any, `provenance: "tool_result"` |
 | `available_tool_servers`, `available_tools` | — | `resolve_tool(tool_name)` |
-| `requested_tool_uses` | — | `[AIRequestedToolUse(tool_id, tool_use_id)]` |
+| `requested_tool_uses` | — | `[AIToolUse(tool_id, tool_use_id)]` |
 
 The server normalizes this to `invoke_model`, one `use_attachment` per accessed file, and for `PreToolUse` an `mcp_call{server, "tools/call", tool}` (e.g. `mcp__payroll__read` → `mcp_call{payroll, read}`, `Bash` → `mcp_call{builtin, Bash}`), and runs the sensitive-file check on the hashes.
 
