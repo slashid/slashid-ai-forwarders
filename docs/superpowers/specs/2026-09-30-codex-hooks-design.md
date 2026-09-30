@@ -144,6 +144,10 @@ How files appear:
 - `NormalizeAIInvocation` emits one `mcp_call{server, "tools/call", tool}` per `requested_tool_uses` entry, through the same `available_tools` → `available_tool_servers` join as `used_tools`, with the same `tool_unresolved` error. `used_tools` keeps producing `mcp_call` too, so the Anthropic hook's tail round keeps working.
 - This change cannot wait for the batched schema sync: tool rules in Codex depend on it.
 
+**`normalize/normalized/types.py`**
+
+- `NormalizedContent` and `NormalizedMessage` become frozen (`model_config` `frozen=True`), and `NormalizedMessage.content` a tuple, so a history snapshot can share messages safely. Existing normalizers build messages once and never mutate them; the plan confirms that before switching.
+
 **`platform/local/`** (new)
 
 - `LocalPlatform(state_dir: Path)`, registered in `_PLATFORMS` as `"local"`: the `Platform` for a forwarder that runs on the user's machine instead of a cloud. State is one SQLite database, `state_dir/state.sqlite3`. The directory is the caller's choice, since it is named per forwarder; Codex's is below.
@@ -181,8 +185,9 @@ How files appear:
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: parses the "Files mentioned by the user" section, only when the text starts with it (after leading blank lines), up to `## My request:`. Each `## ` line splits on the last `": "` followed by an absolute path (`/` or `X:\`), since names can contain `": "`. Used on the hook's `prompt` and on the rollout's user message. |
 | `reads.py` | `get_file_read_by_tool(tool_name, tool_input, workdir) -> Path | None`: the file a tool call is about to read. `view_image` → `path`. `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'` command, split with `shlex`; anything with a pipe, `;`, `&&`, redirection, globbing or several paths → `None`. Relative paths resolve against `workdir`, the tool call's own working directory: the hook's `tool_input` drops it, so the caller takes it from the call's `workdir` argument in the rollout (function mode: the call is written before `PreToolUse` fires, found by `tool_use_id`), falling back to the payload's `cwd` when there is none (script mode, call not found). |
 | `preflight.py` | Builds the preflight invocation, calls `sink.preflight_invocation`, maps the verdict. |
-| `rollout.py` | Pydantic models for rollout lines, and `rollout_invocations(lines) -> list[RolloutInvocation]`: one per `token_usage_record`, with the Responses request/response rebuilt from the items before it, tool calls renamed and files collected (two passes, below). |
-| `emit.py` | `emit.run(session)`: read the rollout, build events, push, save the watermark after each batch; and the sweep. Runs on the daemon's worker thread, or once, bounded, in the fallback. |
+| `rollout.py` | Pydantic models for rollout lines, and `SessionState.apply(lines) -> list[RolloutInvocation]`: the incremental rules below; returns the responses that became ready, each with its Responses request/response, tool calls renamed and files collected. |
+| `cache.py` | The session cache: `get_conversation_so_far`, locking, file identity checks and eviction. |
+| `emit.py` | The collection worker: triggers, the per-session outbox, sending in order, watermark saves after each batch, and the startup sweep. Runs on the daemon's worker thread, or once, bounded, in the fallback (with a throwaway `SessionState`). |
 | `state.py` | The codex-specific stores, declared here as protocols as the platform module prescribes and implemented on the local platform's SQLite database: `FileRecordStore` (per session: attachment entries keyed by `turn_id`, pre-read entries keyed by `tool_use_id`). The emit watermark is the shared `checkpoint_store("codex-rollouts", <session_id>)`. |
 | `deploy/requirements.toml` | The managed hook block (below). |
 
@@ -221,7 +226,7 @@ Install: MDM installs uv, then runs `uv tool install <wheel>` with `UV_TOOL_DIR=
 | `POST /hooks/Stop`, `/hooks/SessionEnd`, `/hooks/SessionStart` | `{}` at once; the work is queued |
 | `POST /shutdown` | Stop accepting, flush for at most 2 s, exit |
 
-**Keeping preflight responsive.** Preflight runs on the event loop and its blocking parts (SQLite, hashing, reading the rollout tail) in `asyncio.to_thread`. Collection and the sweep run on one separate worker thread, so a long parse or a slow push never delays a verdict. A watchdog thread checks a heartbeat the event loop updates every second and calls `os._exit` if it is more than 10 s stale, so a daemon that hangs does not keep its lock; the next hook finds it gone and spawns a new one. The collection worker owns each session's cached history; nothing else mutates it. After each refresh it publishes, as an immutable value, the byte offset just past the last `token_usage_record`. Preflight never touches the cache: it reads the rollout from that published offset to the end of the file (the current round, where both the triggering call and the unconsumed tool results live), parses that slice itself in `asyncio.to_thread`, and does its `workdir` lookup and round there. With no published offset yet (a session the daemon has not processed), it scans the whole file once in the same way.
+**Keeping preflight responsive.** Preflight runs on the event loop and its blocking parts (SQLite, hashing, reading the rollout tail) in `asyncio.to_thread`. Collection and the sweep run on one separate worker thread, so a long parse or a slow push never delays a verdict. A watchdog thread checks a heartbeat the event loop updates every second and calls `os._exit` if it is more than 10 s stale, so a daemon that hangs does not keep its lock; the next hook finds it gone and spawns a new one. Preflight and collection read conversations through the session cache below.
 
 **Lifetime.** The idle timer counts hook requests only. After `daemon_idle_seconds` without one, the daemon stops accepting, flushes queued collection for at most 10 s, deletes `daemon.json`, releases the lock, and exits. Pushes still failing are abandoned; the watermark and file records are in SQLite, so the next sweep picks them up. A crash or kill loses only caches. On Linux (measured), a daemon spawned from a hook is adopted by `systemd --user` and keeps running after the desktop app quits: systemd keeps the app's scope alive while it has processes. It ends at logout, like any user process.
 
@@ -275,29 +280,52 @@ Verdict:
 
 Consequences to document: a time-window rule on `invoke_model` also blocks tool calls in a turn already running when the window closes, which codex-client did not do. Hooking every tool (matcher `.*`) adds one preflight round-trip per tool call, over the daemon's warm connection; deployments can narrow the matcher, at the cost of the read checks. Hashing is bounded by `max_file_bytes`; a large attachment costs the read of up to 50 MiB inside the 9 s client budget.
 
+### Session cache
+
+The daemon keeps `sessions: dict[conversation_id, SessionState]` (the `conversation_id` is the Codex `session_id`). A `SessionState` holds:
+
+- `committed`: an append-only `list[NormalizedMessage]`, the history up to the last closed response.
+- `pending`: what was read after it: the in-flight response's output and tool results not consumed yet.
+- `offset`: the byte position read so far, plus the unfinished last line, which is never parsed until its newline arrives.
+- The rollout context: `base_instructions`, the current `model` and `turn_id`, `originator` and `cli_version`, and the tool-call index (`call_id` → `item_completed` item) used for the `Bash` rename, `parsed_cmd` reads and `cwd`.
+- `outbox`: built events waiting to be sent, in order.
+- A `threading.Lock`.
+
+`get_conversation_so_far(conversation_id) -> tuple[NormalizedMessage, ...]`, under the session's lock: open the rollout, seek to `offset`, read to the end, close; apply the new lines (below); return `tuple(committed + pending)`. The tuple is a snapshot: messages appended later never appear in it. Messages are shared rather than copied, so `NormalizedMessage` and its content blocks become frozen Pydantic models, which makes "read only" enforced. On `turn_aborted`, `pending` is replaced (see the interrupted-turn rule), so `committed` stays append-only and snapshots already handed out never change.
+
+No file handle is kept open between calls: on Windows an open handle stops Codex from moving the file to `archived_sessions/`. On reopen, a file smaller than `offset`, or with a different identity (inode, or file index on Windows), is read again from byte 0 into a fresh `SessionState`.
+
+Preflight calls it for the current round (the part after the last assistant message) and the `workdir` of the call that triggered the hook, which is already in `pending`. Collection calls it and takes the responses that closed since.
+
+Eviction: a session loaded by the startup sweep is dropped as soon as its outbox is sent. A session touched by a hook stays for 10 minutes after its last hook, then is dropped once its outbox is sent. A dropped session is rebuilt from byte 0 on its next use.
+
 ### Collection: `Stop`, `SessionStart`, `SessionEnd`
 
-The daemon's worker thread runs one `emit.run` at a time, per queued session, retrying a failed push with backoff until the daemon's idle exit. `emit.run(transcript_path, session_id)`:
+These hooks are triggers: each marks its session as having new data and returns. The collection worker thread then processes it:
 
-1. Load the session's watermark, `Checkpoint(timestamp, id)`: the line `timestamp` and `response_id` of the last emitted `token_usage_record`. Use `transcript_path` if it exists; otherwise find `*-<session_id>*.jsonl` under `~/.codex/sessions/` and `~/.codex/archived_sessions/` (archiving moves the file); if it is nowhere, exit.
-2. Parse the rollout from byte 0 up to the last complete line. Input for a response needs the whole history, so the file is always read from the start. Emit the responses after the `token_usage_record` whose `response_id` equals the watermark's `id`; if no record has that id, those whose line `timestamp` is later than the watermark's. File order breaks ties, since `resp_…` ids are not ordered. An empty watermark emits the whole file. Re-parsing grows with the session; the daemon keeps each active session's parsed history in memory and parses only lines appended since, re-parsing from byte 0 when the file shrank, was replaced or is new to it, and a follow-up to make `input` configurable as "only what is new since the last response" (for every source) would let collection checkpoint a byte offset and read only new lines.
-3. For each such `RolloutInvocation`, build the event (below), then `push_invocations` in batches.
-4. After each successful batch, save the watermark at the last `token_usage_record` in it. On failure, leave it as it was: the daemon retries, and after it exits the next sweep does. File records are not deleted here; the sweep expires them by age.
+1. Locate the rollout: `transcript_path` if it exists; otherwise `*-<session_id>*.jsonl` under `~/.codex/sessions/` and `~/.codex/archived_sessions/` (archiving moves the file); if it is nowhere, stop.
+2. Call `get_conversation_so_far`. Each response that closed since the last call and is ready (below) becomes a `RolloutInvocation`; those at or before the session's watermark are skipped. The watermark is `Checkpoint(timestamp, id)` from `checkpoint_store("codex-rollouts", session_id)`: the line `timestamp` and `response_id` of the last sent `token_usage_record`. A response is past it if it comes after the record whose `response_id` equals `id` or, when no record has that id, if its line `timestamp` is later. An empty watermark means everything.
+3. Build each event (below) and append it to the session's `outbox`.
+4. Send the outbox in order, in batches through `push_invocations`. After each successful batch, save the watermark at the last `token_usage_record` in it. A failed batch is retried with backoff and later events wait behind it, so the watermark never skips a response. After the daemon's idle exit, the startup sweep of the next daemon resumes from the watermark. File records are not deleted here; they expire by age.
 
-The daemon serializes runs for a session, but a push can still repeat: a retry after a push whose response was lost, or a daemon killed between pushing and saving. The server deduplicates AI invocations on `(org_id, connection_id, request_id)` (`ai_invocations_processor.go`), and `request_id` is the `response_id`, so the second copy is dropped. The forward-only save keeps the watermark from regressing, and age-only expiry keeps file records available until every response that needs them is out.
+A push can still repeat: a retry after a push whose response was lost, or a daemon killed between pushing and saving. The server deduplicates AI invocations on `(org_id, connection_id, request_id)` (`ai_invocations_processor.go`), and `request_id` is the `response_id`, so the second copy is dropped. The forward-only save keeps the watermark from regressing.
 
-`Stop` and `SessionEnd` queue their own session. The sweep runs when the daemon starts and on every `SessionStart`: it scans the rollout files under `~/.codex/sessions/` and `~/.codex/archived_sessions/` modified in the last 7 days and after the state database's `created_at()`, skips files not modified since their watermark's `timestamp`, and queues each other session whose file holds a `token_usage_record` past its watermark. This is what pushes a session's last turn when the daemon exited or the machine slept before its push succeeded. The `created_at()` bound keeps a fresh install from backfilling sessions from before it. Watermarks and file records older than 7 days are deleted by the sweep.
+**Startup sweep.** When the daemon starts, it lists the rollout files under `~/.codex/sessions/` and `~/.codex/archived_sessions/` modified in the last 7 days and after the state database's `created_at()`, skips files not modified since their watermark's `timestamp`, and processes the rest one session at a time, newest first, moving to the next only when the current one's outbox is fully sent. One session in flight at a time keeps a long-idle machine from sending every old session at once. Live triggers take priority: a session with a hook trigger is processed before the sweep continues, so the current conversation never waits behind a backlog. The `created_at()` bound keeps a fresh install from backfilling sessions from before it. The sweep also deletes watermarks and file records older than 7 days.
+
+Only the incremental read grows with the session; each event still hashes its full `input`. A follow-up to make `input` configurable as "only what is new since the last response" (for every source) would make that linear too.
 
 ### Rollout → `RolloutInvocation`
 
-Two passes over the parsed lines, because a response's tool-call rename (script mode) and its files come from lines written after the response closes.
+Lines are applied incrementally, as `get_conversation_so_far` reads them. A response's tool-call rename (script mode) and its files come from lines written after the response closes, so a closed response is **ready** only once the outputs of all its tool calls have been read, or the next response has started, whichever comes first. Until then it stays in `pending`, and its calls keep their raw form in snapshots.
 
-1. **Index.** Map each tool call's `call_id` to its logical `item_completed` item(s):
-   - Function mode: the item whose `id` equals the `call_id`.
-   - Script mode: the tool items that appear between a `custom_tool_call` and its `custom_tool_call_output` (the order rule; in the capture: call, `token_usage_record`, `item_completed{CommandExecution}`, call output).
-2. **Build.** Walk the lines again and build each response with the index applied, so a call has the same name and id in the response that made it, in every later history, and in preflight.
+The tool-call index maps each call's `call_id` to its logical `item_completed` item(s):
 
-In the build pass:
+- Function mode: the item whose `id` equals the `call_id`.
+- Script mode: the tool items that appear between a `custom_tool_call` and its `custom_tool_call_output` (the order rule; in the capture: call, `token_usage_record`, `item_completed{CommandExecution}`, call output).
+
+When a response becomes ready, its calls are renamed through the index and it moves from `pending` to `committed`, so a call has the same name and id in the response that made it, in every later history, and in preflight.
+
+Applying lines:
 
 - `session_meta` sets `base_instructions`, `originator`, `cli_version`. `turn_context` sets the current `model` and `turn_id`.
 - `response_item` lines append to a running item list. Items written since the previous `token_usage_record` that the model produced (assistant `message`, `reasoning`, `*_call`) are this response's output; everything before them is its input.
@@ -332,7 +360,7 @@ Attribution follows the existing rule: `input` is the full history, `used_tools`
 
 The rollout records no tool definitions, so the request has no `tools`, and `_used_tools` (which resolves ids only through `input.tools_declared`) would drop every result. As the Anthropic hook does (`hook/envelope.py`, `build_tools_declared((name, None, None) …)`), the Codex path fills `tools_declared` and `tool_servers` itself from the names of every tool call in the history, after renaming. Name-only declaration makes these ids equal the preflight's `resolve_tool` ids. `available_tools` is therefore the set of tools used so far in the session.
 
-`available_tool_servers` also lists the MCP servers the user has configured, used or not, best effort. Each `emit.run` calls `codex mcp list --json` once (5 s timeout) and adds every `enabled` server as `AIToolServer(name, kind="mcp")`, with the same id recipe as `build_tools_declared` (`short_hash({name, kind})`), so a tool later used on that server joins to the same entry. Only `name` and `enabled` are read; `command`, `args` and `env` (which can hold credentials) are never sent. The binary is `config.codex_bin` if set, else `codex` on `PATH`, else the desktop bundle (`/usr/lib/chatgpt/resources/codex` on Linux; macOS and Windows paths found in the plan). Any failure (not found, non-zero exit, timeout, unparseable output) leaves the list out and changes nothing else.
+`available_tool_servers` also lists the MCP servers the user has configured, used or not, best effort. The collection worker calls `codex mcp list --json` (5 s timeout) at most once every 10 minutes and reuses the result and adds every `enabled` server as `AIToolServer(name, kind="mcp")`, with the same id recipe as `build_tools_declared` (`short_hash({name, kind})`), so a tool later used on that server joins to the same entry. Only `name` and `enabled` are read; `command`, `args` and `env` (which can hold credentials) are never sent. The binary is `config.codex_bin` if set, else `codex` on `PATH`, else the desktop bundle (`/usr/lib/chatgpt/resources/codex` on Linux; macOS and Windows paths found in the plan). Any failure (not found, non-zero exit, timeout, unparseable output) leaves the list out and changes nothing else.
 
 With `include_raw_content` on, every event carries the full history in `input.redacted_text`, cut by the existing `max_content_size` (100 000 characters, middle-truncated) and batched under the 1 MB push limit by `push_invocations`. Hashes are always over the full, untruncated body. File content is never sent (`redacted_content` stays empty).
 
@@ -431,7 +459,8 @@ The hook client always exits 0 and prints valid JSON, so Codex never sees a cras
   - watermark: resume after a known `response_id`, fall back to the timestamp when that record is gone, empty watermark, first-push failure found by the sweep, relocation to `archived_sessions/`, sweep ignoring files older than `created_at()`, retry, a repeated push after a lost response (defensive; the daemon serializes runs), and the watermark advancing per batch;
   - daemon: two clients racing to start it (one daemon, both served); stale `daemon.json` recovery; a squatted port failing `/ping` and receiving nothing; version, config-edit and token-rotation restarts with no `spawn-failed` written and no hook falling back; a daemon started during the spawn backoff being used; requests without the secret, with a wrong `Host` or with an `Origin` refused; a blocked event loop killed by the watchdog; a crash mid-request; a request arriving during idle exit; idle exit with a push still failing; spawn backoff; the spawned daemon holding none of the hook's pipes (the hook returns while the daemon runs); in-process fallback within each event's budget; preflight reading the published round while the worker refreshes the same session (no shared mutable state);
   - Windows: a detached spawn surviving its parent, with and without a job that forbids breakaway;
-  - incremental parsing: appended lines extend the cached history; a shrunk or replaced file re-parses from byte 0;
+  - session cache: appended lines extend the history; a half-written last line is held back; a shrunk or replaced file is rebuilt from byte 0; a snapshot taken before an append or a `turn_aborted` is unchanged afterwards; messages cannot be mutated; a script-mode response becomes ready only after its call's `item_completed` and output; preflight sees the in-flight call in `pending`; no file handle stays open between calls (Windows archive move succeeds); sweep sessions evicted once sent, hook sessions after 10 minutes;
+  - collection order: a failed batch blocks later events of its session; the sweep sends one session at a time, newest first, and a live trigger overtakes it;
   - CLI end to end through subprocesses (client and daemon) with a stub SlashID server.
 - **Live:** before merge, run Codex with the managed block against a dev SlashID endpoint and a pilot `user_id`; check allow, deny by model rule, deny by tool rule, deny by a sensitive attachment and by a sensitive `sed` read, fail-closed with the server down, and that the events land with their `accessed_files`. Measure preflight latency with a warm daemon against the in-process path.
 
