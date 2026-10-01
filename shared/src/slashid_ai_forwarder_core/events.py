@@ -93,13 +93,10 @@ class AIToolAnnotations(_WireModel):
 
 
 class AIToolUse(_WireModel):
-    """One completed tool invocation within an AI turn.
-
-    Only emitted once the tool has actually run and the client has returned
-    the result — pairing an assistant `tool_use` block with the matching
-    `tool_result`. In-flight calls (a `tool_use` in this record's output
-    with no result yet) are deferred: they'll appear on the invocation
-    event that carries the result.
+    """A tool invocation within an AI turn. In `used_tools`, a call whose
+    result the model consumed; `is_error` is always set there. In
+    `requested_tool_uses`, a call the model asked for that has not run;
+    `is_error` is absent.
 
     `tool_use_id` is the inference-provider-generated id that ties the
     tool_use and tool_result blocks together (Bedrock `toolUse.toolUseId`,
@@ -116,7 +113,7 @@ class AIToolUse(_WireModel):
     """
 
     tool_id: str
-    is_error: bool
+    is_error: bool | None = None
     tool_use_id: str | None = None
     trace_id: str | None = None
     span_id: str | None = None
@@ -263,8 +260,29 @@ class AnthropicIdentityDetails(_WireModel):
         return self
 
 
+class OpenAIIdentityDetails(_WireModel):
+    """OpenAI-source shape of ``AIInvocationObservedV1.identity_details``.
+
+    Mirrors the server's ``OpenAIIdentityDetails`` in
+    ``entity_sources/openai/ai_invocation.go``. Codex sets ``user_id``, the
+    ChatGPT workspace ``user-…`` id.
+    """
+
+    kind: Literal["openai"] = "openai"
+    service_account_id: str | None = None
+    user_id: str | None = None
+    api_key_id: str | None = None
+    api_key_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_identifier(self) -> OpenAIIdentityDetails:
+        if not (self.service_account_id or self.user_id or self.api_key_id or self.api_key_hash):
+            raise ValueError("openai identity carries no identifier")
+        return self
+
+
 IdentityDetails = Annotated[
-    AWSIdentityDetails | GCPIdentityDetails | AnthropicIdentityDetails,
+    AWSIdentityDetails | GCPIdentityDetails | AnthropicIdentityDetails | OpenAIIdentityDetails,
     Field(discriminator="kind"),
 ]
 
@@ -340,6 +358,8 @@ class AIInvocationObservedV1(_WireModel):
     available_tool_servers: list[AIToolServer] | None = None
     available_tools: list[AITool] | None = None
     used_tools: list[AIToolUse] | None = None
+    # Client tool calls in this event's output, not yet run.
+    requested_tool_uses: list[AIToolUse] | None = None
     stop_reason: AIStopReason | None = None
     # Client that issued the call (Vertex: audit-log
     # ``requestMetadata.callerSuppliedUserAgent``). ``None`` when the
@@ -408,6 +428,9 @@ class EventEnvelope(_WireModel):
     # errored request has no legit ``end_turn`` / ``max_tokens`` /
     # ``tool_use`` etc.
     is_error: bool = False
+    # The history does not reach the conversation's first round (e.g. Codex
+    # fork whose parent is gone); round links end in "...".
+    history_truncated: bool = False
 
 
 # --- record parsing ---------------------------------------------------------
@@ -512,6 +535,34 @@ def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
     return name, "builtin", "runtime"
 
 
+def _tool_id_index(normalized: NormalizedInvocation) -> dict[tuple[str, str], str]:
+    """(server_name, parsed_tool_name) → AITool.id over the declared tools."""
+    server_name_by_id = {s.id: s.name or "builtin" for s in normalized.input.tool_servers}
+    id_by_key: dict[tuple[str, str], str] = {}
+    for tool in normalized.input.tools_declared:
+        server_name = server_name_by_id.get(tool.tool_server_id or "") or "builtin"
+        if tool.name:
+            id_by_key[(server_name, tool.name)] = tool.id
+    return id_by_key
+
+
+def _requested_tool_uses(normalized: NormalizedInvocation) -> list[AIToolUse]:
+    """Tool calls the model asked for in this invocation's output, not yet run."""
+    message = normalized.output.message
+    if message is None:
+        return []
+    ids = _tool_id_index(normalized)
+    requested: list[AIToolUse] = []
+    for block in message.content:
+        if block.kind != "tool_use" or not block.tool_name or block.tool_executor == "server":
+            continue
+        name, server, _kind = parse_tool_name(block.tool_name)
+        tool_id = ids.get((server, name))
+        if tool_id:
+            requested.append(AIToolUse(tool_id=tool_id, tool_use_id=block.tool_use_id))
+    return requested
+
+
 def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
     """Collect completed tool invocations from the canonical input messages.
 
@@ -531,15 +582,7 @@ def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
     if not input_messages:
         return []
 
-    # (server_name, parsed_tool_name) → AITool.id
-    tools = normalized.input.tools_declared
-    servers = normalized.input.tool_servers
-    server_name_by_id = {s.id: s.name or "builtin" for s in servers}
-    id_by_key: dict[tuple[str, str], str] = {}
-    for tool in tools:
-        server_name = server_name_by_id.get(tool.tool_server_id or "") or "builtin"
-        if tool.name:
-            id_by_key[(server_name, tool.name)] = tool.id
+    id_by_key = _tool_id_index(normalized)
 
     # tool_use_id → raw wire tool name, from any tool_use block in the history.
     name_by_use_id: dict[str, str] = {}
@@ -609,12 +652,14 @@ async def build_event_from_normalized(
     servers = normalized.input.tool_servers
     tools = normalized.input.tools_declared
     used = _used_tools(normalized)
+    requested = _requested_tool_uses(normalized)
     messages = normalized.input.messages
     hashed = after_last_assistant(messages) if config.input_scope == "round" else messages
     answer = normalized.output.message
     round_hash, recent_round_hashes = round_links(
         [*messages, answer] if answer is not None else messages,
         depth=config.round_link_depth,
+        truncated=envelope.history_truncated,
     )
 
     return AIInvocationObservedV1(
@@ -629,6 +674,7 @@ async def build_event_from_normalized(
         available_tool_servers=servers or None,
         available_tools=tools or None,
         used_tools=used or None,
+        requested_tool_uses=requested or None,
         stop_reason="error" if envelope.is_error else normalized.output.stop_reason,
         round_hash=round_hash,
         recent_round_hashes=recent_round_hashes or None,
