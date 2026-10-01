@@ -82,7 +82,8 @@ def project(messages: Sequence[NormalizedMessage]) -> list[_Message]:
     for message in messages:
         if message.role == "system":
             continue
-        blocks = [b for c in message.content if (b := _project_block(c)) is not None]
+        projected = [_project_block(content) for content in message.content]
+        blocks = [b for b in projected if b is not None]
         if not blocks:
             continue
         if out and out[-1].role == message.role:
