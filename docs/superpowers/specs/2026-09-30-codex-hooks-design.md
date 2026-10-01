@@ -7,7 +7,7 @@
 **Server, on main:** `POST /ip/nhi/events/ai-invocations/preflight` with the sensitive-file check and the AI hook policy ([ng-evangelion#7847](https://github.com/slashid/ng-evangelion/pull/7847)), `NormalizeAIInvocation` (#7846), and the OpenAI adapter's `ResolveAIInvocationIdentity`.
 **Server, needed first:** `requested_tool_uses` (see Shared changes). Until it ships, `PreToolUse` enforces model and file rules but not tool rules.
 **Builds on:** `2026-09-30-input-scope-and-round-hashes-design.md` (#74).
-**Depends on:** the `LocalPlatform` PR (separate). `codex/` is written against the platform interfaces and tested with in-memory fakes; the daemon is wired to `LocalPlatform` once that PR merges, and runs only from then.
+**Depends on:** the `LocalPlatform` PR, built concurrently against the contract in Shared changes. `codex/` merges independently; a small follow-up wires the daemon to `get("local", state_dir=…)` once `LocalPlatform` merges, and the daemon runs only from then.
 
 ## Summary
 
@@ -364,12 +364,19 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 **`shared/files.py`**: `hash_local_file(path, *, max_bytes) -> AIAccessedFile`: basename, `sha256`/`sha1`/`md5` (the algorithms the server indexes), `media_type` from the extension, `byte_length`. Over the cap, missing or unreadable → no `content_hashes`.
 
-**Requirements on `LocalPlatform`** (built in its own PR; this design relies on them):
+**Contract with `LocalPlatform`** (built in its own PR, concurrently; both sides code to this):
 
-- One per-user SQLite database under the directory it is given (`state_dir/state.sqlite3`), safe for two processes at once (a restarting daemon can briefly overlap the old one).
-- `checkpoint_store(collection, document)`: `save` only moves forward (writes only a `timestamp` later than the stored one).
-- `created_at()`: when the database was created.
-- A way for `codex/` to keep its own tables in that database (`FileRecordStore`).
+```python
+class LocalPlatform(Platform):                                  # registered as "local"
+    def __init__(self, state_dir: Path) -> None: ...            # one per-user SQLite database, state_dir/state.sqlite3
+    def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore: ...
+        # save() only moves forward: it writes only a Checkpoint.timestamp later than the stored one
+    def created_at(self) -> datetime: ...                       # when state.sqlite3 was created
+    def connect(self) -> sqlite3.Connection: ...                # WAL and busy_timeout set; safe across processes
+    # tick_lease and blob_sink raise; scheduler_auth refuses every token
+```
+
+Adapters keep their own tables in the same database through `connect()` and own their schema (`CREATE TABLE IF NOT EXISTS codex_…`), so `LocalPlatform` knows nothing about Codex.
 
 **`bedrock/`**
 
@@ -394,7 +401,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: only when the text starts with the section, up to `## My request:`; each `## ` line split at the last `": "` before an absolute path (`/` or `X:\`). |
 | `preflight.py` | The preflight invocation, `sink.preflight_invocation`, the verdict. |
 | `emit.py` | Triggers, batches pulled from the send cursor, ordered sending, watermark, startup sweep. |
-| `state.py` | `FileRecordStore` protocol, an in-memory implementation for tests, and the SQLite implementation on `LocalPlatform`'s database once it lands: entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
+| `state.py` | `FileRecordStore` protocol and its SQLite implementation on any `sqlite3.Connection` (`LocalPlatform.connect()` in production, a temporary database in tests): entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
 | `deploy/requirements.toml` | The managed block below. |
 
 ## Deployment
@@ -480,7 +487,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 - **Fixtures** from the 2026-09-30 captures: hook payloads in both modes (the four-attachment prompt, `view_image`), script- and function-mode rollouts, Bedrock MIL records (plain and streamed). Trimmed of `base_instructions`, environment context and personal content; images replaced by a small PNG with a known hash.
 - **shared:** Responses normalizer on both Bedrock records; stop reasons; usage; `resolve_tool`; `hash_local_file` (cap, missing file); `_READ_TOOLS` `Bash` and `view_image` entries and the Codex output cleanup; `OpenAIIdentityDetails`; `requested_tool_uses` from the Anthropic, Converse, Gemini and Responses fixtures, unresolvable calls skipped; frozen messages.
 - **bedrock:** both Responses formats selected; no cross-matching with existing formats.
-- **codex** (against in-memory `CheckpointStore` and `FileRecordStore` fakes until `LocalPlatform` lands; the fakes honour the forward-only save):
+- **codex** (`FileRecordStore` on a temporary SQLite database; an in-memory `CheckpointStore` with forward-only saves and a fixed `created_at()` stand in for `LocalPlatform` until it lands):
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
   - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted` or `compacted`; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
