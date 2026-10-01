@@ -15,9 +15,6 @@ _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS leases ("
     " collection TEXT NOT NULL, document TEXT NOT NULL, owner TEXT NOT NULL, expires_us INTEGER,"
     " PRIMARY KEY (collection, document))",
-    "CREATE TABLE IF NOT EXISTS blobs ("
-    " bucket TEXT NOT NULL, name TEXT NOT NULL, content_type TEXT NOT NULL, data BLOB NOT NULL,"
-    " PRIMARY KEY (bucket, name))",
 )
 
 

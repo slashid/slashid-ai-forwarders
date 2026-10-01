@@ -1,14 +1,19 @@
-"""SQLite implementations of the checkpoint store, the tick lease, the blob
-sink and the scheduler check. Every operation is a single statement."""
+"""SQLite implementations of the checkpoint store and the tick lease (every
+operation a single statement), the file-backed blob sink and the scheduler
+check."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
 import logging
+import os
+import tempfile
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import aiosqlite
 
@@ -101,26 +106,48 @@ class LocalTickLease:
 
 
 class LocalBlobSink:
-    """``BlobSink`` in a table; ``get`` is for tests and tools."""
+    """``BlobSink`` as files under ``<root>/<bucket>/<name>``; ``get`` is for
+    tests and tools. A file has nowhere to keep ``content_type``, so it is not
+    kept."""
 
-    def __init__(self, db: aiosqlite.Connection, *, bucket: str) -> None:
-        self._db = db
-        self._bucket = bucket
+    def __init__(self, root: Path, *, bucket: str) -> None:
+        if not bucket or bucket in (".", "..") or Path(bucket).name != bucket:
+            raise ValueError(f"a bucket is one path segment, not {bucket!r}")
+        self._dir = root / bucket
+
+    def _path(self, name: str) -> Path:
+        path = (self._dir / name).resolve()
+        if not path.is_relative_to(self._dir.resolve()):
+            raise ValueError(f"blob name {name!r} leaves its bucket")
+        return path
 
     async def put(self, name: str, data: bytes, *, content_type: str) -> None:
-        await self._db.execute(
-            "INSERT INTO blobs (bucket, name, content_type, data) VALUES (?, ?, ?, ?)"
-            " ON CONFLICT(bucket, name) DO UPDATE"
-            " SET content_type = excluded.content_type, data = excluded.data",
-            (self._bucket, name, content_type, data),
-        )
+        await asyncio.to_thread(_write_atomically, self._path(name), data)
 
     async def get(self, name: str) -> bytes | None:
-        async with self._db.execute(
-            "SELECT data FROM blobs WHERE bucket = ? AND name = ?", (self._bucket, name)
-        ) as cursor:
-            row = await cursor.fetchone()
-        return None if row is None else bytes(row[0])
+        return await asyncio.to_thread(_read, self._path(name))
+
+
+def _write_atomically(path: Path, data: bytes) -> None:
+    """Through a temporary file in the same directory, renamed into place, so
+    a reader never sees half a blob."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp)
+        raise
+
+
+def _read(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
 
 
 def token_check(principal: str | None) -> SchedulerAuth:

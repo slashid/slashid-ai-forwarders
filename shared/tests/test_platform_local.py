@@ -116,6 +116,42 @@ async def test_binary_data_round_trips_as_bytes(platform: LocalPlatform) -> None
     assert await sink.get("n") == data
 
 
+async def test_a_file_database_keeps_blobs_as_files_beside_it(tmp_path: Path) -> None:
+    path = tmp_path / "data.sqlite"
+    async with create_local_platform(path) as built:
+        sink = built.blob_sink("capture")
+        await sink.put("2026/frame.json", b"{}", content_type="application/json")
+        file = tmp_path / "data.sqlite.blobs" / "capture" / "2026" / "frame.json"
+        assert built.blobs == tmp_path / "data.sqlite.blobs"
+        assert file.read_bytes() == b"{}"
+        # written through a temporary file that is renamed into place
+        assert [p.name for p in file.parent.iterdir()] == ["frame.json"]
+    assert file.exists()  # outlives the platform, like the database
+
+
+async def test_a_memory_database_keeps_blobs_in_a_temporary_directory() -> None:
+    async with create_local_platform(":memory:") as built:
+        await built.blob_sink("b").put("n", b"x", content_type="text/plain")
+        kept = built.blobs
+        assert (kept / "b" / "n").read_bytes() == b"x"
+    assert not kept.exists()
+
+
+@pytest.mark.parametrize("name", ["../escape", "/etc/passwd", "a/../../escape"])
+async def test_a_blob_name_cannot_leave_its_bucket(platform: LocalPlatform, name: str) -> None:
+    sink = platform.blob_sink("b")
+    with pytest.raises(ValueError):
+        await sink.put(name, b"x", content_type="text/plain")
+    with pytest.raises(ValueError):
+        await sink.get(name)
+
+
+@pytest.mark.parametrize("bucket", ["", ".", "..", "a/b", "/abs"])
+def test_a_bucket_must_be_one_path_segment(platform: LocalPlatform, bucket: str) -> None:
+    with pytest.raises(ValueError):
+        platform.blob_sink(bucket)
+
+
 # --- scheduler auth ----------------------------------------------------------
 
 
