@@ -106,8 +106,10 @@ def project(messages: Sequence[NormalizedMessage]) -> list[_Message]:
     return out
 
 
-def _closed_rounds(messages: Sequence[NormalizedMessage], end: int) -> Iterator[Round]:
-    """Rounds of ``messages[:end]`` (which ends on an assistant message), newest first."""
+def _rounds(messages: Sequence[NormalizedMessage]) -> Iterator[Round]:
+    """Rounds of ``messages``, newest first. The first has no answer when the
+    transcript ends on a message that is not the model's."""
+    end = len(messages)
     while end:
         answer_end = end
         while end and messages[end - 1].role == "assistant":
@@ -119,24 +121,21 @@ def _closed_rounds(messages: Sequence[NormalizedMessage], end: int) -> Iterator[
 
 
 def round_links(
-    messages: Sequence[NormalizedMessage], *, answered: bool, depth: int
+    messages: Sequence[NormalizedMessage], *, depth: int
 ) -> tuple[str | None, list[str]]:
     """``(round_hash, recent_round_hashes)`` for an event.
 
-    ``messages`` is the transcript including the event's response when it has
-    one (``answered``). The list is newest first, at most ``depth`` hashes, and
-    ends with the guard when it reaches round one. Only the last ``depth``
-    rounds are projected.
+    ``messages`` is the transcript including the event's response, if it has
+    one. The list is newest first, at most ``depth`` hashes, and ends with the
+    guard when it reaches round one. Only the last ``depth`` rounds are
+    projected.
     """
-    end = len(messages)
-    while end and messages[end - 1].role != "assistant":
-        end -= 1
     own: str | None = None
     hashes: list[str] = []
     reaches_start = True
-    for index, round_ in enumerate(_closed_rounds(messages, end)):
+    for index, round_ in enumerate(_rounds(messages)):
         digest = round_.digest()
-        if index == 0 and answered:
+        if index == 0:
             own = digest
         if digest is None:
             continue

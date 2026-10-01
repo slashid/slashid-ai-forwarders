@@ -92,6 +92,7 @@ Two events are the same conversation if their `recent_round_hashes` share at lea
 - A hook-built and a reader-built round of the same conversation hash differently, and do not stitch.
 - A round's hash is as guessable as its content; for short rounds it is no less reversible than the existing `input` hash.
 - `session` scope keeps the quadratic input cost, and is opt-in.
+- A transcript ending on an assistant message is read as ending on the event's response, so a prefill request that errored claims its last history round as its own `round_hash`.
 - The guard marks where the visible transcript starts. A client that trims its own context window makes a later event look like a conversation start, and so does a compaction.
 - **Claude Code compaction** (one `claude -p` capture, `/compact` on a five-message session, behind a logging proxy). The summarising call is itself a model call: the unchanged history, with the compaction instruction appended to the last user message as an extra text block, so its round differs from the one that already answered that message. The next request holds none of the earlier rounds: a user message with the summary, the last assistant message kept verbatim, and synthetic `system` messages re-injecting recent file reads. Its only complete round is `(summary → kept assistant message)`, so its list is that hash plus the guard, and nothing stitches across the compaction. Not verified: whether a larger session keeps more than the last message, or whether interactive and auto compaction differ.
 

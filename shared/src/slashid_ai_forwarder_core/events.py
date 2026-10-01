@@ -614,7 +614,6 @@ async def build_event_from_normalized(
     answer = normalized.output.message
     round_hash, recent_round_hashes = round_links(
         [*messages, answer] if answer is not None else messages,
-        answered=answer is not None,
         depth=config.round_link_depth,
     )
 

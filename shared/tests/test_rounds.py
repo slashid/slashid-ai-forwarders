@@ -149,15 +149,13 @@ def _history(rounds: int) -> list[NormalizedMessage]:
 
 
 def test_first_event_lists_its_own_round_and_the_guard() -> None:
-    own, recent = round_links([*[_user("u0")], _assistant("a0")], answered=True, depth=10)
+    own, recent = round_links([_user("u0"), _assistant("a0")], depth=10)
     assert own == Round([_user("u0")], [_assistant("a0")]).digest()
     assert recent == [own, CONVERSATION_START]
 
 
 def test_links_are_newest_first_and_end_at_the_guard_when_short() -> None:
-    own, recent = round_links(
-        [*[*_history(2), _user("u2")], _assistant("a2")], answered=True, depth=10
-    )
+    own, recent = round_links([*_history(2), _user("u2"), _assistant("a2")], depth=10)
     assert recent[0] == own
     assert recent[1:] == [
         Round([_user("u1")], [_assistant("a1")]).digest(),
@@ -167,24 +165,20 @@ def test_links_are_newest_first_and_end_at_the_guard_when_short() -> None:
 
 
 def test_the_guard_marks_exactly_the_events_that_reach_round_one() -> None:
-    _, tenth = round_links(
-        [*[*_history(9), _user("u9")], _assistant("a9")], answered=True, depth=10
-    )
-    _, eleventh = round_links(
-        [*[*_history(10), _user("u10")], _assistant("a10")], answered=True, depth=10
-    )
+    _, tenth = round_links([*_history(9), _user("u9"), _assistant("a9")], depth=10)
+    _, eleventh = round_links([*_history(10), _user("u10"), _assistant("a10")], depth=10)
     assert len(tenth) == 11 and tenth[-1] == CONVERSATION_START
     assert len(eleventh) == 10 and CONVERSATION_START not in eleventh
 
 
 def test_consecutive_events_share_all_but_one_hash() -> None:
-    _, a = round_links([*[*_history(12), _user("u12")], _assistant("a12")], answered=True, depth=10)
-    _, b = round_links([*[*_history(13), _user("u13")], _assistant("a13")], answered=True, depth=10)
+    _, a = round_links([*_history(12), _user("u12"), _assistant("a12")], depth=10)
+    _, b = round_links([*_history(13), _user("u13"), _assistant("a13")], depth=10)
     assert set(a) & set(b) == set(a[:9])
 
 
 def test_no_answer_lists_the_complete_rounds_and_no_own_hash() -> None:
-    own, recent = round_links([*_history(2), _user("u2")], answered=False, depth=10)
+    own, recent = round_links([*_history(2), _user("u2")], depth=10)
     assert own is None
     assert recent == [
         Round([_user("u1")], [_assistant("a1")]).digest(),
@@ -195,11 +189,11 @@ def test_no_answer_lists_the_complete_rounds_and_no_own_hash() -> None:
 
 def test_an_empty_answer_counts_as_no_answer() -> None:
     empty = NormalizedMessage(role="assistant", content=[])
-    assert round_links([*[_user("u0")], empty], answered=True, depth=3) == (None, [])
+    assert round_links([_user("u0"), empty], depth=3) == (None, [])
 
 
 def test_no_complete_round_and_no_answer_has_no_links() -> None:
-    assert round_links([_text("system", "s"), _user("a")], answered=False, depth=10) == (None, [])
+    assert round_links([_text("system", "s"), _user("a")], depth=10) == (None, [])
 
 
 def test_project_merges_adjacent_messages_of_one_role() -> None:
@@ -235,23 +229,21 @@ def test_a_response_and_its_replay_in_the_next_request_link_alike() -> None:
             NormalizedContent(kind="text", text="y"),
         ],
     )
-    own, _ = round_links([*[_user("a")], merged], answered=True, depth=10)
+    own, _ = round_links([_user("a"), merged], depth=10)
     replay = [_user("a"), _assistant("x"), _assistant("y"), _user("b")]
-    _, recent = round_links([*replay, _assistant("z")], answered=True, depth=10)
+    _, recent = round_links([*replay, _assistant("z")], depth=10)
     assert own in recent
 
 
 def test_no_transcript_and_no_answer_has_no_links() -> None:
-    assert round_links([], answered=False, depth=10) == (None, [])
+    assert round_links([], depth=10) == (None, [])
 
 
 def test_a_round_whose_answer_projects_empty_is_skipped_and_not_counted() -> None:
     thinking = NormalizedMessage(
         role="assistant", content=[NormalizedContent(kind="reasoning", text="hm")]
     )
-    _, recent = round_links(
-        [*[_user("a"), thinking, _user("b")], _assistant("c")], answered=True, depth=2
-    )
+    _, recent = round_links([_user("a"), thinking, _user("b"), _assistant("c")], depth=2)
     assert len(recent) == 2 and recent[-1] == CONVERSATION_START
 
 
@@ -260,9 +252,7 @@ def test_events_stitch_after_up_to_n_minus_m_are_lost() -> None:
 
     def links(k: int) -> list[str]:
         history = [x for i in range(k) for x in (_user(f"u{i}"), _assistant(f"a{i}"))]
-        return round_links(
-            [*[*history, _user(f"u{k}")], _assistant(f"a{k}")], answered=True, depth=n
-        )[1]
+        return round_links([*history, _user(f"u{k}"), _assistant(f"a{k}")], depth=n)[1]
 
     def stitches(a: list[str], b: list[str]) -> bool:
         real_a = [h for h in a if h != CONVERSATION_START]
@@ -279,35 +269,22 @@ def test_events_stitch_after_up_to_n_minus_m_are_lost() -> None:
 
 def test_a_run_of_assistant_messages_is_one_round_in_the_list() -> None:
     merged = round_links(
-        [*[_user("a"), _assistant("b"), _assistant("c"), _user("d")], _assistant("e")],
-        answered=True,
+        [_user("a"), _assistant("b"), _assistant("c"), _user("d"), _assistant("e")],
         depth=10,
     )
-    split = round_links(
-        [*[_user("a"), _assistant("b"), _user("d")], _assistant("e")], answered=True, depth=10
-    )
+    split = round_links([_user("a"), _assistant("b"), _user("d"), _assistant("e")], depth=10)
     assert len(merged[1]) == len(split[1])
 
 
 def test_depth_bounds_the_list() -> None:
-    _, recent = round_links(
-        [*[*_history(30), _user("u30")], _assistant("a30")], answered=True, depth=4
-    )
+    _, recent = round_links([*_history(30), _user("u30"), _assistant("a30")], depth=4)
     assert len(recent) == 4 and CONVERSATION_START not in recent
 
 
 def test_a_history_ending_on_an_assistant_message_merges_with_the_answer() -> None:
-    own, recent = round_links(
-        [*[_user("a"), _assistant("b")], _assistant("c")], answered=True, depth=10
-    )
+    own, recent = round_links([_user("a"), _assistant("b"), _assistant("c")], depth=10)
     assert recent == [own, CONVERSATION_START]
     assert own == Round([_user("a")], [_assistant("b"), _assistant("c")]).digest()
-
-
-def test_a_transcript_ending_on_an_assistant_message_has_no_own_hash_without_an_answer() -> None:
-    own, recent = round_links([_user("a"), _assistant("b")], answered=False, depth=10)
-    assert own is None
-    assert recent == [Round([_user("a")], [_assistant("b")]).digest(), CONVERSATION_START]
 
 
 def test_a_response_run_split_across_history_and_answer_hashes_like_one_message() -> None:
@@ -318,10 +295,8 @@ def test_a_response_run_split_across_history_and_answer_hashes_like_one_message(
             NormalizedContent(kind="text", text="c"),
         ],
     )
-    split, _ = round_links(
-        [*[_user("a"), _assistant("b")], _assistant("c")], answered=True, depth=10
-    )
-    whole, _ = round_links([*[_user("a")], merged], answered=True, depth=10)
+    split, _ = round_links([_user("a"), _assistant("b"), _assistant("c")], depth=10)
+    whole, _ = round_links([_user("a"), merged], depth=10)
     assert split == whole
 
 
@@ -336,5 +311,5 @@ def test_the_work_is_bounded_by_depth_not_by_history(monkeypatch: pytest.MonkeyP
 
     history = [x for i in range(1000) for x in (_user(f"u{i}"), _assistant(f"a{i}"))]
     monkeypatch.setattr(rounds, "project", counting)
-    rounds.round_links([*history, _user("u1000"), _assistant("a1000")], answered=True, depth=10)
+    rounds.round_links([*history, _user("u1000"), _assistant("a1000")], depth=10)
     assert calls < 60
