@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -328,3 +329,29 @@ def test_worker_thread(tmp_path: Path, make_config: Callable[..., CodexConfig]) 
     assert done.wait(5)
     worker.stop()
     assert len(env.sink.pushed) == 1
+
+
+def test_worker_ready_before_sweep(
+    tmp_path: Path, make_config: Callable[..., CodexConfig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config()
+    swept = threading.Event()
+
+    @asynccontextmanager
+    async def open_collector() -> AsyncIterator[Collector]:
+        env = Env(tmp_path, config)
+
+        def slow_sweep() -> int:
+            time.sleep(0.5)
+            swept.set()
+            return 0
+
+        monkeypatch.setattr(env.collector, "startup_sweep", slow_sweep)
+        yield env.collector
+
+    worker = Worker(open_collector)
+    start = time.monotonic()
+    worker.start()
+    assert time.monotonic() - start < 0.4
+    assert swept.wait(5)
+    worker.stop()

@@ -95,6 +95,8 @@ class SessionCache:
         self._load_watermark = load_watermark
         self._clock = clock
         self._sessions: dict[str, Session] = {}
+        # Hooks for sessions not loaded yet, applied when they are.
+        self._touched: dict[str, datetime] = {}
         self._lock = threading.Lock()
 
     def locate_parent(self, thread_id: str) -> Path | None:
@@ -137,18 +139,26 @@ class SessionCache:
         log, head, send = open_log(path)
         built = Session(session_id, log, head, send, open_log)
         with self._lock:
+            if (touched := self._touched.pop(session_id, None)) is not None:
+                built.session_started = True
+                built.last_hook_at = touched
             session = self._sessions.setdefault(session_id, built)
             session.in_use += hold
             return session
 
     def touch_hook(self, session_id: str) -> None:
+        """Any hook for the session, loaded or not."""
+        now = self._clock()
         with self._lock:
             if (session := self._sessions.get(session_id)) is not None:
                 session.session_started = True
-                session.last_hook_at = self._clock()
+                session.last_hook_at = now
+            else:
+                self._touched[session_id] = now
 
     def end(self, session_id: str) -> None:
         with self._lock:
+            self._touched.pop(session_id, None)
             if (session := self._sessions.get(session_id)) is not None:
                 session.session_started = False
 
@@ -164,7 +174,9 @@ class SessionCache:
         """Drop evictable sessions not in use; a dropped one is rebuilt from
         byte 0 on its next ``get``."""
         evicted: list[str] = []
+        stale = self._clock() - HOOK_IDLE
         with self._lock:
+            self._touched = {k: at for k, at in self._touched.items() if at >= stale}
             for session_id, session in list(self._sessions.items()):
                 if not session.lock.acquire(blocking=False):
                     continue

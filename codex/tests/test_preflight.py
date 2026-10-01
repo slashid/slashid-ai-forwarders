@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
@@ -339,3 +341,61 @@ async def test_total_bytes_cap(
     assert files is not None
     # 6 > max_file_bytes; the third 4 would pass 10 in total.
     assert [f.content_hashes is not None for f in files] == [True, False, True, False, True]
+
+
+# --------------------------------------------------------------------------
+# Deadline from hook arrival
+# --------------------------------------------------------------------------
+
+
+async def test_deadline_passed_to_sink(env: Env) -> None:
+    deadlines: list[float] = []
+
+    async def preflight(invocation: AIInvocationObservedV1, *, deadline: float) -> list[str]:
+        deadlines.append(deadline)
+        return []
+
+    env.sink.preflight = preflight  # ty: ignore[invalid-assignment]
+    deadline = time.monotonic() + 5
+    await env.preflight.pre_tool_use(_ptu("ls", cwd=env.tmp_path), deadline=deadline)
+    assert deadlines == [deadline]
+
+
+async def test_slow_preparation_fails_at_deadline(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def slow(*_: object) -> None:
+        time.sleep(0.5)
+
+    monkeypatch.setattr(env.preflight, "_workdir", slow)
+    start = time.monotonic()
+    verdict = await env.preflight.pre_tool_use(_ptu("ls", cwd=env.tmp_path), deadline=start + 0.1)
+    assert time.monotonic() - start < 0.4
+    assert verdict.decision == "block"
+    assert verdict.reason is not None
+    assert "deadline" in verdict.reason
+    assert env.sink.invocations == []
+
+
+async def test_hashing_stops_past_half_the_budget(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [100.0]
+    env.preflight = Preflight(env.config, env.sink, env.store, env.cache, monotonic=lambda: now[0])
+    real = preflight_module.hash_local_file
+
+    def hash_and_tick(*args: Any, **kwargs: Any) -> Any:
+        now[0] += 1.5
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(preflight_module, "hash_local_file", hash_and_tick)
+    paths = []
+    for index in range(4):
+        path = env.tmp_path / f"f{index}.txt"
+        path.write_text("x")
+        paths.append(path)
+    # Budget 8 s: hashing stops once 4 s are spent.
+    await env.preflight.user_prompt_submit(_ups(_prompt(*paths)), deadline=108.0)
+    files = env.sent.accessed_files
+    assert files is not None
+    assert [f.content_hashes is not None for f in files] == [True, True, True, False]

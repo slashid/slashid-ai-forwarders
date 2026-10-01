@@ -50,6 +50,8 @@ log = logging.getLogger(__name__)
 PARSED_AS = "codex-hook"
 MAX_FILES = 50
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
+# Of the verdict budget, the share hashing may spend.
+HASH_BUDGET_SHARE = 0.5
 
 Provenance = Literal["tool_result", "attachment"]
 _PreflightHook = UserPromptSubmitHook | PreToolUseHook
@@ -99,14 +101,23 @@ class _Hasher:
     """At most ``MAX_FILES`` files and ``MAX_TOTAL_BYTES`` per request; past
     that, entries go without hashes."""
 
-    def __init__(self, max_file_bytes: int) -> None:
+    def __init__(
+        self,
+        max_file_bytes: int,
+        *,
+        hash_until: float | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._max_file_bytes = max_file_bytes
+        self._hash_until = hash_until
+        self._monotonic = monotonic
         self._files = 0
         self._bytes = 0
 
     def __call__(self, path: Path, provenance: Provenance) -> AIAccessedFile:
         remaining = MAX_TOTAL_BYTES - self._bytes
-        if self._files >= MAX_FILES or remaining <= 0:
+        late = self._hash_until is not None and self._monotonic() >= self._hash_until
+        if self._files >= MAX_FILES or remaining <= 0 or late:
             return AIAccessedFile(
                 name=str(path), media_type=mimetypes.guess_type(path.name)[0], provenance=provenance
             )
@@ -128,23 +139,47 @@ class Preflight:
         sessions: SessionCache,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._sink = sink
         self._records = records
         self._sessions = sessions
         self._clock = clock
+        self._monotonic = monotonic
 
-    async def user_prompt_submit(self, hook: UserPromptSubmitHook) -> Verdict:
-        invocation = await asyncio.to_thread(self._prompt_invocation, hook)
-        return await self._ask(invocation)
+    async def user_prompt_submit(
+        self, hook: UserPromptSubmitHook, *, deadline: float | None = None
+    ) -> Verdict:
+        """``deadline`` is a ``time.monotonic()`` instant, taken when the hook
+        arrived; default ``preflight_timeout_seconds`` from now."""
+        return await self._run(self._prompt_invocation, hook, deadline)
 
-    async def pre_tool_use(self, hook: PreToolUseHook) -> Verdict:
-        invocation = await asyncio.to_thread(self._tool_invocation, hook)
-        return await self._ask(invocation)
+    async def pre_tool_use(self, hook: PreToolUseHook, *, deadline: float | None = None) -> Verdict:
+        return await self._run(self._tool_invocation, hook, deadline)
 
-    async def _ask(self, invocation: AIInvocationObservedV1) -> Verdict:
-        deadline = time.monotonic() + self._config.preflight_timeout_seconds
+    async def _run[H: _PreflightHook](
+        self,
+        build: Callable[[H, float], AIInvocationObservedV1],
+        hook: H,
+        deadline: float | None,
+    ) -> Verdict:
+        """Files past half the budget go without hashes; preparation still
+        running at the deadline gives no verdict."""
+        now = self._monotonic()
+        if deadline is None:
+            deadline = now + self._config.preflight_timeout_seconds
+        hash_until = now + (deadline - now) * HASH_BUDGET_SHARE
+        try:
+            invocation = await asyncio.wait_for(
+                asyncio.to_thread(build, hook, hash_until), timeout=max(deadline - now, 0.0)
+            )
+        except TimeoutError:
+            log.warning("preflight for %s: deadline exceeded preparing", hook.session_id)
+            return fail_verdict(self._config, "SlashID preflight failed: deadline exceeded")
+        return await self._ask(invocation, deadline)
+
+    async def _ask(self, invocation: AIInvocationObservedV1, deadline: float) -> Verdict:
         try:
             reasons = await self._sink.preflight(invocation, deadline=deadline)
         except PreflightError as exc:
@@ -158,10 +193,12 @@ class Preflight:
     # Blocking parts, on a worker thread
     # ----------------------------------------------------------------------
 
-    def _prompt_invocation(self, hook: UserPromptSubmitHook) -> AIInvocationObservedV1:
+    def _prompt_invocation(
+        self, hook: UserPromptSubmitHook, hash_until: float
+    ) -> AIInvocationObservedV1:
         """The prompt's attachments, plus what the model has not consumed
         yet: tool results left by an interrupted response."""
-        hasher = _Hasher(self._config.max_file_bytes)
+        hasher = self._hasher(hash_until)
         attachments = [hasher(Path(a.path), "attachment") for a in parse_attachments(hook.prompt)]
         if attachments:
             self._store(lambda: self._records.put_turn(hook.session_id, hook.turn_id, attachments))
@@ -191,13 +228,13 @@ class Preflight:
             servers=servers,
         )
 
-    def _tool_invocation(self, hook: PreToolUseHook) -> AIInvocationObservedV1:
+    def _tool_invocation(self, hook: PreToolUseHook, hash_until: float) -> AIInvocationObservedV1:
         """Only the file this call reads."""
         workdir = self._workdir(hook)
         files: list[AIAccessedFile] = []
         path = get_file_read_by_tool(hook.tool_name, hook.tool_input, workdir, expand_home=True)
         if path is not None:
-            entry = _Hasher(self._config.max_file_bytes)(path, "tool_result")
+            entry = self._hasher(hash_until)(path, "tool_result")
             files.append(entry)
             self._store(
                 lambda: self._records.put_call(
@@ -217,6 +254,11 @@ class Preflight:
             requested=[AIToolUse(tool_id=tool.id, tool_use_id=hook.tool_use_id)],
             tools=[tool],
             servers=[server],
+        )
+
+    def _hasher(self, hash_until: float) -> _Hasher:
+        return _Hasher(
+            self._config.max_file_bytes, hash_until=hash_until, monotonic=self._monotonic
         )
 
     def _workdir(self, hook: PreToolUseHook) -> str:

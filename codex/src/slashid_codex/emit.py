@@ -327,10 +327,11 @@ class Worker:
             async with self._open() as collector:
                 self._collector = collector
                 self._loop = asyncio.get_running_loop()
+                # Before the sweep, which can be slow: the spawning hook is waiting.
+                self._ready.set()
                 if self._sweep:
                     try:
                         collector.startup_sweep()
                     except Exception:
                         log.exception("startup sweep failed")
-                self._ready.set()
                 await collector.run()

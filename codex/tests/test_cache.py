@@ -182,10 +182,35 @@ def test_evict_skips_a_session_in_use(tmp_path: Path) -> None:
     assert cache.evict() == [SCRIPT_ID]
 
 
-def test_touch_and_end_ignore_unknown_sessions(tmp_path: Path) -> None:
+def test_touch_before_load_applies_on_load(tmp_path: Path) -> None:
+    path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
+    cache, clock = _cache(tmp_path)
+    cache.touch_hook(SCRIPT_ID)
+    clock.now = T0 + timedelta(minutes=1)
+    session = cache.get(SCRIPT_ID, path)
+    assert session.session_started
+    assert session.last_hook_at == T0
+    while session.send.next_closed() is not None:
+        pass
+    # A hook's session stays cached after its collection.
+    assert cache.evict() == []
+
+
+def test_end_before_load_forgets_the_touch(tmp_path: Path) -> None:
+    path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, _ = _cache(tmp_path)
-    cache.touch_hook("nope")
-    cache.end("nope")
+    cache.touch_hook(SCRIPT_ID)
+    cache.end(SCRIPT_ID)
+    assert not cache.get(SCRIPT_ID, path).session_started
+
+
+def test_stale_touches_pruned_by_evict(tmp_path: Path) -> None:
+    path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
+    cache, clock = _cache(tmp_path)
+    cache.touch_hook(SCRIPT_ID)
+    clock.now = T0 + timedelta(minutes=10, seconds=1)
+    cache.evict()
+    assert not cache.get(SCRIPT_ID, path).session_started
 
 
 SUB = "01a0f38b-f3a4-7c70-95e2-420a7fcbcc03"
