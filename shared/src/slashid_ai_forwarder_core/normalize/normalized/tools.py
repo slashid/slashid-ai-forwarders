@@ -111,3 +111,12 @@ def build_tools_declared(
             )
         )
     return tools, list(servers_by_id.values())
+
+
+def resolve_tool(raw_name: str) -> tuple[AITool, AIToolServer]:
+    """One tool declared by name only, on a named server, as ``build_tools_declared``
+    would declare it; ids therefore match name-only declarations elsewhere."""
+    tools, servers = build_tools_declared([(raw_name, None, None)])
+    if not tools:
+        raise ValueError("tool name is empty")
+    return tools[0], servers[0]
