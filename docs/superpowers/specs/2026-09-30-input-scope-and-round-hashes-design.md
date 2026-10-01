@@ -68,9 +68,9 @@ It is validated against live traffic per source before the schema is closed. Unt
 | `round_hash` | `round_hash[k]`. Absent when the event has no `O[k]`: an enforced denial, or an input-only tail or flushed record. |
 | `recent_round_hashes` | `[round_hash[k], round_hash[k-1], …]`, newest first, at most N, only complete rounds. An event without `O[k]` lists the N complete rounds before it. Ends with the guard `"conversation-start"` when its oldest entry is the conversation's first round. |
 
-The guard is a literal, not a digest, so it cannot collide with a real hash. It is appended after the oldest round whenever the list reaches the first round, so a list holds at most N hashes plus the guard. It tells a conversation that is shorter than N apart from one the producer could only see the last N rounds of. An event with no transcript at all (an audit-log-only event) carries neither field. A producer emits the guard only when its transcript demonstrably starts at the beginning of the conversation; a source with windowed history (Codex after a watermark, a reader that caps what it sees) never does.
+The guard is a literal, not a digest, so it cannot collide with a real hash. It is appended after the oldest round whenever the list reaches the first round, so a list holds at most N hashes plus the guard. It tells a conversation that is shorter than N apart from one the producer could only see the last N rounds of. An event with no complete round and no response (an audit-log-only event, a first-turn tail) carries neither field. A producer emits the guard only when its transcript demonstrably starts at the beginning of the conversation; a source with windowed history (Codex after a watermark, a reader that caps what it sees) never does.
 
-`SLASHID_ROUND_LINK_DEPTH` sets N, default **10**. Only the last N rounds are projected and hashed, so the cost is O(N) rounds per event even in `session` scope.
+`SLASHID_ROUND_LINK_DEPTH` sets N, default **10**. Only the last N rounds, and one more to decide the guard, are projected and hashed, so the cost is O(N) rounds per event even in `session` scope.
 
 ## Stitching (server side)
 

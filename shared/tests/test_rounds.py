@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
+import pytest
+
+from slashid_ai_forwarder_core import rounds
 from slashid_ai_forwarder_core.normalize.normalized.types import (
     NormalizedContent,
     NormalizedMessage,
 )
 from slashid_ai_forwarder_core.rounds import (
     CONVERSATION_START,
-    completed_rounds,
     project,
     round_hash,
     round_links,
@@ -114,20 +117,6 @@ def test_project_coalesces_attachments_to_a_bare_marker() -> None:
     assert out == [{"role": "user", "content": [{"kind": "attachment"}] * 3}]
 
 
-def test_completed_rounds_splits_at_assistant_runs() -> None:
-    rounds, trailing = completed_rounds(
-        [_user("a"), _assistant("b"), _assistant("c"), _user("d"), _assistant("e"), _user("f")]
-    )
-    assert [(len(r.consumed), len(r.answer)) for r in rounds] == [(1, 2), (1, 1)]
-    assert [m.content[0].text for m in trailing] == ["f"]
-
-
-def test_completed_rounds_without_an_assistant_is_all_trailing() -> None:
-    rounds, trailing = completed_rounds([_text("system", "s"), _user("a")])
-    assert rounds == []
-    assert len(trailing) == 2
-
-
 def test_round_hash_is_stable_and_ignores_system_and_reasoning() -> None:
     plain = round_hash([_user("a")], [_assistant("b")])
     noisy = round_hash(
@@ -199,11 +188,12 @@ def test_no_answer_lists_the_complete_rounds_and_no_own_hash() -> None:
 
 
 def test_an_empty_answer_counts_as_no_answer() -> None:
-    own, recent = round_links(
-        [_user("u0")], NormalizedMessage(role="assistant", content=[]), depth=3
-    )
-    assert own is None
-    assert recent == [CONVERSATION_START]
+    empty = NormalizedMessage(role="assistant", content=[])
+    assert round_links([_user("u0")], empty, depth=3) == (None, [])
+
+
+def test_no_complete_round_and_no_answer_has_no_links() -> None:
+    assert round_links([_text("system", "s"), _user("a")], None, depth=10) == (None, [])
 
 
 def test_project_merges_adjacent_messages_of_one_role() -> None:
@@ -287,3 +277,37 @@ def test_a_run_of_assistant_messages_is_one_round_in_the_list() -> None:
 def test_depth_bounds_the_list() -> None:
     _, recent = round_links([*_history(30), _user("u30")], _assistant("a30"), depth=4)
     assert len(recent) == 4 and CONVERSATION_START not in recent
+
+
+def test_a_history_ending_on_an_assistant_message_merges_with_the_answer() -> None:
+    own, recent = round_links([_user("a"), _assistant("b")], _assistant("c"), depth=10)
+    assert recent == [own, CONVERSATION_START]
+    assert own == round_hash([_user("a")], [_assistant("b"), _assistant("c")])
+
+
+def test_a_response_run_split_across_history_and_answer_hashes_like_one_message() -> None:
+    merged = NormalizedMessage(
+        role="assistant",
+        content=[
+            NormalizedContent(kind="text", text="b"),
+            NormalizedContent(kind="text", text="c"),
+        ],
+    )
+    split, _ = round_links([_user("a"), _assistant("b")], _assistant("c"), depth=10)
+    whole, _ = round_links([_user("a")], merged, depth=10)
+    assert split == whole
+
+
+def test_the_work_is_bounded_by_depth_not_by_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    real = rounds.project
+
+    def counting(messages: Sequence[NormalizedMessage]):
+        nonlocal calls
+        calls += 1
+        return real(messages)
+
+    history = [x for i in range(1000) for x in (_user(f"u{i}"), _assistant(f"a{i}"))]
+    monkeypatch.setattr(rounds, "project", counting)
+    rounds.round_links([*history, _user("u1000")], _assistant("a1000"), depth=10)
+    assert calls < 60

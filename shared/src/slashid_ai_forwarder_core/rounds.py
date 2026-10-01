@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from itertools import chain
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue
@@ -93,34 +94,30 @@ def project(messages: Sequence[NormalizedMessage]) -> list[_Message]:
     return out
 
 
-def completed_rounds(
-    messages: Sequence[NormalizedMessage],
-) -> tuple[list[Round], list[NormalizedMessage]]:
-    """Rounds closed by an assistant run, and the messages after the last one."""
-    rounds: list[Round] = []
-    consumed: list[NormalizedMessage] = []
-    answer: list[NormalizedMessage] = []
-    for message in messages:
-        if message.role == "assistant":
-            answer.append(message)
-            continue
-        if answer:
-            rounds.append(Round(consumed, answer))
-            consumed, answer = [], []
-        consumed.append(message)
-    if answer:
-        rounds.append(Round(consumed, answer))
-        consumed = []
-    return rounds, consumed
+def _closed_rounds(messages: Sequence[NormalizedMessage], end: int) -> Iterator[Round]:
+    """Rounds of ``messages[:end]`` (which ends on an assistant message), newest first."""
+    while end:
+        answer_end = end
+        while end and messages[end - 1].role == "assistant":
+            end -= 1
+        consumed_end = end
+        while end and messages[end - 1].role != "assistant":
+            end -= 1
+        yield Round(list(messages[end:consumed_end]), list(messages[consumed_end:answer_end]))
 
 
 def round_hash(
     consumed: Sequence[NormalizedMessage], answer: Sequence[NormalizedMessage]
 ) -> str | None:
     """sha256 of the projected round; ``None`` when there is no answer to hash."""
-    if not project(answer):
+    projected_answer = project(answer)
+    if not projected_answer:
         return None
-    body = [m.model_dump(mode="json", exclude_none=True) for m in project([*consumed, *answer])]
+    # An answer is assistant-only and ``consumed`` never is, so nothing merges across them.
+    body = [
+        m.model_dump(mode="json", exclude_none=True)
+        for m in [*project(consumed), *projected_answer]
+    ]
     serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(serialized).hexdigest()
 
@@ -136,16 +133,34 @@ def round_links(
     ``history`` is the transcript before the response and ``answer`` the
     response, absent for a record with none. The list is newest first, at
     most ``depth`` hashes, and ends with the guard when it reaches round one.
+    Only the last ``depth`` rounds are projected.
     """
     answered = answer is not None and bool(project([answer]))
-    if not history and not answered:
-        return None, []
-    rounds, trailing = completed_rounds(history)
-    rounds = [r for r in rounds if project(r.answer)]
+    cut = len(history)
+    while cut and history[cut - 1].role != "assistant":
+        cut -= 1
+    consumed = list(history[cut:])
+    older = _closed_rounds(history, cut)
+    newest: list[Round] = []
     if answer is not None and answered:
-        rounds.append(Round(trailing, [answer]))
-    recent = [h for r in rounds[-depth:] if (h := round_hash(r.consumed, r.answer)) is not None]
-    recent.reverse()
-    if len(rounds) <= depth:
-        recent.append(CONVERSATION_START)
-    return (recent[0] if answered else None), recent
+        if consumed or not history:
+            newest.append(Round(consumed, [answer]))
+        else:
+            # The history ends on an assistant run, which the answer extends.
+            last = next(older)
+            newest.append(Round(last.consumed, [*last.answer, answer]))
+    hashes: list[str] = []
+    reaches_start = True
+    for r in chain(newest, older):
+        digest = round_hash(r.consumed, r.answer)
+        if digest is None:
+            continue
+        if len(hashes) == depth:
+            reaches_start = False
+            break
+        hashes.append(digest)
+    if not hashes:
+        return None, []
+    if reaches_start:
+        hashes.append(CONVERSATION_START)
+    return (hashes[0] if answered else None), hashes

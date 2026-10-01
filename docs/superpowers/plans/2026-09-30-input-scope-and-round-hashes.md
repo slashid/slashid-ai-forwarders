@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-30-input-scope-and-round-hashes-design.md`. Read it first; this plan does not restate its reasoning.
 
+**Implementation note:** review of the first implementation reworked `round_links` to walk the history backwards, so only the last N rounds are projected, and to merge an answer into a history that ends on an assistant message. `shared/src/slashid_ai_forwarder_core/rounds.py` is authoritative where it differs from the code below.
+
 **Conventions to follow** (repo owner's rules): parse boundary data into pydantic models, no `dict.get()` / `["key"]` / `Mapping[str, Any]` on them; keep comments and docstrings terse, no bullet lists or narrated reasoning in docstrings; never merge the PR.
 
 **Run everything from the worktree root** `~/.config/superpowers/worktrees/slashid-ai-forwarder/docs-input-scope-round-hashes`. Per-package checks: `cd <pkg> && uv run ruff check . && uv run ruff format --check . && uv run ty check && uv run pytest -q`. Baseline: `shared` passes 411 tests.
