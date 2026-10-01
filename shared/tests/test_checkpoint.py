@@ -1,61 +1,24 @@
 """Tests for ``FirestoreCheckpointStore`` — load/save the polling watermark.
 
-Uses a fake ``firestore.AsyncClient`` triple that stores documents in an
-in-memory dict. Firestore emulator is available but overkill for the
+Uses the shared in-memory ``firestore.AsyncClient`` fake that stores documents in an
+dict. Firestore emulator is available but overkill for the
 narrow load/save surface this store exposes.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import cast
 
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 
+from fake_firestore import FakeFirestore
 from slashid_ai_forwarder_core.platform import Checkpoint
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreCheckpointStore
 
 
-class _FakeSnapshot:
-    def __init__(self, data: dict[str, Any] | None) -> None:
-        self.exists = data is not None
-        self._data = data
-
-    def to_dict(self) -> dict[str, Any] | None:
-        return self._data
-
-
-class _FakeDocRef:
-    def __init__(self, backing: dict[str, dict[str, Any]], path: str) -> None:
-        self._backing = backing
-        self._path = path
-
-    async def get(self) -> _FakeSnapshot:
-        return _FakeSnapshot(self._backing.get(self._path))
-
-    async def set(self, data: dict[str, Any]) -> None:
-        self._backing[self._path] = data
-
-
-class _FakeCollectionRef:
-    def __init__(self, backing: dict[str, dict[str, Any]], collection: str) -> None:
-        self._backing = backing
-        self._collection = collection
-
-    def document(self, doc_id: str) -> _FakeDocRef:
-        return _FakeDocRef(self._backing, f"{self._collection}/{doc_id}")
-
-
-class _FakeFirestoreClient:
-    def __init__(self) -> None:
-        self.storage: dict[str, dict[str, Any]] = {}
-
-    def collection(self, name: str) -> _FakeCollectionRef:
-        return _FakeCollectionRef(self.storage, name)
-
-
-def _store() -> tuple[FirestoreCheckpointStore, _FakeFirestoreClient]:
-    client = _FakeFirestoreClient()
+def _store() -> tuple[FirestoreCheckpointStore, FakeFirestore]:
+    client = FakeFirestore()
     return (
         FirestoreCheckpointStore(
             client=cast(FirestoreAsyncClient, client),
@@ -87,14 +50,14 @@ async def test_save_normalizes_naive_datetime_to_utc() -> None:
     store, client = _store()
     naive = datetime(2026, 9, 5, 2, 43, 59)
     await store.save(Checkpoint(timestamp=naive, id="42"))
-    stored = client.storage["slashid_vertex/checkpoint"]["timestamp"]
+    stored = client.docs["slashid_vertex/checkpoint"][0]["timestamp"]
     assert stored.tzinfo is not None
 
 
 async def test_save_persists_to_correct_document_path() -> None:
     store, client = _store()
     await store.save(Checkpoint(timestamp=datetime(2026, 9, 5, tzinfo=UTC), id="1"))
-    assert "slashid_vertex/checkpoint" in client.storage
+    assert "slashid_vertex/checkpoint" in client.docs
 
 
 async def test_load_normalizes_naive_stored_datetime() -> None:
@@ -102,10 +65,7 @@ async def test_load_normalizes_naive_stored_datetime() -> None:
     naive timestamp, load() normalizes to UTC before returning."""
     store, client = _store()
     naive = datetime(2026, 9, 5, 2, 43, 59)
-    client.storage["slashid_vertex/checkpoint"] = {
-        "timestamp": naive,
-        "id": "42",
-    }
+    client.write("slashid_vertex/checkpoint", {"timestamp": naive, "id": "42"})
     cp = await store.load()
     assert cp.timestamp is not None
     assert cp.timestamp.tzinfo is not None

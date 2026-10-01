@@ -9,6 +9,8 @@ implementation for that platform, from ``store/``, is chosen here.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -30,13 +32,19 @@ class Backends:
     capture: BlobSink | None
 
 
-def build_backends(config: Config) -> Backends:
-    platform = platforms.get(
+@contextlib.asynccontextmanager
+async def open_backends(config: Config) -> AsyncIterator[Backends]:
+    """The backends for the configured platform, which stays open while the
+    block does. The app's lifespan holds it for the life of the process."""
+    async with platforms.get(
         config.platform,
         project=config.project_id,
         firestore_database=config.database,
-    )
+    ) as platform:
+        yield _backends(platform, config)
 
+
+def _backends(platform: Platform, config: Config) -> Backends:
     def cursor(feed: str) -> FeedCursor:
         return FeedCursor(
             platform.checkpoint_store(collection=config.checkpoint_collection, document=feed),

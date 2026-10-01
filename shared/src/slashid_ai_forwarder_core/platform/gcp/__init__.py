@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import cached_property
 
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
@@ -87,3 +89,12 @@ class GcpPlatform:
             return claims.get("email") == principal and bool(claims.get("email_verified"))
 
         return check
+
+
+@asynccontextmanager
+async def create_gcp_platform(
+    *, project: str, firestore_database: str
+) -> AsyncIterator[GcpPlatform]:
+    """Nothing to release: the clients are built lazily and live as long as
+    the process."""
+    yield GcpPlatform(project=project, firestore_database=firestore_database)

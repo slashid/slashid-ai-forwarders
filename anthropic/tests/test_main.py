@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import pathlib
 import re
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any, cast
 
@@ -12,15 +14,19 @@ import httpx
 import pytest
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.platform import TickLease
+from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 from slashid_anthropic_forwarder import main
+from slashid_anthropic_forwarder import platform as anthropic_platform
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
+from slashid_anthropic_forwarder.platform import Backends, open_backends
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
+from tests.test_cursors import _cursors
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
 
 FRAME: dict[str, Any] = {
@@ -329,6 +335,92 @@ async def test_a_tick_releases_the_lease_so_the_next_one_runs() -> None:
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 1}
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 0}
     assert sink.request_ids == [ADDRESS]
+
+
+class _RecordingLease:
+    """Holds every time, and counts."""
+
+    def __init__(self) -> None:
+        self.holds = 0
+
+    @contextlib.asynccontextmanager
+    async def hold(self, lease: timedelta) -> AsyncIterator[bool]:
+        self.holds += 1
+        yield True
+
+
+async def test_the_platform_is_opened_at_startup_used_by_the_tick_and_closed_at_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_readers(**_: Any) -> dict[str, int]:
+        return {}
+
+    monkeypatch.setattr(main, "run_readers", no_readers)
+    store = a_store(join_wait=timedelta(seconds=-1))  # born already due
+    await seed(store)
+    lease = _RecordingLease()
+    sink = Sink()
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        events.append("open")
+        cursors, _ = _cursors()
+        yield Backends(
+            store=store,
+            lease=lease,
+            cursors=cursors,
+            tick_auth=_accepts_the_scheduler,
+            capture=None,
+        )
+        events.append("close")
+
+    app = create_app(_config(), backends=opened, client=sink.client())
+    async with app.router.lifespan_context(app):
+        assert events == ["open"]
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/tick", headers=SCHEDULER)
+        # the opened store and lease did the work, not nothing given up front
+        assert r.json() == {"flushed": 1}
+        assert lease.holds == 1
+    assert events == ["open", "close"]
+    assert sink.request_ids == [ADDRESS]
+
+
+async def test_open_backends_opens_the_configured_platform_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[Any] = []
+
+    @contextlib.asynccontextmanager
+    async def get(name: str, **options: Any) -> AsyncIterator[GcpPlatform]:
+        events.append(("open", name, options))
+        built = GcpPlatform(project="proj", firestore_database="slashid-anthropic")
+        built.__dict__["firestore"] = FakeFirestore()
+        yield built
+        events.append("close")
+
+    monkeypatch.setattr(anthropic_platform.platforms, "get", get)
+    async with open_backends(_config()) as backends:
+        assert events == [
+            ("open", "gcp", {"project": "proj", "firestore_database": "slashid-anthropic"})
+        ]
+        assert isinstance(backends.store, FirestorePendingStore)
+        assert backends.capture is None
+    assert events[-1] == "close"
+
+
+async def test_a_platform_that_fails_to_open_fails_startup() -> None:
+    @contextlib.asynccontextmanager
+    async def broken() -> AsyncIterator[Backends]:
+        raise RuntimeError("cannot open the platform")
+        yield  # pragma: no cover
+
+    app = create_app(_config(), backends=broken, client=Sink().client())
+    with pytest.raises(RuntimeError, match="cannot open the platform"):
+        async with app.router.lifespan_context(app):
+            pass
 
 
 async def test_a_delivery_posted_to_slash_tick_is_still_a_delivery(sign: Signer) -> None:
