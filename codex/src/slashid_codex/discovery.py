@@ -170,9 +170,11 @@ def config_digest(config_path: Path) -> str:
 # --------------------------------------------------------------------------
 
 
-def record_spawn_failure(directory: Path, *, now: float | None = None) -> None:
+def record_spawn_failure(directory: Path, key: str, *, now: float | None = None) -> None:
+    """``key`` names the version and config that failed; another one is not
+    held back."""
     with contextlib.suppress(OSError):
-        (directory / SPAWN_FAILED_FILE).write_text(repr(time.time() if now is None else now))
+        (directory / SPAWN_FAILED_FILE).write_text(f"{time.time() if now is None else now} {key}")
 
 
 def clear_spawn_failure(directory: Path) -> None:
@@ -180,13 +182,18 @@ def clear_spawn_failure(directory: Path) -> None:
         os.unlink(directory / SPAWN_FAILED_FILE)
 
 
-def in_backoff(directory: Path, *, now: float | None = None) -> bool:
+def in_backoff(directory: Path, key: str, *, now: float | None = None) -> bool:
     try:
-        failed_at = float((directory / SPAWN_FAILED_FILE).read_text())
+        stamp, _, failed_key = (directory / SPAWN_FAILED_FILE).read_text().partition(" ")
+        failed_at = float(stamp)
     except (OSError, ValueError):
         return False
     elapsed = (time.time() if now is None else now) - failed_at
-    return 0 <= elapsed < SPAWN_BACKOFF_S
+    return failed_key == key and 0 <= elapsed < SPAWN_BACKOFF_S
+
+
+def spawn_key(config_path: Path) -> str:
+    return f"{package_version()}:{config_digest(config_path)}"
 
 
 # --------------------------------------------------------------------------

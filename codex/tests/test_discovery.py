@@ -22,8 +22,10 @@ from slashid_codex.discovery import (
     hmac_response,
     in_backoff,
     lock_held,
+    package_version,
     read_daemon_json,
     record_spawn_failure,
+    spawn_key,
     state_dir,
     verify_ping,
     write_daemon_json,
@@ -115,15 +117,23 @@ def test_config_digest_absolute_and_missing(tmp_path: Path) -> None:
 
 
 def test_spawn_backoff(tmp_path: Path) -> None:
-    assert not in_backoff(tmp_path, now=1000.0)
-    record_spawn_failure(tmp_path, now=1000.0)
-    assert in_backoff(tmp_path, now=1000.0)
-    assert in_backoff(tmp_path, now=1299.0)
-    assert not in_backoff(tmp_path, now=1300.0)
+    assert not in_backoff(tmp_path, "k", now=1000.0)
+    record_spawn_failure(tmp_path, "k", now=1000.0)
+    assert in_backoff(tmp_path, "k", now=1000.0)
+    assert in_backoff(tmp_path, "k", now=1299.0)
+    assert not in_backoff(tmp_path, "k", now=1300.0)
     # A clock moved back does not extend it forever.
-    assert not in_backoff(tmp_path, now=900.0)
+    assert not in_backoff(tmp_path, "k", now=900.0)
+    # A new version, config or token is tried at once.
+    assert not in_backoff(tmp_path, "other", now=1000.0)
     (tmp_path / "spawn-failed").write_text("garbage")
-    assert not in_backoff(tmp_path, now=1000.0)
+    assert not in_backoff(tmp_path, "k", now=1000.0)
+
+
+def test_spawn_key(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("")
+    assert spawn_key(config) == f"{package_version()}:{config_digest(config)}"
 
 
 def _hold(path: str, ready: multiprocessing.synchronize.Event, release: float) -> None:
