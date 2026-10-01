@@ -17,6 +17,7 @@ from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
 
 MIN_TOKEN_CHARS = 32
+_PATH_KEYS = ("push_token_file", "codex_bin", "codex_home")
 
 
 class _TokenFileRef(_LenientModel):
@@ -24,7 +25,7 @@ class _TokenFileRef(_LenientModel):
 
 
 class CodexConfig(BaseConfig):
-    model_config = SettingsConfigDict(hide_input_in_errors=True)
+    model_config = SettingsConfigDict(hide_input_in_errors=True, extra="forbid")
 
     push_token_file: Path
     # The ChatGPT workspace user (`user-…`) events are attributed to.
@@ -51,7 +52,12 @@ class CodexConfig(BaseConfig):
 
     @classmethod
     def load(cls, path: Path) -> Self:
-        return cls(**tomllib.loads(path.read_text(encoding="utf-8")))
+        """Relative paths resolve against the file's directory."""
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        for key in _PATH_KEYS:
+            if isinstance(value := data.get(key), str):
+                data[key] = str(path.parent.absolute() / Path(value).expanduser())
+        return cls(**data)
 
     @model_validator(mode="before")
     @classmethod
@@ -63,15 +69,28 @@ class CodexConfig(BaseConfig):
         except ValidationError:
             return data
         try:
-            token = token_file.read_text(encoding="utf-8").strip()
+            token = token_file.expanduser().read_text(encoding="utf-8").strip()
         except OSError as exc:
             raise ValueError(f"cannot read push_token_file {token_file}: {exc.strerror}") from None
         return {**data, "push_token": token}
+
+    @field_validator(*_PATH_KEYS, mode="before")
+    @classmethod
+    def _absolute(cls, v: object) -> object:
+        if isinstance(v, str | Path):
+            v = Path(v).expanduser()
+            if not v.is_absolute():
+                raise ValueError("path must be absolute")
+        return v
 
     @field_validator("endpoint")
     @classmethod
     def _https_origin(cls, v: str) -> str:
         parts = urlsplit(v)
+        try:
+            _ = parts.port
+        except ValueError:
+            raise ValueError("endpoint port must be a number from 0 to 65535") from None
         if (
             parts.scheme != "https"
             or not parts.hostname

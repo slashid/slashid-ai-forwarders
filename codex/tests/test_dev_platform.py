@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_codex.dev_platform import DevPlatform
@@ -67,4 +69,23 @@ def test_connect_uses_wal(tmp_path: Path) -> None:
 def test_state_dir_created_private(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     DevPlatform(state_dir).connect().close()
+    assert state_dir.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize("existing", ["", "garbled"])
+def test_created_at_rewrites_unreadable_file(tmp_path: Path, existing: str) -> None:
+    (tmp_path / "created_at").write_text(existing)
+    first = DevPlatform(tmp_path).created_at()
+    assert DevPlatform(tmp_path).created_at() == first
+    assert datetime.fromisoformat((tmp_path / "created_at").read_text()) == first
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["created_at"]
+
+
+def test_state_dir_private_despite_umask(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    old = os.umask(0o277)
+    try:
+        DevPlatform(state_dir).created_at()
+    finally:
+        os.umask(old)
     assert state_dir.stat().st_mode & 0o777 == 0o700

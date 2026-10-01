@@ -73,7 +73,7 @@ HookPayload = (
     | SessionEndHook
 )
 
-_MODELS: dict[HookEvent, type[HookPayload]] = {
+_MODELS: dict[str, type[HookPayload]] = {
     "SessionStart": SessionStartHook,
     "UserPromptSubmit": UserPromptSubmitHook,
     "PreToolUse": PreToolUseHook,
@@ -86,7 +86,7 @@ _MODELS: dict[HookEvent, type[HookPayload]] = {
 def parse_hook(event: str, raw: bytes) -> HookPayload:
     """``event`` is the one the hook was registered for; a payload naming
     another is rejected. Raises ``ValueError``."""
-    for name, model in _MODELS.items():
-        if name == event:
-            return model.model_validate_json(raw)
-    raise ValueError(f"unhandled hook event {event!r}")
+    model = _MODELS.get(event)
+    if model is None:
+        raise ValueError(f"unhandled hook event {event!r}")
+    return model.model_validate_json(raw)
