@@ -3,10 +3,11 @@ on plain HTTP: the real httpx path for preflight and push."""
 
 from __future__ import annotations
 
+import http.client
+import io
 import json
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -16,8 +17,10 @@ from typing import Any
 
 import pytest
 
+from slashid_codex import cli
+from slashid_codex.discovery import DaemonConnection, DaemonInfo, spawn_daemon
 from slashid_codex.rollout import TokenUsageRecord, parse_line
-from tests.daemons import TOKEN, Daemons
+from tests.daemons import TOKEN, Daemons, wait_dead
 from tests.e2e_daemon import PlainHttpConfig
 
 HOOKS = Path(__file__).parent / "fixtures" / "hooks"
@@ -120,16 +123,7 @@ def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
     note = daemons.root / "note.txt"
     note.write_text("hello\n")
 
-    daemon = subprocess.Popen(
-        [sys.executable, "-m", "tests.e2e_daemon", *daemons.args("daemon")[3:]],
-        cwd=PACKAGE,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    info = daemons.wait_info()
-    assert info.pid == daemon.pid
+    info = daemons.start("-m", "tests.e2e_daemon")
 
     stub.deny = ["Denied by the AI hook policy."]
     ups = _payload("user_prompt_submit.json", transcript_path=str(rollout))
@@ -167,3 +161,61 @@ def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
     assert stub.auth == {f"Bearer {TOKEN}"}
     # Same daemon throughout.
     assert daemons.info() == info
+
+
+def _spawn_e2e(argv: list[str], cwd: Path, stderr_path: Path) -> subprocess.Popen[bytes]:
+    """The client's spawn, of ``tests.e2e_daemon``."""
+    assert argv[1:4] == ["-m", "slashid_codex", "daemon"]
+    return spawn_daemon(
+        [argv[0], "-m", "tests.e2e_daemon", *argv[3:]], cwd=PACKAGE, stderr_path=stderr_path
+    )
+
+
+def test_hook_racing_the_idle_exit(
+    daemons: Daemons, stub: StubSlashID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon exits idle between a hook's ping and its event: the hook
+    gets a verdict from a respawned daemon, not a broken connection, and its
+    connection is never reopened."""
+    daemons.write_config(endpoint=stub.endpoint, dry_run=False, daemon_idle_seconds=2)
+    old = daemons.start("-m", "tests.e2e_daemon")
+    raced: list[int] = []
+    real_ping = cli.connect
+
+    def ping_then_idle(info: DaemonInfo, *, deadline: float) -> DaemonConnection | None:
+        conn = real_ping(info, deadline=deadline)
+        if conn is not None and not raced:
+            raced.append(info.pid)
+            assert wait_dead(info.pid)
+        return conn
+
+    reopened: list[http.client.HTTPConnection] = []
+    real_connect = http.client.HTTPConnection.connect
+
+    def connect(self: http.client.HTTPConnection) -> None:
+        if getattr(self, "opened_by_test", False):
+            reopened.append(self)
+        self.opened_by_test = True  # ty: ignore[unresolved-attribute]
+        real_connect(self)
+
+    monkeypatch.setattr(cli, "connect", ping_then_idle)
+    monkeypatch.setattr(http.client.HTTPConnection, "connect", connect)
+    outs: list[str] = []
+    cli.run_hook(
+        "PreToolUse",
+        daemons.config,
+        daemons.state,
+        daemons.codex_home,
+        io.BytesIO(_payload("pre_tool_use_bash_sed.json")),
+        spawn=_spawn_e2e,
+        write=outs.append,
+        exit=lambda code: pytest.fail(f"backstop exit({code})"),
+    )
+    assert outs == ["{}"]
+    assert raced == [old.pid]
+    assert "idle; exiting" in daemons.log()
+    new = daemons.info()
+    assert new is not None
+    assert new.pid != old.pid
+    assert len(stub.preflights) == 1
+    assert reopened == []

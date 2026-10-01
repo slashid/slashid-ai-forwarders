@@ -25,6 +25,7 @@ class Daemons:
         self.config = root / "config.toml"
         (root / "token").write_text(TOKEN)
         self.write_config(**config)
+        self.processes: list[subprocess.Popen[bytes]] = []
 
     def write_config(self, **overrides: object) -> None:
         values: dict[str, object] = {
@@ -63,6 +64,29 @@ class Daemons:
             timeout=timeout,
             check=True,
         )
+
+    def start(self, *command: str) -> DaemonInfo:
+        """A daemon started directly, for tests where spawning is not the
+        subject. ``command`` replaces ``-m slashid_codex``."""
+        argv = self.args("daemon")
+        if command:
+            argv = [argv[0], *command, *argv[3:]]
+        process = subprocess.Popen(
+            argv,
+            cwd=Path(__file__).parents[1],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.processes.append(process)
+        give_up = time.monotonic() + 10
+        while time.monotonic() < give_up:
+            info = self.info()
+            if info is not None and info.pid == process.pid:
+                return info
+            time.sleep(0.05)
+        raise AssertionError("daemon did not start")
 
     def info(self) -> DaemonInfo | None:
         return read_daemon_json(self.state)
@@ -105,6 +129,9 @@ class Daemons:
         if info is not None and info.pid != os.getpid() and alive(info.pid):
             with contextlib.suppress(OSError):
                 os.kill(info.pid, signal.SIGKILL)
+        for process in self.processes:
+            process.kill()
+            process.wait(10)
 
     def log(self) -> str:
         try:

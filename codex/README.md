@@ -14,7 +14,7 @@ MDM, as administrator:
 
 Before an upgrade, stop the daemons (`<tool python> -m slashid_codex daemon` processes under the tool directory; Windows cannot replace a running `.exe`), never hook clients: a killed hook lets its action through. A daemon whose version, config or token differs from the hook's is replaced on the next hook.
 
-Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `--state-dir` and `--codex-home` exist for tests.
+Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `daemon.log` is the daemon's rotated log; `daemon.stderr` holds only output that bypasses it, such as an interpreter crash. `--state-dir` and `--codex-home` exist for tests.
 
 ## Config
 

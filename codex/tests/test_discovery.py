@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
 import multiprocessing
 import multiprocessing.synchronize
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -16,9 +19,11 @@ import pytest
 
 from slashid_codex import discovery
 from slashid_codex.discovery import (
+    DaemonError,
     DaemonInfo,
     acquire_lock,
     config_digest,
+    connect,
     hmac_response,
     in_backoff,
     lock_held,
@@ -181,3 +186,90 @@ def test_client_imports_stdlib_only() -> None:
         m for m in json.loads(out) if m not in sys.stdlib_module_names and not m.startswith("_")
     }
     assert third_party <= {"slashid_codex", "platformdirs"}
+
+
+class _ClosingDaemon:
+    """Answers ``/ping`` correctly, then ``posts`` POSTs; the last answer says
+    ``Connection: close`` (as uvicorn does while shutting down). Then it frees
+    the port to a squatter that records what reaches it."""
+
+    def __init__(self, secret: str, *, posts: int) -> None:
+        self.received = b""
+        self.accepted = threading.Event()
+        self.squatting = threading.Event()
+        self._posts = posts
+        self._secret = secret
+        self._listener = socket.socket()
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen()
+        self.port: int = self._listener.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        conn, _ = self._listener.accept()
+        buffered = b""
+        for answered in range(self._posts + 1):
+            while b"\r\n\r\n" not in buffered:
+                buffered += conn.recv(65536)
+            head, _, buffered = buffered.partition(b"\r\n\r\n")
+            length = int(
+                next(
+                    (
+                        h.split(b":")[1]
+                        for h in head.split(b"\r\n")
+                        if h.lower().startswith(b"content-length")
+                    ),
+                    b"0",
+                )
+            )
+            while len(buffered) < length:
+                buffered += conn.recv(65536)
+            buffered = buffered[length:]
+            if answered == 0:
+                nonce = head.split(b" ")[1].partition(b"nonce=")[2].decode()
+                body = hmac_response(self._secret, nonce).encode()
+            else:
+                body = b"{}"
+            close = b"Connection: close\r\n" if answered == self._posts else b""
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n%s\r\n" % (len(body), close) + body
+            )
+        conn.close()
+        self._listener.close()
+        squatter = socket.socket()
+        squatter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        squatter.bind(("127.0.0.1", self.port))
+        squatter.listen()
+        squatter.settimeout(2)
+        self.squatting.set()
+        with squatter, contextlib.suppress(OSError):
+            peer, _ = squatter.accept()
+            self.accepted.set()
+            with peer:
+                peer.settimeout(1)
+                while chunk := peer.recv(65536):
+                    self.received += chunk
+                    peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+
+
+def test_ping_with_connection_close_fails_the_handshake() -> None:
+    fake = _ClosingDaemon("a" * 64, posts=0)
+    assert (
+        connect(DaemonInfo(fake.port, "a" * 64, 1, "v", "d"), deadline=time.monotonic() + 3) is None
+    )
+    assert fake.squatting.wait(3)
+    assert not fake.accepted.wait(0.5)
+    assert fake.received == b""
+
+
+def test_verified_connection_never_reopens() -> None:
+    fake = _ClosingDaemon("a" * 64, posts=1)
+    conn = connect(DaemonInfo(fake.port, "a" * 64, 1, "v", "d"), deadline=time.monotonic() + 3)
+    assert conn is not None
+    assert conn.post("/hooks/Stop", b"{}", deadline=time.monotonic() + 3) == (200, b"{}")
+    assert fake.squatting.wait(3)
+    with pytest.raises(DaemonError):
+        conn.post("/hooks/UserPromptSubmit", b'{"prompt": "x"}', deadline=time.monotonic() + 3)
+    assert not fake.accepted.wait(0.5)
+    assert fake.received == b""

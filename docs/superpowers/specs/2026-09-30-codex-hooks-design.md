@@ -144,15 +144,15 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 - POSIX: directory `0700`; files created `0600` via `os.open(O_CREAT | O_EXCL, 0o600)` and renamed into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
 - `data.sqlite`: `LocalPlatform`'s database (watermarks), shared with the file records.
 - `created_at`: when the state was first created.
-- `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three files).
+- `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three files), `daemon.stderr` (the daemon's output: crash tracebacks only).
 
 ### Discovery
 
 1. The daemon holds an exclusive lock on `daemon.lock` (`fcntl.flock` / `msvcrt.locking`) for its life. A starting daemon waits up to 3 s for it, then exits if a live daemon holds it.
 2. It binds `127.0.0.1:0`, draws a 32-byte secret, and writes `daemon.json` atomically (temporary file, `os.replace`, retried briefly on Windows where an open reader blocks the replace): `{port, secret, pid, version, config_digest}`, `config_digest` being SHA-256 over the config and token files' bytes.
-3. The client authenticates the daemon before sending anything: `GET /ping?nonce=<random>` must return `HMAC-SHA256(secret, nonce)`. A process that took over a dead daemon's port cannot answer, so it never receives the secret or a payload. The event follows on the same connection with `Authorization: Bearer <secret>`.
-4. If `daemon.json` is missing, the connection is refused or `/ping` fails, the client spawns `slashid-codex daemon` and polls `daemon.json` for up to 1.5 s. The spawn inherits none of the hook's pipes (`stdin=DEVNULL`, output to `daemon.log`, `close_fds=True`), or Codex would wait on them. POSIX: `start_new_session=True` (a closing terminal does not SIGHUP it). Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, retried without breakaway if the job forbids it.
-5. If the spawned daemon exits with an error, or no `daemon.json` appears while no live daemon holds the lock, the client writes `spawn-failed` and skips spawning for 5 minutes. Losing the lock to a live daemon is not a failure. During the backoff the client still uses an existing `daemon.json`.
+3. The client authenticates the daemon before sending anything: `GET /ping?nonce=<random>` must return `HMAC-SHA256(secret, nonce)`. A process that took over a dead daemon's port cannot answer, so it never receives the secret or a payload. The event follows on the same connection with `Authorization: Bearer <secret>`. A ping answered with `Connection: close` (a daemon shutting down) fails the handshake, and the verified connection is never reopened: whoever holds the port by then is unverified. If the ping times out while a live daemon holds the lock, the client waits on it rather than spawning.
+4. If `daemon.json` is missing, the connection is refused or `/ping` fails, the client spawns `<python> -m slashid_codex daemon` with the state dir as its cwd and, for preflight events, polls `daemon.json` for up to 5 s. The spawn inherits none of the hook's pipes (`stdin=DEVNULL`, output to `daemon.stderr`, `close_fds=True`), or Codex would wait on them. POSIX: `start_new_session=True` (a closing terminal does not SIGHUP it). Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, retried without breakaway if the job forbids it.
+5. If the spawned daemon exits with an error, or no `daemon.json` appears while no live daemon holds the lock, the client writes `spawn-failed` and skips spawning for 5 minutes. The backoff is keyed by `version:config_digest`, so a fixed config or token applies at once. Losing the lock to a live daemon is not a failure. During the backoff the client still uses an existing `daemon.json`.
 6. If `version` or `config_digest` differ from the client's, the client calls `POST /shutdown`, which returns once the old daemon has deleted `daemon.json` and released the lock, then spawns a new one. Upgrades, config edits and token rotations take effect on the next hook, at a one-off cost of about 2 s.
 
 ### Requests
@@ -180,9 +180,9 @@ On Linux (measured), a hook-spawned daemon is adopted by `systemd --user` and su
 
 ### When the daemon is unavailable
 
-There is no in-process fallback. Client deadlines sit inside the hook timeouts: `UserPromptSubmit`/`PreToolUse` 9 s (10 s), `Stop`/`SessionStart` 4 s (5 s), `SessionEnd` 2.5 s (3 s).
+There is no in-process fallback. Client deadlines sit inside the hook timeouts: `UserPromptSubmit`/`PreToolUse` 9 s (10 s), `Stop`/`SessionStart` 4 s (5 s), `SessionEnd` 2.5 s (3 s). Socket timeouts are per operation, so a backstop timer writes the event's fail-mode answer just after the deadline and exits, whatever the client is blocked on (reading stdin included). A connection the daemon closes with no answer (it is exiting) is retried once, after discovery. Bad hook arguments print `block` only for a preflight event, unless `verdict_fail_mode` is `allow`; other events get `{}` (`block` on `Stop` continues the turn).
 
-- **Preflight events.** If the daemon is not up within 1.5 s, or the client is in the spawn backoff, the client answers `verdict_fail_mode`: `allow` prints `{}`, `deny` prints `{"decision": "block", "reason": "Failed to start the SlashID Codex daemon."}`. The same applies when the connection breaks mid-request or no verdict arrives by the deadline (with a reason naming that cause).
+- **Preflight events.** If the daemon is not up within 5 s, or the client is in the spawn backoff, the client answers `verdict_fail_mode`: `allow` prints `{}`, `deny` prints `{"decision": "block", "reason": "Failed to start the SlashID Codex daemon."}`. The same applies when the connection breaks mid-request or no verdict arrives by the deadline (with a reason naming that cause).
 - **Trigger events** (`Stop`, `SessionStart`, `SessionEnd`). If the daemon is not reachable, the client spawns it and returns `{}` without waiting; its startup sweep picks the session up. Nothing is lost while it is down: unsent responses stay past their watermark.
 
 ## Session model
@@ -459,7 +459,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 | Failure | Behaviour |
 |---|---|
 | SlashID preflight unreachable, non-200, bad body, over the deadline | `verdict_fail_mode` (`deny`) |
-| Daemon unreachable, not up within 1.5 s, or in spawn backoff | Preflight: `verdict_fail_mode` ("Failed to start the SlashID Codex daemon."); triggers: spawn and return |
+| Daemon unreachable, not up within 5 s, or in spawn backoff | Preflight: `verdict_fail_mode` ("Failed to start the SlashID Codex daemon."); triggers: spawn and return |
 | Daemon hung | Watchdog exits it within 10 s; preflights reaching it meanwhile get `verdict_fail_mode` at the deadline |
 | Connection to the daemon breaks mid-preflight | `verdict_fail_mode` |
 | Daemon accepted a preflight, no verdict by the deadline | `verdict_fail_mode` |

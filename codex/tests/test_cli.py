@@ -12,7 +12,7 @@ import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import pytest
 
@@ -63,6 +63,27 @@ def _out(result: subprocess.CompletedProcess[bytes]) -> Any:
     return json.loads(result.stdout)
 
 
+def _no_exit(code: int) -> None:
+    raise AssertionError(f"backstop exit({code})")
+
+
+def _hook(event: str, daemons: Daemons, stdin: BinaryIO, **kwargs: Any) -> str:
+    """``run_hook`` in process; its one answer."""
+    written: list[str] = []
+    run_hook(
+        event,
+        daemons.config,
+        daemons.state,
+        daemons.codex_home,
+        stdin,
+        write=written.append,
+        exit=_no_exit,
+        **kwargs,
+    )
+    [out] = written
+    return out
+
+
 # --------------------------------------------------------------------------
 # Real daemons
 # --------------------------------------------------------------------------
@@ -80,11 +101,12 @@ def test_first_call_spawns_second_reuses(daemons: Daemons) -> None:
     assert daemons.info() == info
     assert daemons.pids() == [info.pid]
     assert "dry run preflight" in daemons.log()
+    # Output apart from the rotated log; nothing crashed.
+    assert (daemons.state / "daemon.stderr").read_bytes() == b""
 
 
 def test_hook_path_imports_stdlib_only(daemons: Daemons) -> None:
-    assert _out(daemons.hook("Stop", STOP)) == {}
-    daemons.wait_info()
+    daemons.start()
     hook_args = daemons.args("hook", "--event", "UserPromptSubmit")[3:]
     code = (
         "import io, json, sys\n"
@@ -191,8 +213,7 @@ def _restarted(daemons: Daemons, old: DaemonInfo) -> None:
 
 
 def test_version_mismatch_restarts(daemons: Daemons) -> None:
-    assert _out(daemons.hook("Stop", STOP)) == {}
-    old = daemons.wait_info()
+    old = daemons.start()
     write_daemon_json(
         daemons.state,
         DaemonInfo(old.port, old.secret, old.pid, "0.0.0-old", old.config_digest),
@@ -201,15 +222,13 @@ def test_version_mismatch_restarts(daemons: Daemons) -> None:
 
 
 def test_config_change_restarts(daemons: Daemons) -> None:
-    assert _out(daemons.hook("Stop", STOP)) == {}
-    old = daemons.wait_info()
+    old = daemons.start()
     daemons.write_config(daemon_idle_seconds=601)
     _restarted(daemons, old)
 
 
 def test_token_change_restarts(daemons: Daemons) -> None:
-    assert _out(daemons.hook("Stop", STOP)) == {}
-    old = daemons.wait_info()
+    old = daemons.start()
     (daemons.root / "token").write_text("u" * 32)
     _restarted(daemons, old)
 
@@ -220,27 +239,23 @@ def test_daemon_cannot_start(daemons: Daemons, mode: str) -> None:
     first = _out(daemons.hook("UserPromptSubmit", UPS))
     assert first == (BLOCK_UNAVAILABLE if mode == "deny" else {})
     assert in_backoff(daemons.state, spawn_key(daemons.config))
-    starts = daemons.log().count("starting")
-    assert starts == 1
-    assert _out(daemons.hook("UserPromptSubmit", UPS)) == first
-    # Triggers do not spawn during the backoff either.
-    assert _out(daemons.hook("Stop", STOP)) == {}
-    time.sleep(0.5)
     assert daemons.log().count("starting") == 1
+    spawned: list[list[str]] = []
+
+    def spawn(argv: list[str], *_: Path) -> FakeProcess:
+        spawned.append(argv)
+        return FakeProcess()
+
+    assert json.loads(_hook("UserPromptSubmit", daemons, io.BytesIO(UPS), spawn=spawn)) == first
+    # Triggers do not spawn during the backoff either.
+    assert json.loads(_hook("Stop", daemons, io.BytesIO(STOP), spawn=spawn)) == {}
+    assert spawned == []
 
 
 def test_daemon_started_during_backoff_used(daemons: Daemons) -> None:
     daemons.state.mkdir(parents=True)
     record_spawn_failure(daemons.state, spawn_key(daemons.config))
-    process = subprocess.Popen(
-        daemons.args("daemon"),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    info = daemons.wait_info()
-    assert info.pid == process.pid
+    info = daemons.start()
     assert not (daemons.state / "spawn-failed").exists()
     assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
     assert daemons.info() == info
@@ -252,6 +267,7 @@ def test_trigger_spawns_without_waiting(daemons: Daemons) -> None:
     assert alive(info.pid)
 
 
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="counts daemons in /proc")
 def test_racing_starts_one_daemon(daemons: Daemons) -> None:
     procs = [
         subprocess.Popen(
@@ -281,15 +297,59 @@ def test_stdin_too_large(daemons: Daemons) -> None:
     assert daemons.info() is None
 
 
-def test_bad_arguments_block(daemons: Daemons) -> None:
+def test_bad_arguments_subprocess() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "slashid_codex", "hook", "--event", "Nope"],
+        [sys.executable, "-m", "slashid_codex", "hook", "--event", "PreToolUse"],
         input=b"{}",
         capture_output=True,
         timeout=30,
     )
     assert result.returncode == 0
-    assert json.loads(result.stdout)["decision"] == "block"
+    assert json.loads(result.stdout) == {"decision": "block", "reason": cli.BAD_ARGUMENTS}
+
+
+@pytest.mark.parametrize(
+    ("event", "mode", "blocks"),
+    [
+        ("UserPromptSubmit", "deny", True),
+        ("PreToolUse", "deny", True),
+        ("PreToolUse", "allow", False),
+        ("PreToolUse", None, True),
+        # ``block`` on ``Stop`` would continue the turn.
+        ("Stop", "deny", False),
+        ("SessionStart", "deny", False),
+        ("SessionEnd", "deny", False),
+        ("Nope", "deny", False),
+        (None, "deny", False),
+    ],
+)
+@pytest.mark.parametrize("equals", [False, True])
+def test_bad_arguments(
+    daemons: Daemons,
+    capsys: pytest.CaptureFixture[str],
+    event: str | None,
+    mode: str | None,
+    blocks: bool,
+    equals: bool,
+) -> None:
+    if mode is not None:
+        daemons.write_config(verdict_fail_mode=mode)
+    config = str(daemons.config if mode is not None else daemons.root / "missing.toml")
+    argv = ["hook", "--bogus"]
+    if equals:
+        argv += [f"--config={config}"] + ([f"--event={event}"] if event else [])
+    else:
+        argv += ["--config", config] + (["--event", event] if event else [])
+    assert cli.main(argv) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out == ({"decision": "block", "reason": cli.BAD_ARGUMENTS} if blocks else {})
+
+
+def test_stdin_over_the_cap_drained(daemons: Daemons) -> None:
+    stdin = io.BytesIO(b" " * (cli.MAX_STDIN_BYTES + 5 * 65536))
+    out = _hook("PreToolUse", daemons, stdin)
+    assert json.loads(out) == {"decision": "block", "reason": PAYLOAD_TOO_LARGE}
+    assert stdin.read() == b""
 
 
 # --------------------------------------------------------------------------
@@ -300,9 +360,11 @@ def test_bad_arguments_block(daemons: Daemons) -> None:
 class FakeDaemon:
     """Answers ``/ping`` correctly; ``/hooks/*`` per ``mode``."""
 
-    def __init__(self, state: Path, config: Path, mode: str) -> None:
+    def __init__(self, state: Path, config: Path, mode: str, *, ping_delay: float = 0) -> None:
         self.release = threading.Event()
         self.secret = "f" * 64
+        self.posts = 0
+        self.pings = 0
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -312,6 +374,8 @@ class FakeDaemon:
                 pass
 
             def do_GET(self) -> None:
+                fake.pings += 1
+                fake.release.wait(ping_delay)
                 nonce = self.path.partition("nonce=")[2]
                 body = hmac_response(fake.secret, nonce).encode()
                 self.send_response(200)
@@ -321,8 +385,21 @@ class FakeDaemon:
 
             def do_POST(self) -> None:
                 self.rfile.read(int(self.headers["Content-Length"]))
+                fake.posts += 1
                 if mode == "slow":
                     fake.release.wait(30)
+                elif mode == "trickle":
+                    # Each byte inside any per-operation timeout.
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+                    while not fake.release.wait(0.05):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                elif mode == "allow":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+                    return
                 self.close_connection = True
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -354,14 +431,7 @@ def test_slow_daemon_answered_at_deadline(daemons: Daemons, event: str, mode: st
     fake = FakeDaemon(daemons.state, daemons.config, "slow")
     try:
         start = time.monotonic()
-        out = run_hook(
-            event,
-            daemons.config,
-            daemons.state,
-            daemons.codex_home,
-            io.BytesIO(UPS),
-            deadlines={event: 0.3},
-        )
+        out = _hook(event, daemons, io.BytesIO(UPS), deadlines={event: 0.3})
         elapsed = time.monotonic() - start
     finally:
         fake.close()
@@ -370,6 +440,121 @@ def test_slow_daemon_answered_at_deadline(daemons: Daemons, event: str, mode: st
         assert json.loads(out) == {"decision": "block", "reason": DAEMON_TIMEOUT}
     else:
         assert json.loads(out) == {}
+
+
+class Backstop:
+    """``run_hook`` on a thread, with its writes and exits recorded."""
+
+    def __init__(self, event: str, daemons: Daemons, stdin: BinaryIO, deadline: float) -> None:
+        self.written: list[str] = []
+        self.exits: list[int] = []
+        self.exited = threading.Event()
+        self.start = time.monotonic()
+        self.elapsed = 0.0
+
+        def exit(code: int) -> None:
+            self.elapsed = time.monotonic() - self.start
+            self.exits.append(code)
+            self.exited.set()
+
+        self.thread = threading.Thread(
+            target=run_hook,
+            args=(event, daemons.config, daemons.state, daemons.codex_home, stdin),
+            kwargs={"deadlines": {event: deadline}, "write": self.written.append, "exit": exit},
+            daemon=True,
+        )
+        self.thread.start()
+
+
+@pytest.mark.parametrize("event", ["UserPromptSubmit", "Stop"])
+@pytest.mark.parametrize("mode", ["deny", "allow"])
+def test_trickling_daemon_cut_off_at_the_deadline(daemons: Daemons, event: str, mode: str) -> None:
+    daemons.write_config(verdict_fail_mode=mode)
+    fake = FakeDaemon(daemons.state, daemons.config, "trickle")
+    try:
+        run = Backstop(event, daemons, io.BytesIO(UPS), 0.4)
+        assert run.exited.wait(5)
+    finally:
+        fake.close()
+    run.thread.join(5)
+    assert 0.35 <= run.elapsed < 1.0
+    assert run.exits == [0]
+    # The client's own answer, once the trickle stops, is not printed.
+    [out] = run.written
+    if event == "UserPromptSubmit" and mode == "deny":
+        assert json.loads(out) == {"decision": "block", "reason": cli.HOOK_TIMEOUT}
+    else:
+        assert json.loads(out) == {}
+
+
+def test_stdin_never_closed_cut_off_at_the_deadline(daemons: Daemons) -> None:
+    read, write = os.pipe()
+    try:
+        with open(read, "rb", buffering=0) as stdin:
+            run = Backstop("PreToolUse", daemons, stdin, 0.3)
+            assert run.exited.wait(5)
+            os.close(write)
+            run.thread.join(5)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(write)
+    assert run.exits == [0]
+    assert [json.loads(o) for o in run.written] == [
+        {"decision": "block", "reason": cli.HOOK_TIMEOUT}
+    ]
+
+
+def test_answer_in_time_cancels_the_backstop(daemons: Daemons) -> None:
+    fake = FakeDaemon(daemons.state, daemons.config, "allow")
+    try:
+        run = Backstop("PreToolUse", daemons, io.BytesIO(UPS), 0.3)
+        run.thread.join(5)
+        assert not run.exited.wait(0.5)
+    finally:
+        fake.close()
+    assert run.written == ["{}"]
+
+
+def test_slow_ping_from_a_live_daemon_retried_not_respawned(daemons: Daemons) -> None:
+    daemons.state.mkdir(parents=True)
+    lock = acquire_lock(daemons.state / "daemon.lock", wait=0)
+    assert lock is not None
+    fake = FakeDaemon(daemons.state, daemons.config, "allow", ping_delay=cli.PING_TIMEOUT_S + 0.1)
+    spawned: list[list[str]] = []
+    try:
+        out = _hook(
+            "PreToolUse",
+            daemons,
+            io.BytesIO(UPS),
+            spawn=lambda argv, *_: spawned.append(argv) or FakeProcess(),
+        )
+    finally:
+        fake.close()
+        lock.release()
+    assert json.loads(out) == {}
+    assert spawned == []
+    assert fake.pings == 2
+
+
+def test_silent_live_daemon_not_respawned(daemons: Daemons) -> None:
+    daemons.state.mkdir(parents=True)
+    lock = acquire_lock(daemons.state / "daemon.lock", wait=0)
+    assert lock is not None
+    fake = FakeDaemon(daemons.state, daemons.config, "allow", ping_delay=30)
+    spawned: list[list[str]] = []
+    try:
+        out = _hook(
+            "PreToolUse",
+            daemons,
+            io.BytesIO(UPS),
+            deadlines={"PreToolUse": 1.3},
+            spawn=lambda argv, *_: spawned.append(argv) or FakeProcess(),
+        )
+    finally:
+        fake.close()
+        lock.release()
+    assert json.loads(out) == BLOCK_UNAVAILABLE
+    assert spawned == []
 
 
 def test_deadlines() -> None:
@@ -385,12 +570,12 @@ def test_deadlines() -> None:
 def test_connection_broken_mid_request(daemons: Daemons) -> None:
     fake = FakeDaemon(daemons.state, daemons.config, "close")
     try:
-        out = run_hook(
-            "PreToolUse", daemons.config, daemons.state, daemons.codex_home, io.BytesIO(UPS)
-        )
+        out = _hook("PreToolUse", daemons, io.BytesIO(UPS))
     finally:
         fake.close()
     assert json.loads(out) == {"decision": "block", "reason": DAEMON_BROKEN}
+    # Closed with no answer: asked again once, after discovery.
+    assert fake.posts == 2
 
 
 class FakeProcess:
@@ -404,19 +589,12 @@ class FakeProcess:
 def test_trigger_spawn_does_not_wait(daemons: Daemons) -> None:
     spawned: list[list[str]] = []
 
-    def spawn(argv: list[str], cwd: Path, log_path: Path) -> FakeProcess:
+    def spawn(argv: list[str], cwd: Path, stderr_path: Path) -> FakeProcess:
         spawned.append(argv)
         return FakeProcess()
 
     start = time.monotonic()
-    out = run_hook(
-        "SessionEnd",
-        daemons.config,
-        daemons.state,
-        daemons.codex_home,
-        io.BytesIO(b"{}"),
-        spawn=spawn,
-    )
+    out = _hook("SessionEnd", daemons, io.BytesIO(b"{}"), spawn=spawn)
     assert time.monotonic() - start < 0.3
     assert json.loads(out) == {}
     [argv] = spawned
@@ -431,34 +609,54 @@ def test_trigger_spawn_does_not_wait(daemons: Daemons) -> None:
     ]
 
 
-def test_spawn_polled_for_1_5_s(daemons: Daemons) -> None:
-    start = time.monotonic()
-    out = run_hook(
-        "UserPromptSubmit",
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_spawn_polled_for_5_s(daemons: Daemons) -> None:
+    daemons.state.mkdir(parents=True)
+    clock = FakeClock()
+    client = Client(
         daemons.config,
         daemons.state,
-        daemons.codex_home,
-        io.BytesIO(UPS),
+        None,
         spawn=lambda *_: FakeProcess(),
+        monotonic=clock,
+        sleep=clock.sleep,
     )
-    assert 1.4 <= time.monotonic() - start < 2.5
-    assert json.loads(out) == BLOCK_UNAVAILABLE
+    assert client.connect(9.0, wait=True) is None
+    assert 5.0 <= clock.now < 5.0 + 2 * cli.POLL_S
     assert in_backoff(daemons.state, spawn_key(daemons.config))
+
+
+def test_spawn_wait_inside_the_preflight_deadline() -> None:
+    assert cli.SPAWN_WAIT_S == 5.0
+    budget = cli.PING_TIMEOUT_S + cli.SHUTDOWN_TIMEOUT_S + cli.SPAWN_WAIT_S
+    assert budget < DEADLINES["PreToolUse"]
 
 
 def test_spawn_holding_the_lock_is_not_a_failure(daemons: Daemons) -> None:
     daemons.state.mkdir(parents=True)
     lock = acquire_lock(daemons.state / "daemon.lock", wait=0)
     assert lock is not None
+    clock = FakeClock()
     try:
         client = Client(
             daemons.config,
             daemons.state,
             None,
             spawn=lambda *_: FakeProcess(),
-            sleep=lambda _: None,
+            monotonic=clock,
+            sleep=clock.sleep,
         )
-        assert client.connect(time.monotonic() + 9, wait=True) is None
+        assert client.connect(9.0, wait=True) is None
     finally:
         lock.release()
     assert not in_backoff(daemons.state, spawn_key(daemons.config))
@@ -491,21 +689,22 @@ class Popen:
         return object()
 
 
-def _common(kwargs: dict[str, Any], log_path: Path) -> None:
+def _common(kwargs: dict[str, Any], stderr_path: Path) -> None:
     assert kwargs["stdin"] == subprocess.DEVNULL
     assert kwargs["close_fds"] is True
     assert kwargs["stdout"] is kwargs["stderr"]
     assert kwargs["stdout"] not in (None, subprocess.PIPE)
-    assert log_path.exists()
+    assert stderr_path.exists()
+    assert not (stderr_path.parent / "daemon.log").exists()
 
 
 def test_spawn_flags_posix(tmp_path: Path) -> None:
     popen = Popen()
     spawn_daemon(
-        ["x"], cwd=tmp_path, log_path=tmp_path / "daemon.log", popen=popen, platform="linux"
+        ["x"], cwd=tmp_path, stderr_path=tmp_path / "daemon.stderr", popen=popen, platform="linux"
     )
     [kwargs] = popen.calls
-    _common(kwargs, tmp_path / "daemon.log")
+    _common(kwargs, tmp_path / "daemon.stderr")
     assert kwargs["start_new_session"] is True
     assert "creationflags" not in kwargs
 
@@ -514,7 +713,7 @@ def test_spawn_flags_posix(tmp_path: Path) -> None:
 def test_spawn_flags_windows(tmp_path: Path, fail_breakaway: bool) -> None:
     popen = Popen(fail_breakaway)
     spawn_daemon(
-        ["x"], cwd=tmp_path, log_path=tmp_path / "daemon.log", popen=popen, platform="win32"
+        ["x"], cwd=tmp_path, stderr_path=tmp_path / "daemon.stderr", popen=popen, platform="win32"
     )
     detached = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     flags = [c["creationflags"] for c in popen.calls]
@@ -523,5 +722,5 @@ def test_spawn_flags_windows(tmp_path: Path, fail_breakaway: bool) -> None:
     else:
         assert flags == [detached | CREATE_BREAKAWAY_FROM_JOB]
     for kwargs in popen.calls:
-        _common(kwargs, tmp_path / "daemon.log")
+        _common(kwargs, tmp_path / "daemon.stderr")
         assert "start_new_session" not in kwargs

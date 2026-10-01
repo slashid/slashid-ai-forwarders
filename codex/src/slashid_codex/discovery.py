@@ -29,6 +29,9 @@ APP_AUTHOR = "slashid"
 INFO_FILE = "daemon.json"
 LOCK_FILE = "daemon.lock"
 LOG_FILE = "daemon.log"
+# The daemon's stdout and stderr: crash tracebacks only. Kept apart from the
+# rotated log, which Windows could not rename while a handle held it open.
+STDERR_FILE = "daemon.stderr"
 SPAWN_FAILED_FILE = "spawn-failed"
 SPAWN_BACKOFF_S = 300.0
 LOCK_POLL_S = 0.05
@@ -278,11 +281,18 @@ class DaemonError(Exception):
     """The connection broke, or the daemon answered something unusable."""
 
 
+class DaemonGone(DaemonError):
+    """The connection closed before any answer: the daemon exited or is
+    exiting. Asking again, after discovery, is safe."""
+
+
 class DaemonConnection:
     """A kept-alive connection whose peer answered ``/ping`` with the secret's
-    HMAC; only then does the secret go out."""
+    HMAC; only then does the secret go out. It never reconnects: whoever holds
+    the port then is unverified."""
 
     def __init__(self, conn: http.client.HTTPConnection, info: DaemonInfo) -> None:
+        conn.auto_open = 0
         self._conn = conn
         self.info = info
 
@@ -301,6 +311,14 @@ class DaemonConnection:
             )
             _set_timeout(self._conn, deadline)
             response = self._conn.getresponse()
+        except TimeoutError:
+            raise
+        except (http.client.NotConnected, ConnectionError) as exc:
+            # ``RemoteDisconnected`` is a ``ConnectionResetError``.
+            raise DaemonGone(repr(exc)) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            raise DaemonError(repr(exc)) from exc
+        try:
             return response.status, response.read()
         except TimeoutError:
             raise
@@ -321,7 +339,10 @@ def _set_timeout(conn: http.client.HTTPConnection, deadline: float) -> None:
 
 
 def connect(info: DaemonInfo, *, deadline: float) -> DaemonConnection | None:
-    """``None`` unless the peer proves it knows the secret before ``deadline``."""
+    """``None`` unless the peer proves it knows the secret before ``deadline``
+    on a connection it keeps open (one it closes, as an exiting daemon does,
+    would be reopened to whoever holds the port next). Raises
+    ``TimeoutError`` if the peer is silent until ``deadline``."""
     conn = http.client.HTTPConnection("127.0.0.1", info.port)
     nonce = secrets.token_hex(16)
     try:
@@ -331,11 +352,15 @@ def connect(info: DaemonInfo, *, deadline: float) -> DaemonConnection | None:
         response = conn.getresponse()
         answer = response.read(_MAX_PING_BYTES)
         complete = response.isclosed() or response.length == 0
+    except TimeoutError:
+        conn.close()
+        raise
     except (OSError, http.client.HTTPException):
         conn.close()
         return None
     if (
         response.status != 200
+        or response.will_close
         or not complete
         or not verify_ping(info.secret, nonce, answer.decode("ascii", "replace"))
     ):
@@ -353,18 +378,18 @@ def spawn_daemon(
     argv: list[str],
     *,
     cwd: Path,
-    log_path: Path,
+    stderr_path: Path,
     popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
     platform: str = sys.platform,
 ) -> subprocess.Popen[bytes]:
     """Detached and holding none of the hook's pipes, or Codex would wait on it."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
-    log: IO[bytes] = os.fdopen(os.open(log_path, flags, 0o600), "ab")
-    with log:
+    output: IO[bytes] = os.fdopen(os.open(stderr_path, flags, 0o600), "ab")
+    with output:
         common: dict[str, Any] = {
             "stdin": subprocess.DEVNULL,
-            "stdout": log,
-            "stderr": log,
+            "stdout": output,
+            "stderr": output,
             "close_fds": True,
             "cwd": cwd,
         }
