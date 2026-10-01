@@ -68,11 +68,13 @@ Every payload carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`,
 
 | | Function mode (desktop app) | Script mode (`codex exec`) |
 |---|---|---|
-| Model's call | `function_call` `exec_command` `{cmd, workdir, …}`, `view_image` `{path, detail}` | one `custom_tool_call` `exec` whose input is JavaScript (`tools.exec_command({cmd:"cat note.txt"})`) |
+| Model's call | `function_call` `exec_command` `{cmd, workdir, …}`, `view_image` `{path, detail}` | one `custom_tool_call` `exec` whose input is JavaScript run in a V8 isolate ("code mode"): every tool is a method on `tools` (`await tools.exec_command({cmd:"cat note.txt"})`, `tools.mcp__<server>__<tool>(…)`), and `text(value)` appends a text item to the call's output |
 | Hook `tool_name` / `tool_input` | `Bash` / `{"command": "sed -n '1,240p' /…/banana-bread.md"}`; `view_image` / `{"path", "detail"}` | `Bash` / `{"command": "cat note.txt"}` |
 | Hook `tool_use_id` | `call_…`, equal to the rollout `call_id` and the `item_completed` id | `exec-<uuid>`, only on the `item_completed` item; shares no field with the call |
 
 `PostToolUse.tool_response` is a string for `Bash` and a list with one `input_image` part (`data:application/octet-stream;base64,…`) for `view_image`.
+
+The `exec` tool's description, bundled in the codex binary, also defines `image()`, `audio()`, `generatedImage()`, `notify()` (an extra `custom_tool_call_output` for the same call, sent immediately), `store()`/`load()`, `exit()`, `setTimeout()`, `yield_control()`, `ALL_TOOLS`, and an optional first line `// @exec: {"yield_time_ms": …, "max_output_tokens": …}`.
 
 ### Attachments
 
@@ -219,8 +221,9 @@ These rules fold the log into a cursor's state.
 - `response_item`s append to `pending`. Model-produced items written since the previous `token_usage_record` (assistant `message`, `reasoning`, `*_call`) are the current response's output; everything before is its input.
 - **Shell calls are `Bash`.** The hook calls the shell tool `Bash`; the model calls `exec_command` (function mode) or `exec` (script mode). Each call is mapped as it is read, from its own line; outputs follow their call and `call_id`s are kept.
   - `function_call("exec_command", {cmd, workdir, …})` → `Bash` with `{command: cmd, workdir}`. Name, id and command equal the hook's.
-  - `custom_tool_call("exec", <js>)` whose whole script is one tool call, optionally wrapped in `text(await …)` (`text(await tools.exec_command({cmd:"cat note.txt",max_output_tokens:10000}));`): the call is unwrapped as if it were that tool's function call, so `tools.exec_command({cmd, …})` → `Bash` with `{command: cmd, workdir}` and `tools.view_image({path})` → `view_image`. The object literal is parsed as JSON after quoting its bare keys; if that fails, it does not match.
+  - `custom_tool_call("exec", <js>)` whose whole script, after an optional `// @exec:` first line, is one tool call, bare or wrapped in `text(await …)` (`text(await tools.exec_command({cmd:"cat note.txt",max_output_tokens:10000}));`): `tools.xyz(args)` is the same tool as function mode's `xyz`, so it is unwrapped into that call: `tools.exec_command({cmd, …})` → `Bash` with `{command: cmd, workdir}`, `tools.view_image({path})` → `view_image`, `tools.mcp__s__t(args)` → `mcp__s__t`. The argument is a string or an object literal, parsed as JSON after quoting bare keys; if that fails, it does not match.
   - Any other script stays `exec` with its JavaScript as input.
+  - All `custom_tool_call_output` items with the call's `call_id` belong to it (`notify()` adds extra ones).
   - In script mode the hook's `tool_use_id` (`exec-<uuid>`) is not linked to the call's `call_id`, a documented limitation.
 - `token_usage_record` closes the response: request `{instructions: base_instructions, input: <input items>}`, response `{id: response_id, output: <output items>, status: "completed", usage}`. The response moves to `committed` and is returned by `next_closed()`.
 - A tool result's `is_error` comes from the `CommandExecution` with the same id (`exit_code`, `status`) in function mode, and is `false` in script mode, where no item links to the call.
