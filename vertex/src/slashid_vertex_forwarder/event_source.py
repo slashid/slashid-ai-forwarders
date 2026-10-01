@@ -38,6 +38,9 @@ from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
 from .audit_source import AuditEntry, _credential_chain
 
 if TYPE_CHECKING:
+    from google.cloud.bigquery import Client as BigQueryClient
+    from google.cloud.logging import Client as LoggingClient
+
     from .config import Config
 
 log = logging.getLogger(__name__)
@@ -266,9 +269,7 @@ class BqEventSource:
     def __init__(
         self,
         *,
-        # google.cloud.bigquery.Client — kept untyped so GCP client deps don't
-        # bleed into the type-check surface (they're runtime-only).
-        client: Any,
+        client: BigQueryClient,
         checkpoint_store: CheckpointStore,
         config: Config,
         project_id: str,
@@ -285,7 +286,7 @@ class BqEventSource:
         self._region = region
         self._max_rows_per_tick = max_rows_per_tick
         self._audit_buffer_seconds = audit_buffer_seconds
-        self._logging_client: Any = None
+        self._logging_client: LoggingClient | None = None
 
     def _read_payload_rows(self, checkpoint: Checkpoint) -> _Scan:
         """The blocking BigQuery half: run the query and walk every raw row,

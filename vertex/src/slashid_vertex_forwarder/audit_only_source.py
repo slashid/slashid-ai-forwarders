@@ -34,7 +34,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
@@ -45,6 +45,8 @@ from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
 from .audit_source import AuditEntry
 
 if TYPE_CHECKING:
+    from google.cloud.logging import Client as LoggingClient
+
     from .config import Config
 
 log = logging.getLogger(__name__)
@@ -52,7 +54,7 @@ log = logging.getLogger(__name__)
 
 def query_audit_only_entries(
     *,
-    client: Any,  # google.cloud.logging.Client (REST transport)
+    client: LoggingClient,
     project_id: str,
     regions: Sequence[str],
     checkpoint: Checkpoint,
@@ -149,9 +151,7 @@ class AuditOnlyEventSource:
     def __init__(
         self,
         *,
-        # google.cloud.logging.Client (REST transport) — kept untyped so
-        # GCP client deps don't bleed into the type-check surface.
-        logging_client: Any,
+        logging_client: LoggingClient,
         checkpoint_store: CheckpointStore,
         project_id: str,
         regions: Sequence[str],

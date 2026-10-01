@@ -6,9 +6,10 @@ import asyncio
 import json
 import pathlib
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from pydantic import BaseModel
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
@@ -76,7 +77,7 @@ def a_store(**over: Any) -> FirestorePendingStore:
 def fake(store: FirestorePendingStore) -> FakeFirestore:
     """The fake behind a store. The one place that knows the adapter keeps
     its client private, so a rename there is one edit and not twenty."""
-    return store._client
+    return cast(FakeFirestore, store._client)
 
 
 def an_event(address: str = ADDRESS) -> AIInvocationObservedV1:
@@ -242,7 +243,9 @@ async def test_the_flush_pushes_what_claim_returned_not_what_due_returned() -> N
             return await super().claim(address, lease, **kwargs)
 
     store = LateCompleter(
-        client=FakeFirestore(), collection="anthropic_pending", join_wait=JOIN_WAIT
+        client=cast(FirestoreAsyncClient, FakeFirestore()),
+        collection="anthropic_pending",
+        join_wait=JOIN_WAIT,
     )
     sink = Sink()
     await seed(store)

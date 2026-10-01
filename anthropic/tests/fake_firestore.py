@@ -30,7 +30,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
-from google.cloud.firestore_v1 import AsyncClient
+from google.cloud.firestore_v1 import AsyncClient as FirestoreAsyncClient
 from google.cloud.firestore_v1.transforms import ArrayRemove, ArrayUnion
 
 
@@ -172,7 +172,7 @@ class FakeFirestore:
     """``docs`` maps ``"<collection>/<id>"`` to ``(data, update_time)``."""
 
     # Static on the real client too, so the store's call site is identical.
-    write_option = staticmethod(AsyncClient.write_option)
+    write_option = staticmethod(FirestoreAsyncClient.write_option)
 
     def __init__(self) -> None:
         self.docs: dict[str, tuple[dict[str, Any], int]] = {}

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.events import (
     AIInvocationContent,
     AIInvocationObservedV1,
@@ -35,7 +37,7 @@ def a_store(
     client = FakeFirestore()
     return (
         FirestorePendingStore(
-            client=client,
+            client=cast(FirestoreAsyncClient, client),
             collection="anthropic_pending",
             join_wait=join_wait,
             tombstone_ttl=tombstone_ttl,
@@ -370,7 +372,9 @@ TICK = timedelta(minutes=10)
 
 def a_lease(client: FakeFirestore | None = None) -> tuple[FirestoreTickLease, FakeFirestore]:
     fake = client or FakeFirestore()
-    return FirestoreTickLease(client=fake, collection="anthropic_pending", document="tick"), fake
+    return FirestoreTickLease(
+        client=cast(FirestoreAsyncClient, fake), collection="anthropic_pending", document="tick"
+    ), fake
 
 
 async def test_the_lease_document_is_invisible_to_the_sweep() -> None:

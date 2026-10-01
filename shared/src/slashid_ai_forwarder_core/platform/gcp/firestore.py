@@ -9,6 +9,8 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
+
 from ..checkpoint import Checkpoint
 
 log = logging.getLogger(__name__)
@@ -25,7 +27,7 @@ class FirestoreCheckpointStore:
     def __init__(
         self,
         *,
-        client: Any,  # google.cloud.firestore.AsyncClient, untyped as in BqEventSource
+        client: FirestoreAsyncClient,
         collection: str,
         document: str,
     ) -> None:
@@ -69,8 +71,10 @@ class FirestoreTickLease:
     time. It may share a collection with other documents, as long as no
     query there matches ``tick_owner`` / ``tick_expires_at``."""
 
-    def __init__(self, *, client: Any, collection: str, document: str = "tick") -> None:
-        self._client = client  # google.cloud.firestore.AsyncClient
+    def __init__(
+        self, *, client: FirestoreAsyncClient, collection: str, document: str = "tick"
+    ) -> None:
+        self._client = client
         self._ref = client.collection(collection).document(document)
 
     @contextlib.asynccontextmanager
