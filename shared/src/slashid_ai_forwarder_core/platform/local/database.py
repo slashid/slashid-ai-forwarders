@@ -7,6 +7,7 @@ from pathlib import Path
 import aiosqlite
 
 MEMORY = ":memory:"
+DATABASE = "data.sqlite"
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS checkpoints ("

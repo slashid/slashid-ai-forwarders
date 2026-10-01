@@ -2,8 +2,8 @@
 
 Needs the ``[local]`` extra. ``create_local_platform`` opens the database and
 closes it when the block ends; ``LocalPlatform`` wraps the open connection.
-Blobs are files: beside a database file, or in a temporary directory for
-``:memory:``.
+State lives in one directory: ``data.sqlite`` and ``blobs/``. With no
+directory it lives in memory, and blobs in a temporary directory.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 import aiosqlite
 
 from .. import SchedulerAuth
-from .database import MEMORY, open_database
+from .database import DATABASE, MEMORY, open_database
 from .stores import LocalBlobSink, LocalCheckpointStore, LocalTickLease, token_check
 
 
@@ -55,15 +55,18 @@ class LocalPlatform:
 
 
 @asynccontextmanager
-async def create_local_platform(path: str | Path) -> AsyncIterator[LocalPlatform]:
-    """``path`` is a file, or ``":memory:"``; where a file belongs is the
-    caller's decision. Blobs go in ``<path>.blobs/``, or for ``:memory:`` in a
-    temporary directory removed when the block ends."""
+async def create_local_platform(path: str | Path | None) -> AsyncIterator[LocalPlatform]:
+    """``path`` is a directory, created if it is missing: the database is
+    ``<path>/data.sqlite`` and blobs go under ``<path>/blobs/``. ``None`` keeps
+    everything in memory, with blobs in a temporary directory removed when the
+    block ends. Where the directory belongs is the caller's decision."""
     async with AsyncExitStack() as stack:
-        db = await open_database(path)
-        stack.push_async_callback(db.close)
-        if str(path) == MEMORY:
+        if path is None:
+            db = await open_database(MEMORY)
             blobs = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="slashid-blobs-")))
         else:
-            blobs = Path(f"{path}.blobs")
+            root = Path(path)
+            db = await open_database(root / DATABASE)
+            blobs = root / "blobs"
+        stack.push_async_callback(db.close)
         yield LocalPlatform(db, blobs=blobs)

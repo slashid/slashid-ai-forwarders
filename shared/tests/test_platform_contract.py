@@ -35,7 +35,7 @@ async def platform(request: pytest.FixtureRequest) -> AsyncIterator[Platform]:
         built.__dict__["firestore"] = FakeFirestore()  # what the cached property would build
         yield built
     else:
-        async with create_local_platform(":memory:") as local:
+        async with create_local_platform(None) as local:
             yield local
 
 

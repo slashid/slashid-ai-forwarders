@@ -21,7 +21,7 @@ TICK = timedelta(minutes=10)
 
 @pytest.fixture
 async def platform() -> AsyncIterator[LocalPlatform]:
-    async with create_local_platform(":memory:") as built:
+    async with create_local_platform(None) as built:
         yield built
 
 
@@ -31,11 +31,11 @@ async def test_the_sqlite_property_is_the_open_connection(platform: LocalPlatfor
 
 
 async def test_get_resolves_the_local_platform() -> None:
-    async with platforms.get("local", path=":memory:") as built:
+    async with platforms.get("local", path=None) as built:
         assert isinstance(built, LocalPlatform)
 
 
-def test_a_missing_path_is_a_type_error() -> None:
+def test_the_path_is_required_even_when_it_is_none() -> None:
     with pytest.raises(TypeError):
         platforms.get("local")
 
@@ -116,13 +116,12 @@ async def test_binary_data_round_trips_as_bytes(platform: LocalPlatform) -> None
     assert await sink.get("n") == data
 
 
-async def test_a_file_database_keeps_blobs_as_files_beside_it(tmp_path: Path) -> None:
-    path = tmp_path / "data.sqlite"
-    async with create_local_platform(path) as built:
+async def test_a_directory_platform_keeps_blobs_as_files_under_blobs(tmp_path: Path) -> None:
+    async with create_local_platform(tmp_path) as built:
         sink = built.blob_sink("capture")
         await sink.put("2026/frame.json", b"{}", content_type="application/json")
-        file = tmp_path / "data.sqlite.blobs" / "capture" / "2026" / "frame.json"
-        assert built.blobs == tmp_path / "data.sqlite.blobs"
+        file = tmp_path / "blobs" / "capture" / "2026" / "frame.json"
+        assert built.blobs == tmp_path / "blobs"
         assert file.read_bytes() == b"{}"
         # written through a temporary file that is renamed into place
         assert [p.name for p in file.parent.iterdir()] == ["frame.json"]
@@ -130,7 +129,7 @@ async def test_a_file_database_keeps_blobs_as_files_beside_it(tmp_path: Path) ->
 
 
 async def test_a_memory_database_keeps_blobs_in_a_temporary_directory() -> None:
-    async with create_local_platform(":memory:") as built:
+    async with create_local_platform(None) as built:
         await built.blob_sink("b").put("n", b"x", content_type="text/plain")
         kept = built.blobs
         assert (kept / "b" / "n").read_bytes() == b"x"
@@ -176,14 +175,12 @@ async def test_an_unset_principal_refuses_every_token(platform: LocalPlatform) -
 # --- location and lifecycle --------------------------------------------------
 
 
-async def test_a_file_database_creates_its_parent_and_outlives_the_platform(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "missing" / "data.sqlite"
+async def test_the_directory_is_created_and_holds_the_database(tmp_path: Path) -> None:
+    path = tmp_path / "not" / "yet" / "there"
     when = datetime(2026, 9, 5, tzinfo=UTC)
     async with create_local_platform(path) as first:
         await first.checkpoint_store(collection="c", document="d").save(Checkpoint(when, "7"))
-    assert path.exists()
+    assert (path / "data.sqlite").is_file()
     async with create_local_platform(path) as second:
         assert await second.checkpoint_store(collection="c", document="d").load() == Checkpoint(
             when, "7"
@@ -191,7 +188,7 @@ async def test_a_file_database_creates_its_parent_and_outlives_the_platform(
 
 
 async def test_memory_platforms_are_independent() -> None:
-    async with create_local_platform(":memory:") as one, create_local_platform(":memory:") as two:
+    async with create_local_platform(None) as one, create_local_platform(None) as two:
         await one.checkpoint_store(collection="c", document="d").save(Checkpoint(None, "1"))
         assert await two.checkpoint_store(collection="c", document="d").load() == Checkpoint(
             None, None
@@ -199,7 +196,7 @@ async def test_memory_platforms_are_independent() -> None:
 
 
 async def test_the_connection_is_closed_when_the_block_ends() -> None:
-    async with create_local_platform(":memory:") as built:
+    async with create_local_platform(None) as built:
         pass
     with pytest.raises(ValueError):
         await built.sqlite.execute("SELECT 1")
@@ -208,7 +205,7 @@ async def test_the_connection_is_closed_when_the_block_ends() -> None:
 async def test_the_connection_is_closed_when_the_block_raises() -> None:
     kept: LocalPlatform | None = None
     with pytest.raises(RuntimeError, match="boom"):
-        async with create_local_platform(":memory:") as built:
+        async with create_local_platform(None) as built:
             kept = built
             raise RuntimeError("boom")
     assert kept is not None
@@ -216,12 +213,11 @@ async def test_the_connection_is_closed_when_the_block_raises() -> None:
         await kept.sqlite.execute("SELECT 1")
 
 
-# --- two connections on one file --------------------------------------------
+# --- two connections on one database --------------------------------------------
 
 
-async def test_two_platforms_on_one_file_contend_on_the_lease(tmp_path: Path) -> None:
-    path = tmp_path / "data.sqlite"
-    async with create_local_platform(path) as a, create_local_platform(path) as b:
+async def test_two_platforms_on_one_directory_contend_on_the_lease(tmp_path: Path) -> None:
+    async with create_local_platform(tmp_path) as a, create_local_platform(tmp_path) as b:
         lease_a = a.tick_lease(collection="c", document="tick")
         lease_b = b.tick_lease(collection="c", document="tick")
         assert await lease_a.take(TICK, owner="a", now=NOW) is True
@@ -229,8 +225,7 @@ async def test_two_platforms_on_one_file_contend_on_the_lease(tmp_path: Path) ->
 
 
 async def test_a_write_that_waits_past_the_busy_timeout_raises(tmp_path: Path) -> None:
-    path = tmp_path / "data.sqlite"
-    async with create_local_platform(path) as a, create_local_platform(path) as b:
+    async with create_local_platform(tmp_path) as a, create_local_platform(tmp_path) as b:
         await a.sqlite.execute("PRAGMA busy_timeout=50")
         await b.sqlite.execute("BEGIN IMMEDIATE")  # holds the write lock
         try:
