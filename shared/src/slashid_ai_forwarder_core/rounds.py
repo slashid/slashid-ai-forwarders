@@ -13,7 +13,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 # Annotations only: ``normalized.types`` imports ``events`` at load, and
 # ``events`` imports this module, so a runtime import here would cycle.
@@ -41,9 +41,6 @@ class _Message(BaseModel):
     content: list[_Block]
 
 
-_PROJECTION = TypeAdapter(list[_Message])
-
-
 @dataclass(frozen=True)
 class Round:
     consumed: list[NormalizedMessage]
@@ -56,7 +53,7 @@ class Round:
             return None
         # An answer is assistant-only and ``consumed`` never is, so nothing merges across them.
         projected = [*project(self.consumed), *projected_answer]
-        body = _PROJECTION.dump_python(projected, mode="json", exclude_none=True)
+        body = [m.model_dump(mode="json", exclude_none=True) for m in projected]
         serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(serialized).hexdigest()
 
