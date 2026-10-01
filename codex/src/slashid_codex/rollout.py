@@ -131,12 +131,17 @@ class TurnAborted(_Frozen):
     reason: str | None = None
 
 
+class TaskStarted(_Frozen):
+    type: Literal["task_started"] = "task_started"
+    turn_id: str | None = None
+
+
 class TaskComplete(_Frozen):
     type: Literal["task_complete"] = "task_complete"
     turn_id: str | None = None
 
 
-EventMsg = ItemCompleted | TurnAborted | TaskComplete
+EventMsg = ItemCompleted | TurnAborted | TaskStarted | TaskComplete
 
 Payload = SessionMeta | TurnContext | ResponsesItem | TokenUsageRecord | Compacted | EventMsg
 
@@ -208,7 +213,7 @@ _LINES: dict[str, type[_Envelope]] = {
     "token_usage_record": _TokenUsageLine,
     "compacted": _CompactedLine,
 }
-_EVENTS = frozenset({"item_completed", "turn_aborted", "task_complete"})
+_EVENTS = frozenset({"item_completed", "turn_aborted", "task_started", "task_complete"})
 
 
 def parse_line(raw: bytes) -> RolloutLine | None:

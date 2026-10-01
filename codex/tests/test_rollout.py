@@ -18,6 +18,7 @@ from slashid_codex.rollout import (
     RolloutLineError,
     SessionMeta,
     TaskComplete,
+    TaskStarted,
     TokenUsageRecord,
     TurnAborted,
     TurnContext,
@@ -104,6 +105,7 @@ def test_script_mode_shapes() -> None:
     assert any(isinstance(i, UserMessageItem) for i in items)
     assert any(isinstance(i, OtherItem) and i.type == "AgentMessage" for i in items)
 
+    assert any(isinstance(line.payload, TaskStarted) for line in lines)
     assert any(isinstance(line.payload, TaskComplete) for line in lines)
 
 
