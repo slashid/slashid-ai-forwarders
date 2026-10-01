@@ -46,7 +46,7 @@ ResponsesPart = Annotated[
 class ResponsesMessage(_LenientModel):
     # Easy-input messages omit ``type``.
     type: Literal["message"] = "message"
-    role: Literal["user", "assistant", "system", "developer"]
+    role: str
     content: str | list[ResponsesPart]
     phase: str | None = None
 
@@ -94,6 +94,7 @@ class ResponsesWebSearchCall(_LenientModel):
 
 class ResponsesCompaction(_LenientModel):
     type: Literal["compaction"]
+    id: str | None = None
     encrypted_content: str | None = None
 
 

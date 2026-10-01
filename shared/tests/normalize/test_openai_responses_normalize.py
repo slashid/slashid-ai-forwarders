@@ -327,3 +327,66 @@ async def test_build_event_requests_the_streamed_tool_call() -> None:
             tool_use_id="call_cee16a2c0447526b810260c5bad53c78",
         )
     ]
+
+
+def test_unknown_role_is_treated_as_user() -> None:
+    request = ResponsesRequest.model_validate(
+        {"input": [{"role": "critic", "content": "hmm"}, {"role": "user", "content": "hi"}]}
+    )
+    messages = to_normalized(request, _response()).input.messages
+    assert [(m.role, m.content) for m in messages] == [
+        (
+            "user",
+            [NormalizedContent(kind="text", text="hmm"), NormalizedContent(kind="text", text="hi")],
+        )
+    ]
+
+
+def test_compaction_digest_falls_back_to_item_id() -> None:
+    request = ResponsesRequest.model_validate(
+        {
+            "input": [
+                {"type": "compaction", "encrypted_content": "opaque", "id": "cmp_1"},
+                {"type": "compaction", "id": "cmp_2"},
+            ]
+        }
+    )
+    messages = to_normalized(request, _response()).input.messages
+    assert [m.content[0].text for m in messages] == [
+        hashlib.sha256(b"opaque").hexdigest(),
+        hashlib.sha256(b"cmp_2").hexdigest(),
+    ]
+
+
+def test_data_url_with_media_type_parameters() -> None:
+    png = b"\x89PNG\r\n\x1a\nxyz"
+    data_url = "data:image/png;name=x;base64," + base64.b64encode(png).decode()
+    request = ResponsesRequest.model_validate(
+        {"input": [{"role": "user", "content": [{"type": "input_image", "image_url": data_url}]}]}
+    )
+    assert to_normalized(request, _response()).input.messages[0].content == [
+        NormalizedContent(kind="image", media_type=MimeType("image/png"), byte_length=len(png))
+    ]
+
+
+def test_instructions_and_leading_developer_message_share_the_system_message() -> None:
+    request = ResponsesRequest.model_validate(
+        {
+            "instructions": "be helpful",
+            "input": [
+                {"role": "developer", "content": "be brief"},
+                {"role": "user", "content": "hi"},
+            ],
+        }
+    )
+    messages = to_normalized(request, _response()).input.messages
+    assert [(m.role, m.content) for m in messages] == [
+        (
+            "system",
+            [
+                NormalizedContent(kind="text", text="be helpful"),
+                NormalizedContent(kind="text", text="be brief"),
+            ],
+        ),
+        ("user", [NormalizedContent(kind="text", text="hi")]),
+    ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -26,7 +27,7 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 _EVENTS = TypeAdapter(list[ResponseStreamEvent])
 
 
-def _load(name: str) -> dict:
+def _load(name: str) -> dict[str, Any]:
     return json.loads((_FIXTURES / name).read_text())
 
 

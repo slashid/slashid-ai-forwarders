@@ -132,8 +132,7 @@ def _item(item: ResponsesItem) -> tuple[_Role, list[NormalizedContent]] | None:
             blocks = _parts(item.content)
             if not blocks:
                 return None
-            role: _Role = "system" if item.role in ("system", "developer") else item.role
-            return role, blocks
+            return _role(item.role), blocks
         case ResponsesFunctionCall():
             return "assistant", [_tool_use(item.call_id, item.name, _json_or_raw(item.arguments))]
         case ResponsesCustomToolCall():
@@ -165,9 +164,18 @@ def _item(item: ResponsesItem) -> tuple[_Role, list[NormalizedContent]] | None:
                 )
             ]
         case ResponsesCompaction():
-            digest = hashlib.sha256((item.encrypted_content or "").encode()).hexdigest()
+            digest = hashlib.sha256((item.encrypted_content or item.id or "").encode()).hexdigest()
             return "assistant", [NormalizedContent(kind="compaction", text=digest)]
     return None
+
+
+def _role(role: str) -> _Role:
+    match role:
+        case "system" | "developer":
+            return "system"
+        case "assistant":
+            return "assistant"
+    return "user"
 
 
 def _tool_use(call_id: str, name: str, tool_input: JsonValue) -> NormalizedContent:
