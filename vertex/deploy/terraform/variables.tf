@@ -11,9 +11,9 @@ variable "regions" {
     entry (each pinned to its own region for data-residency), and one
     ``setPublisherModelConfig`` per (region, model) pair. The
     audit-only source's Cloud Logging filter OR's every entry so a
-    single Cloud Function covers them all.
+    single Cloud Run service covers them all.
 
-    The Cloud Function itself, Firestore database, and Cloud Scheduler
+    The Cloud Run service itself, Firestore database, and Cloud Scheduler
     all deploy to the first NON-GLOBAL region in the list — that's
     their physical home. Their regional location doesn't restrict which
     Vertex regions are observed; every entry in ``regions`` contributes
@@ -47,7 +47,7 @@ variable "regions" {
 
   validation {
     condition     = length([for r in var.regions : r if r != "global"]) > 0
-    error_message = "regions must contain at least one non-global entry: the Cloud Function, Firestore and Scheduler need a region to live in."
+    error_message = "regions must contain at least one non-global entry: the Cloud Run service, Firestore and Scheduler need a region to live in."
   }
 }
 
@@ -59,7 +59,7 @@ variable "observed_models" {
 
     Under the hood the module enables Vertex request-response logging
     (setPublisherModelConfig) on each model and routes the logs into a
-    per-model BigQuery table the polling function reads from. The
+    per-model BigQuery table the polling service reads from. The
     "observed" framing keeps the caller decoupled from that plumbing —
     a future push-based delivery could swap in without renaming.
 
@@ -100,7 +100,7 @@ variable "slashid_push_token" {
 # --- Optional runtime knobs -----------------------------------------------
 
 variable "include_raw_content" {
-  description = "When true, the Cloud Function forwards prompt/response bodies (redacted_text/redacted_content). Off by default — hash + mime + byte_length still ship."
+  description = "When true, the service forwards prompt/response bodies (redacted_text/redacted_content). Off by default — hash + mime + byte_length still ship."
   type        = bool
   default     = false
 }
@@ -173,14 +173,8 @@ variable "request_timeout_seconds" {
 # --- Deployment knobs ------------------------------------------------------
 
 variable "release_version" {
-  description = "Vertex forwarder release tag (e.g. \"vertex-v0.1.0\") — the module fetches the source zip from GitHub Releases under this tag."
+  description = "Vertex forwarder release tag (e.g. \"vertex-v0.1.0\"). Its version, without the prefix, is the image tag, unless image is set."
   type        = string
-}
-
-variable "release_repo" {
-  description = "GitHub repo hosting the release artefacts. Override for forks."
-  type        = string
-  default     = "slashid/slashid-ai-forwarders"
 }
 
 variable "create_database" {
@@ -194,7 +188,7 @@ variable "create_database" {
 }
 
 variable "log_level" {
-  description = "Python logging level for the Cloud Function."
+  description = "Python logging level for the service."
   type        = string
   default     = "INFO"
 }
@@ -232,14 +226,8 @@ variable "secret_id" {
   default     = "slashid_vertex_push_token"
 }
 
-variable "function_name" {
-  description = "Cloud Function name."
-  type        = string
-  default     = "slashid-vertex-forwarder"
-}
-
 variable "service_account_id" {
-  description = "Cloud Function service account short ID."
+  description = "Runtime service account short ID."
   type        = string
   default     = "slashid-vertex-sa"
 }
@@ -250,14 +238,77 @@ variable "scheduler_name" {
   default     = "slashid-vertex-scheduler"
 }
 
-variable "trigger_topic_name" {
-  description = "Pub/Sub topic that Cloud Scheduler publishes to and the function consumes."
+variable "service_name" {
+  description = "Cloud Run service name."
   type        = string
-  default     = "slashid-vertex-trigger"
+  default     = "slashid-vertex-forwarder"
 }
 
-variable "release_bucket_name" {
-  description = "GCS bucket for the release zip. Defaults to slashid-vertex-release-<project_id> for global uniqueness."
+variable "min_instances" {
+  description = "Minimum Cloud Run instances. 0 lets the service scale to zero between ticks."
+  type        = number
+  default     = 0
+}
+
+variable "max_instances" {
+  description = "Maximum Cloud Run instances. The tick lease makes extra instances idle, so 1 is enough."
+  type        = number
+  default     = 1
+}
+
+variable "memory" {
+  description = "Memory per instance."
+  type        = string
+  default     = "512Mi"
+}
+
+variable "service_timeout_seconds" {
+  description = "Cloud Run request timeout: the longest a tick may run."
+  type        = number
+  default     = 540
+}
+
+variable "tick_attempt_deadline_seconds" {
+  description = "How long Cloud Scheduler waits for a tick before giving up. Must not exceed service_timeout_seconds."
+  type        = number
+  default     = 540
+}
+
+variable "scheduler_service_account_id" {
+  description = "Service account Cloud Scheduler mints its OIDC token as. Separate from the runtime account: its only privilege is invoking this service."
+  type        = string
+  default     = "slashid-vertex-tick-sa"
+}
+
+# --- Image + registry ------------------------------------------------------
+
+variable "image" {
+  description = "Full image reference. Overrides the one derived from release_version; use for a locally built image."
   type        = string
   default     = ""
+}
+
+variable "registry_repository_id" {
+  description = "Artifact Registry remote repository proxying ghcr.io. Cloud Run pulls from Artifact Registry and nowhere else."
+  type        = string
+  default     = "slashid-vertex-ghcr"
+}
+
+variable "ghcr_username" {
+  description = "GitHub username whose token can read the image package. Required while the repository, and therefore its packages, is private."
+  type        = string
+  default     = ""
+}
+
+variable "ghcr_token" {
+  description = "GitHub token (classic, scope read:packages) paired with ghcr_username. Sensitive, stored in Secret Manager for the registry's service agent to read. Read only when the secret version is created or replaced; later values are ignored."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "ghcr_secret_id" {
+  description = "Secret Manager secret ID storing the ghcr token."
+  type        = string
+  default     = "slashid_vertex_ghcr_token"
 }

@@ -1,14 +1,14 @@
 # Vertex AI forwarder
 
-Customer-deployed GCP Cloud Function (2nd gen) that polls Vertex AI
+Customer-deployed GCP Cloud Run service that polls Vertex AI
 `generateContent` request-response logging rows from BigQuery, normalizes
 each into a canonical `AIInvocationObservedV1` event, and pushes to the
 SlashID NHI subgraph.
 
 Deployed via the Terraform module under `deploy/terraform/` (arriving
 in a follow-up PR). The module provisions the BigQuery dataset + tables,
-Cloud Scheduler + Pub/Sub trigger, Firestore checkpoint document, Secret
-Manager entry for the push token, and enables Vertex request-response
+the Cloud Run service and its Cloud Scheduler job, Firestore checkpoint
+document, Secret Manager entry for the push token, and enables Vertex request-response
 logging on each configured publisher model via `setPublisherModelConfig`.
 
 ## Scope
@@ -33,8 +33,7 @@ gotchas to plan around. Extend as new ones are discovered.
   by default (configurable via `poll_schedule`, a unix-cron string);
   BigQuery has no native row-level Pub/Sub, and Cloud Scheduler
   doesn't support sub-minute granularity. On low-usage projects most
-  ticks fetch zero rows and burn Cloud Function invocations for
-  nothing. Considered alternatives (Eventarc for BQ, BQ subscriptions)
+  ticks fetch zero rows and burn Cloud Run requests for nothing. Considered alternatives (Eventarc for BQ, BQ subscriptions)
   are wrong-direction or job-level only; the design POC (2026-09-04)
   confirmed no per-row push path exists.
 - **Identity resolution is buffered.** Payload events are held for 30s
@@ -122,7 +121,7 @@ gotchas to plan around. Extend as new ones are discovered.
 (cd vertex && uv run pytest)     # runs against fake BigQuery / Firestore doubles
 ```
 
-Runtime deps (`functions-framework`, `google-cloud-bigquery`,
+Runtime deps (`fastapi`, `uvicorn`, `google-cloud-bigquery`,
 `google-cloud-firestore`, `google-cloud-secret-manager`) are declared in
 `pyproject.toml`; the workspace-level `uv sync` installs them.
 
@@ -142,6 +141,8 @@ All env vars use the `SLASHID_` prefix:
 | `SLASHID_PUSH_TOKEN` | yes | — |
 | `SLASHID_PROJECT_ID` | yes | — |
 | `SLASHID_GCP_REGIONS` | yes | — (JSON list, e.g. `["us-central1","europe-west1"]`) |
+| `SLASHID_TICK_PRINCIPAL` | yes, to accept ticks | — (the service account whose OIDC token `POST /tick` accepts; unset refuses every tick) |
+| `SLASHID_TICK_AUDIENCE` | no | — (checked only when set) |
 | `SLASHID_BQ_DATASET_PREFIX` | no | `slashid_vertex_reqresp_logs` (per-region dataset name = `{prefix}_{region_slug}`) |
 | `SLASHID_DATABASE` | no | `slashid-vertex` |
 | `SLASHID_CHECKPOINT_COLLECTION` | no | `slashid_vertex` |
@@ -159,5 +160,6 @@ git tag vertex-v0.1.0
 git push origin vertex-v0.1.0
 ```
 
-Publishes the Cloud Function source zip + Terraform module archive to
-GitHub Releases (workflow lands in a follow-up PR).
+Builds the container image and pushes it to
+`ghcr.io/slashid/slashid-vertex-forwarder:<version>`, and publishes the
+GitHub Release naming the image and the Terraform module `ref`.

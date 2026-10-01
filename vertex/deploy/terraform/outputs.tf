@@ -1,10 +1,10 @@
-output "function_uri" {
-  description = "Cloud Function 2nd gen HTTPS URL (unused for the Pub/Sub-triggered function; useful for manual invocation during smoke). ``null`` right after ``terraform import`` — provider populates ``service_config`` on the next refresh/apply."
-  value       = try(google_cloudfunctions2_function.forwarder.service_config[0].uri, null)
+output "service_uri" {
+  description = "Cloud Run service HTTPS URL. Only Cloud Scheduler is allowed to call it (internal ingress, scheduler OIDC token)."
+  value       = google_cloud_run_v2_service.forwarder.uri
 }
 
 output "service_account_email" {
-  description = "Service account the Cloud Function runs as. Grant additional roles here for optional integrations."
+  description = "Service account the Cloud Run service runs as. Grant additional roles here for optional integrations."
   value       = google_service_account.forwarder.email
 }
 
@@ -32,9 +32,4 @@ output "checkpoint_collection" {
 output "push_token_secret_id" {
   description = "Secret Manager secret ID that stores the SlashID push token."
   value       = google_secret_manager_secret.push_token.secret_id
-}
-
-output "trigger_topic" {
-  description = "Pub/Sub topic that Cloud Scheduler publishes to and the function consumes."
-  value       = google_pubsub_topic.trigger.name
 }

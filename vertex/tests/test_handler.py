@@ -82,13 +82,13 @@ class _FakeSource:
         self.commits: list[Checkpoint] = []
         self.fetch_count = 0
 
-    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
+    async def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
         self.fetch_count += 1
         if self._raise is not None:
             raise self._raise
         return list(self._events), self._next_checkpoint
 
-    def commit(self, checkpoint: Checkpoint) -> None:
+    async def commit(self, checkpoint: Checkpoint) -> None:
         self.commits.append(checkpoint)
 
 
@@ -103,7 +103,7 @@ def _install_fake_push(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return captured
 
 
-def test_run_tick_pushes_events_and_commits_checkpoint(
+async def test_run_tick_pushes_events_and_commits_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ev = _event(request_id="42")
@@ -111,7 +111,7 @@ def test_run_tick_pushes_events_and_commits_checkpoint(
     source = _FakeSource([ev], cp)
     captured = _install_fake_push(monkeypatch)
 
-    result = handler.run_tick(sources=[source], config=_config())
+    result = await handler.run_tick(sources=[source], config=_config())
 
     assert result == {"events_pushed": 1, "envelopes_seen": 1}
     assert len(captured["events"]) == 1
@@ -125,21 +125,21 @@ def test_run_tick_pushes_events_and_commits_checkpoint(
     assert source.commits == [cp]
 
 
-def test_run_tick_no_events_no_checkpoint_skips_commit(
+async def test_run_tick_no_events_no_checkpoint_skips_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No raw records seen → next_checkpoint is None → no commit."""
     source = _FakeSource([], None)
     captured = _install_fake_push(monkeypatch)
 
-    result = handler.run_tick(sources=[source], config=_config())
+    result = await handler.run_tick(sources=[source], config=_config())
 
     assert result == {"events_pushed": 0, "envelopes_seen": 0}
     assert captured["events"] == []
     assert source.commits == []
 
 
-def test_run_tick_commits_when_events_empty_but_checkpoint_advances(
+async def test_run_tick_commits_when_events_empty_but_checkpoint_advances(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Parse-failure case: fetch returns ([], Checkpoint(t, id)). commit
@@ -148,12 +148,12 @@ def test_run_tick_commits_when_events_empty_but_checkpoint_advances(
     source = _FakeSource([], cp)
     _install_fake_push(monkeypatch)
 
-    handler.run_tick(sources=[source], config=_config())
+    await handler.run_tick(sources=[source], config=_config())
 
     assert source.commits == [cp]
 
 
-def test_run_tick_batch_commits_last_checkpoint_once(
+async def test_run_tick_batch_commits_last_checkpoint_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Source hands over a batch of events + one final next_checkpoint —
@@ -163,13 +163,13 @@ def test_run_tick_batch_commits_last_checkpoint_once(
     source = _FakeSource(evs, cp)
     captured = _install_fake_push(monkeypatch)
 
-    handler.run_tick(sources=[source], config=_config())
+    await handler.run_tick(sources=[source], config=_config())
 
     assert len(captured["events"]) == 3
     assert source.commits == [cp]
 
 
-def test_run_tick_skips_commit_on_push_failure(
+async def test_run_tick_skips_commit_on_push_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When push raises, the per-source try/except catches it and
@@ -185,12 +185,12 @@ def test_run_tick_skips_commit_on_push_failure(
     monkeypatch.setattr(handler, "push_invocations", _raising_push)
 
     # Handler catches per-source — no exception propagates.
-    handler.run_tick(sources=[source], config=_config())
+    await handler.run_tick(sources=[source], config=_config())
 
     assert source.commits == []
 
 
-def test_run_tick_populates_wire_tokens_from_event(
+async def test_run_tick_populates_wire_tokens_from_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ev = _event(input_tokens=5, output_tokens=2)
@@ -198,14 +198,14 @@ def test_run_tick_populates_wire_tokens_from_event(
     source = _FakeSource([ev], cp)
     captured = _install_fake_push(monkeypatch)
 
-    handler.run_tick(sources=[source], config=_config())
+    await handler.run_tick(sources=[source], config=_config())
 
     pushed = captured["events"][0]
     assert pushed.tokens.input == 5
     assert pushed.tokens.output == 2
 
 
-def test_run_tick_dispatches_multiple_sources(
+async def test_run_tick_dispatches_multiple_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two sources, each with its own events + checkpoint. Handler
@@ -220,7 +220,7 @@ def test_run_tick_dispatches_multiple_sources(
     src_b = _FakeSource([ev_b1, ev_b2], cp_b)
     captured = _install_fake_push(monkeypatch)
 
-    result = handler.run_tick(sources=[src_a, src_b], config=_config())
+    result = await handler.run_tick(sources=[src_a, src_b], config=_config())
 
     assert result == {"events_pushed": 3, "envelopes_seen": 3}
     assert len(captured["events"]) == 3
@@ -230,7 +230,7 @@ def test_run_tick_dispatches_multiple_sources(
     assert src_b.fetch_count == 1
 
 
-def test_run_tick_isolates_source_failures(
+async def test_run_tick_isolates_source_failures(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Source A raises inside fetch; source B's fetch/push/commit still
@@ -242,9 +242,26 @@ def test_run_tick_isolates_source_failures(
     _install_fake_push(monkeypatch)
 
     with caplog.at_level("ERROR"):
-        result = handler.run_tick(sources=[src_a, src_b], config=_config())
+        result = await handler.run_tick(sources=[src_a, src_b], config=_config())
 
     assert result == {"events_pushed": 1, "envelopes_seen": 1}
     assert src_a.commits == []
     assert src_b.commits == [cp_b]
     assert any("_FakeSource failed this tick" in r.message for r in caplog.records)
+
+
+async def test_run_tick_awaits_sources_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class _Recording(_FakeSource):
+        def __init__(self, name: str) -> None:
+            super().__init__([], None)
+            self._name = name
+
+        async def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
+            calls.append(f"{self._name}:fetch")
+            return [], None
+
+    _install_fake_push(monkeypatch)
+    await handler.run_tick(sources=[_Recording("a"), _Recording("b")], config=_config())
+    assert calls == ["a:fetch", "b:fetch"]

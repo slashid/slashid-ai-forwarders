@@ -30,6 +30,7 @@ re-matched by the server's ns comparator, and the tie-break on
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Sequence
@@ -166,7 +167,7 @@ class AuditOnlyEventSource:
         self._max_entries_per_tick = max_entries_per_tick
         self._config = config
 
-    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
+    async def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
         """Query audit entries past this source's checkpoint, filter to
         the customer's ``observed_models`` allowlist, build final wire
         events.
@@ -178,8 +179,9 @@ class AuditOnlyEventSource:
         """
         from .event_envelope import _parse_model_path, vertex_audit_only_envelope
 
-        checkpoint = self._checkpoint_store.load()
-        raw = query_audit_only_entries(
+        checkpoint = await self._checkpoint_store.load()
+        raw = await asyncio.to_thread(
+            query_audit_only_entries,
             client=self._logging_client,
             project_id=self._project_id,
             regions=self._regions,
@@ -238,10 +240,10 @@ class AuditOnlyEventSource:
 
         return self._build_events(envelopes), next_cp
 
-    def commit(self, checkpoint: Checkpoint) -> None:
+    async def commit(self, checkpoint: Checkpoint) -> None:
         """Advance the source's checkpoint. Called by the handler after
         successful wire push."""
-        self._checkpoint_store.save(checkpoint)
+        await self._checkpoint_store.save(checkpoint)
 
     def _build_events(self, envelopes: list[EventEnvelope]) -> list[AIInvocationObservedV1]:
         """Turn a list of envelopes into final wire events via

@@ -416,13 +416,13 @@ class EventEnvelope(_WireModel):
 # Fields that carry customer prompt/response bodies when
 # ``SLASHID_INCLUDE_RAW_CONTENT`` is set. Wire delivery to the SlashID
 # sink is fine — that's the customer's own destination — but ops-side
-# CloudWatch / Cloud Function logs shouldn't leak them.
+# CloudWatch / Cloud Run logs shouldn't leak them.
 _LOG_REDACTED_FIELDS: frozenset[str] = frozenset({"redacted_text", "redacted_content"})
 
 
 def redact_for_logging(payload: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of ``payload`` with sensitive fields recursively
-    stripped, suitable for ops-side logging (CloudWatch, Cloud Function
+    stripped, suitable for ops-side logging (CloudWatch, Cloud Run
     stdout, structured log aggregators).
 
     Removes ``redacted_text`` on ``AIInvocationContent`` and

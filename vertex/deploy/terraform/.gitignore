@@ -5,6 +5,3 @@ terraform.tfstate
 terraform.tfstate.backup
 *.tfvars
 *.tfvars.json
-
-# Downloaded release artefact — created at plan time.
-.release.zip

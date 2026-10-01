@@ -32,12 +32,12 @@ class Checkpoint:
 
 
 class CheckpointStore(Protocol):
-    """Load/save the polling watermark.
+    """Load/save the polling watermark; both are awaited.
 
     ``load`` returns an empty ``Checkpoint(None, None)`` on the very
     first tick (before any prior save) — the source then fetches every
     entry up to the batch bound.
     """
 
-    def load(self) -> Checkpoint: ...
-    def save(self, checkpoint: Checkpoint) -> None: ...
+    async def load(self) -> Checkpoint: ...
+    async def save(self, checkpoint: Checkpoint) -> None: ...

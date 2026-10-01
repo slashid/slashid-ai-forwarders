@@ -1,18 +1,19 @@
 [project]
 name = "slashid-vertex-forwarder"
-version = "0.1.9"
-description = "GCP Cloud Function forwarding Vertex AI generateContent request-response logs to SlashID NHI"
+version = "0.1.10"
+description = "GCP Cloud Run service forwarding Vertex AI generateContent request-response logs to SlashID NHI"
 requires-python = ">=3.13"
 license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
     "slashid-ai-forwarder-core[gcs,gcp]",
-    "functions-framework>=3.5",
     "google-cloud-bigquery>=3.20",
     "google-cloud-firestore>=2.16",
     "google-cloud-logging>=3.11",
     "google-cloud-secret-manager>=2.20",
     "httpx>=0.28",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
 ]
 
 [tool.uv.sources]

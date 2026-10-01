@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -13,16 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
       - name: Resolve and verify version
-        # The tag is the release trigger, but the version is the source
-        # of truth in vertex/pyproject.toml. Refuse to release on
-        # mismatch so a fat-fingered tag doesn't ship a wrong-numbered
-        # artifact.
+        # The tag triggers the release; vertex/pyproject.toml is the
+        # source of truth for the number. Refuse on mismatch so a
+        # fat-fingered tag cannot ship a wrong-numbered image.
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#vertex-v}"
           FILE_VERSION="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("vertex/pyproject.toml").read_text())["project"]["version"])')"
@@ -30,96 +25,42 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME expects version $TAG_VERSION but vertex/pyproject.toml has $FILE_VERSION"
             exit 1
           fi
-          # Artifact filename matches bedrock's convention
-          # (``slashid-<vendor>-forwarder-v<X.Y.Z>.zip``). The TF module
-          # strips the ``vertex-`` prefix from ``release_version`` when
-          # building the download URL — keep both sides in sync.
-          {
-            echo "VERSION=$FILE_VERSION"
-            echo "ARTIFACT=slashid-vertex-forwarder-v${FILE_VERSION}.zip"
-          } >> "$GITHUB_ENV"
+          echo "VERSION=$FILE_VERSION" >> "$GITHUB_ENV"
 
-      - name: Stage source trees + entrypoint shim
-        # Cloud Functions 2nd gen has its own Python build layer — it
-        # detects ``requirements.txt`` at the zip root and pip-installs
-        # into the layer for us. Different from Lambda's "bundle
-        # pre-installed deps into the zip" pattern (release-bedrock.yml)
-        # — attempting that on CF ends up with double-installed packages
-        # where the layer's older ``typing_extensions`` shadows the
-        # newer one pydantic_core needs, and startup dies on
-        # ``ImportError: cannot import name 'Sentinel'``.
-        #
-        # So: only ship source + requirements.txt + main.py, let the
-        # CF build layer own the pip install.
-        run: |
-          mkdir -p build
-          cp -r vertex/src/slashid_vertex_forwarder build/
-          cp -r shared/src/slashid_ai_forwarder_core build/
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Emit requirements.txt for the Cloud Functions build layer
-        # --no-emit-workspace strips ``slashid-ai-forwarder-core`` from
-        # requirements — we ship its source tree above instead. The
-        # CF build layer runs ``pip install -r requirements.txt`` on
-        # top of its baseline packages, so this file is what pins the
-        # exact versions our source expects (typing_extensions
-        # included).
-        #
-        # --quiet + 2>/dev/null suppress uv's "Resolved N packages"
-        # progress message which otherwise gets prepended to
-        # requirements.txt and breaks pip parsing at Cloud Build time
-        # (``Invalid requirement: 'Resolved 85 packages in 1ms'``).
-        run: |
-          uv export \
-            --package slashid-vertex-forwarder \
-            --no-dev \
-            --no-emit-workspace \
-            --no-hashes \
-            --quiet \
-            --format requirements-txt \
-            > build/requirements.txt 2>/dev/null
-          echo "=== build/requirements.txt (head) ==="
-          head -20 build/requirements.txt
-
-      - name: Emit Cloud Function entrypoint shim
-        # Cloud Functions 2nd gen looks for the entry-point function in
-        # top-level ``main.py`` — but our source lives under a package
-        # (``slashid_vertex_forwarder.main``) with relative imports. A
-        # 2-line shim at the zip root re-exports the handler so
-        # functions-framework can find it without moving the source.
-        run: |
-          cat > build/main.py <<'EOF'
-          """Cloud Function 2nd gen entrypoint — re-exports the package handler."""
-
-          from slashid_vertex_forwarder.main import handler
-
-          __all__ = ["handler"]
-          EOF
-
-      - name: Strip noise from the package
-        run: |
-          find build -type d -name __pycache__ -prune -exec rm -rf {} +
-          find build -name "*.pyc" -delete
-
-      - name: Build the deployable zip
-        run: |
-          (cd build && zip -qr "../${ARTIFACT}" .)
-          ls -lah "${ARTIFACT}"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Determine pre-release
         id: prerelease
         run: |
-          # Only the version suffix determines pre-release, not the
-          # vertex- prefix.
           if [[ "${VERSION}" == *-* ]]; then
             echo "value=true" >> "$GITHUB_OUTPUT"
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+      - uses: docker/build-push-action@v6
         with:
-          files: |
-            ${{ env.ARTIFACT }}
+          # The build context is the repository root: the image needs
+          # both shared/ and vertex/ from the uv workspace.
+          context: .
+          file: vertex/Dockerfile
+          push: true
+          # One immutable tag per release. Terraform pins by version, so
+          # no floating tag exists for a pre-release to move under a
+          # customer.
+          tags: ghcr.io/slashid/slashid-vertex-forwarder:${{ env.VERSION }}
+
+      - uses: softprops/action-gh-release@v2
+        with:
           generate_release_notes: true
           prerelease: ${{ steps.prerelease.outputs.value }}
+          body: |
+            Image: `ghcr.io/slashid/slashid-vertex-forwarder:${{ env.VERSION }}`
+
+            Terraform: `source = "git::https://github.com/slashid/slashid-ai-forwarders.git//vertex/deploy/terraform?ref=${{ github.ref_name }}"`

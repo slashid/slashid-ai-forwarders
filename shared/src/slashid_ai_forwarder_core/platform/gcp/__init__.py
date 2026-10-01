@@ -32,7 +32,7 @@ class GcsBlobSink:
 class GcpPlatform:
     """One project and one named Firestore database.
 
-    The Firestore clients are exposed as well as the interfaces, because an
+    The async client is exposed as well as the interfaces, because an
     adapter whose own store is Firestore-backed shares this connection
     rather than opening a second one.
     """
@@ -43,14 +43,6 @@ class GcpPlatform:
 
     @cached_property
     def firestore(self) -> Any:
-        """Synchronous client: checkpoints are a few single-document reads
-        and writes per tick, on a path with no latency budget."""
-        from google.cloud import firestore
-
-        return firestore.Client(project=self._project, database=self._firestore_database)
-
-    @cached_property
-    def firestore_async(self) -> Any:
         from google.cloud import firestore
 
         return firestore.AsyncClient(project=self._project, database=self._firestore_database)
@@ -61,9 +53,7 @@ class GcpPlatform:
         )
 
     def tick_lease(self, *, collection: str, document: str) -> TickLease:
-        return FirestoreTickLease(
-            client=self.firestore_async, collection=collection, document=document
-        )
+        return FirestoreTickLease(client=self.firestore, collection=collection, document=document)
 
     def blob_sink(self, bucket: str) -> BlobSink:
         return GcsBlobSink(bucket)

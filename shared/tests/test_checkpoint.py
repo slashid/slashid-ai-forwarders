@@ -1,6 +1,6 @@
 """Tests for ``FirestoreCheckpointStore`` — load/save the polling watermark.
 
-Uses a fake ``firestore.Client`` triple that stores documents in an
+Uses a fake ``firestore.AsyncClient`` triple that stores documents in an
 in-memory dict. Firestore emulator is available but overkill for the
 narrow load/save surface this store exposes.
 """
@@ -28,10 +28,10 @@ class _FakeDocRef:
         self._backing = backing
         self._path = path
 
-    def get(self) -> _FakeSnapshot:
+    async def get(self) -> _FakeSnapshot:
         return _FakeSnapshot(self._backing.get(self._path))
 
-    def set(self, data: dict[str, Any]) -> None:
+    async def set(self, data: dict[str, Any]) -> None:
         self._backing[self._path] = data
 
 
@@ -64,38 +64,38 @@ def _store() -> tuple[FirestoreCheckpointStore, _FakeFirestoreClient]:
     )
 
 
-def test_load_returns_empty_when_document_absent() -> None:
+async def test_load_returns_empty_when_document_absent() -> None:
     """First tick: no prior save → empty checkpoint (both fields None)."""
     store, _ = _store()
-    cp = store.load()
+    cp = await store.load()
     assert cp == Checkpoint(None, None)
 
 
-def test_save_and_load_round_trip() -> None:
+async def test_save_and_load_round_trip() -> None:
     store, _ = _store()
     when = datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
-    store.save(Checkpoint(timestamp=when, id="42"))
-    cp = store.load()
+    await store.save(Checkpoint(timestamp=when, id="42"))
+    cp = await store.load()
     assert cp == Checkpoint(timestamp=when, id="42")
 
 
-def test_save_normalizes_naive_datetime_to_utc() -> None:
+async def test_save_normalizes_naive_datetime_to_utc() -> None:
     """A caller-synthesized naive datetime gets tz-normalized on save so
     the load-side comparison against tz-aware BQ timestamps works."""
     store, client = _store()
     naive = datetime(2026, 9, 5, 2, 43, 59)
-    store.save(Checkpoint(timestamp=naive, id="42"))
+    await store.save(Checkpoint(timestamp=naive, id="42"))
     stored = client.storage["slashid_vertex/checkpoint"]["timestamp"]
     assert stored.tzinfo is not None
 
 
-def test_save_persists_to_correct_document_path() -> None:
+async def test_save_persists_to_correct_document_path() -> None:
     store, client = _store()
-    store.save(Checkpoint(timestamp=datetime(2026, 9, 5, tzinfo=UTC), id="1"))
+    await store.save(Checkpoint(timestamp=datetime(2026, 9, 5, tzinfo=UTC), id="1"))
     assert "slashid_vertex/checkpoint" in client.storage
 
 
-def test_load_normalizes_naive_stored_datetime() -> None:
+async def test_load_normalizes_naive_stored_datetime() -> None:
     """Defence in depth: if a legacy or hand-edited document holds a
     naive timestamp, load() normalizes to UTC before returning."""
     store, client = _store()
@@ -104,14 +104,14 @@ def test_load_normalizes_naive_stored_datetime() -> None:
         "timestamp": naive,
         "id": "42",
     }
-    cp = store.load()
+    cp = await store.load()
     assert cp.timestamp is not None
     assert cp.timestamp.tzinfo is not None
 
 
-def test_save_null_checkpoint_round_trips_as_empty() -> None:
+async def test_save_null_checkpoint_round_trips_as_empty() -> None:
     """Empty (None, None) save is legal — matches the pre-first-tick state."""
     store, _ = _store()
-    store.save(Checkpoint(None, None))
-    cp = store.load()
+    await store.save(Checkpoint(None, None))
+    cp = await store.load()
     assert cp == Checkpoint(None, None)

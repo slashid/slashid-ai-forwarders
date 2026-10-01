@@ -273,8 +273,9 @@ async def read_responses(
     sessions_done = chats_done = False
     try:
         async with asyncio.timeout(config.response_reader_budget_seconds):
+            since = await cursors.sessions.window_start(now=now)
             drain = await client.drain_local_sessions(
-                since=cursors.sessions.window_start(now=now), limit=config.max_sessions_per_tick
+                since=since, limit=config.max_sessions_per_tick
             )
             work, tails_read = await _read_session_tails(
                 drain.sessions,
@@ -314,8 +315,8 @@ async def read_responses(
             "unfinished feeds hold their watermarks",
             config.response_reader_budget_seconds,
         )
-    cursors.sessions.advance(timestamp=now - lag, drained=sessions_done)
-    cursors.chats.advance(timestamp=now - lag, drained=chats_done)
+    await cursors.sessions.advance(timestamp=now - lag, drained=sessions_done)
+    await cursors.chats.advance(timestamp=now - lag, drained=chats_done)
     return counters
 
 
@@ -450,7 +451,8 @@ async def _read_chats(
 ) -> bool:
     """One call per chat returns it whole, so chats need no second pass."""
     ok = True
-    async for listed in client.iter_chats(since=cursors.chats.window_start(now=now)):
+    since = await cursors.chats.window_start(now=now)
+    async for listed in client.iter_chats(since=since):
         if listed.organization_uuid != config.organization_uuid:
             counters.skipped_other_org += 1
             continue

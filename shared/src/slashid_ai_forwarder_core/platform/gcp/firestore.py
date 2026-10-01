@@ -25,21 +25,21 @@ class FirestoreCheckpointStore:
     def __init__(
         self,
         *,
-        client: Any,  # google.cloud.firestore.Client — untyped for the same reason as BqEventSource
+        client: Any,  # google.cloud.firestore.AsyncClient, untyped as in BqEventSource
         collection: str,
         document: str,
     ) -> None:
         self._doc_ref = client.collection(collection).document(document)
 
-    def load(self) -> Checkpoint:
-        snap = self._doc_ref.get()
+    async def load(self) -> Checkpoint:
+        snap = await self._doc_ref.get()
         if not snap.exists:
             return Checkpoint(timestamp=None, id=None)
         data = snap.to_dict() or {}
         return _from_dict(data)
 
-    def save(self, checkpoint: Checkpoint) -> None:
-        self._doc_ref.set(_to_dict(checkpoint))
+    async def save(self, checkpoint: Checkpoint) -> None:
+        await self._doc_ref.set(_to_dict(checkpoint))
 
 
 def _to_dict(checkpoint: Checkpoint) -> dict[str, Any]:
