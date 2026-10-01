@@ -1609,7 +1609,7 @@ dev = [
 
 [[package]]
 name = "slashid-anthropic-forwarder"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
@@ -1655,7 +1655,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-vertex-forwarder"
-version = "0.1.10"
+version = "0.1.11"
 source = { editable = "vertex" }
 dependencies = [
     { name = "fastapi" },
