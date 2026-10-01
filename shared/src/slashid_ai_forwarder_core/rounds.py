@@ -28,8 +28,9 @@ TRUNCATED = "..."  # older rounds exist beyond the list
 class _Block(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    kind: Literal["text", "tool_use", "tool_result", "attachment"]
+    kind: Literal["text", "tool_use", "tool_result", "attachment", "compaction"]
     text: str | None = None
+    digest: str | None = None
     tool_use_id: str | None = None
     tool_name: str | None = None
     tool_input: JsonValue = None
@@ -79,6 +80,8 @@ def _project_block(block: NormalizedContent) -> _Block | None:
             )
         case "image" | "audio" | "document":
             return _Block(kind="attachment")
+        case "compaction":
+            return _Block(kind="compaction", digest=block.text)
         case _:
             return None
 
@@ -104,14 +107,26 @@ def project(messages: Sequence[NormalizedMessage]) -> list[_Message]:
     return out
 
 
+def _is_compaction(message: NormalizedMessage) -> bool:
+    return message.role == "assistant" and any(c.kind == "compaction" for c in message.content)
+
+
 def _rounds(messages: Sequence[NormalizedMessage]) -> Iterator[Round]:
     """Rounds of ``messages``, newest first. The first has no answer when the
-    transcript ends on a message that is not the model's."""
+    transcript ends on a message that is not the model's. A compaction is a
+    response of its own, never merged with the assistant run before it."""
     end = len(messages)
     while end:
         answer_end = end
-        while end and messages[end - 1].role == "assistant":
+        if _is_compaction(messages[end - 1]):
             end -= 1
+        else:
+            while (
+                end
+                and messages[end - 1].role == "assistant"
+                and not _is_compaction(messages[end - 1])
+            ):
+                end -= 1
         consumed_end = end
         while end and messages[end - 1].role != "assistant":
             end -= 1
@@ -119,14 +134,16 @@ def _rounds(messages: Sequence[NormalizedMessage]) -> Iterator[Round]:
 
 
 def round_links(
-    messages: Sequence[NormalizedMessage], *, depth: int
+    messages: Sequence[NormalizedMessage], *, depth: int, truncated: bool = False
 ) -> tuple[str | None, list[str]]:
     """``(round_hash, recent_round_hashes)`` for an event.
 
     ``messages`` is the transcript including the event's response, if it has
     one. The list is newest first, at most ``depth`` hashes, and ends with
     ``START`` when it reaches round one and ``TRUNCATED`` when it does not.
-    Only the last ``depth`` rounds are projected.
+    ``truncated`` ends the list with ``TRUNCATED`` even when it reaches round
+    one (a history known to be incomplete). Only the last ``depth`` rounds are
+    projected.
     """
     own: str | None = None
     hashes: list[str] = []
@@ -143,5 +160,5 @@ def round_links(
         hashes.append(digest)
     if not hashes:
         return None, []
-    hashes.append(START if reaches_start else TRUNCATED)
+    hashes.append(START if reaches_start and not truncated else TRUNCATED)
     return own, hashes

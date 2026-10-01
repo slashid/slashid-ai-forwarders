@@ -314,3 +314,43 @@ def test_the_work_is_bounded_by_depth_not_by_history(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(rounds, "project", counting)
     rounds.round_links([*history, _user("u1000"), _assistant("a1000")], depth=10)
     assert calls < 60
+
+
+def _compaction(digest: str) -> NormalizedMessage:
+    return NormalizedMessage(
+        role="assistant", content=[NormalizedContent(kind="compaction", text=digest)]
+    )
+
+
+def test_compaction_after_final_answer_is_its_own_round() -> None:
+    before = [_user("q1"), _assistant("a1")]
+    own_a1, _ = round_links(before, depth=10)
+    with_compaction = [*before, _compaction("d" * 64)]
+    own_c, hashes = round_links(with_compaction, depth=10)
+    assert own_c is not None and own_c != own_a1
+    assert hashes == [own_c, own_a1, START]
+
+
+def test_rounds_after_compaction_link_through_it() -> None:
+    history = [
+        _user("q1"),
+        _assistant("a1"),
+        _compaction("d" * 64),
+        _user("q2"),
+        _assistant("a2"),
+    ]
+    own_a1, _ = round_links(history[:2], depth=10)
+    own_c, _ = round_links(history[:3], depth=10)
+    own, hashes = round_links(history, depth=10)
+    assert hashes == [own, own_c, own_a1, START]
+
+
+def test_two_compactions_never_hash_alike() -> None:
+    a, _ = round_links([_user("q"), _assistant("a"), _compaction("1" * 64)], depth=10)
+    b, _ = round_links([_user("q"), _assistant("a"), _compaction("2" * 64)], depth=10)
+    assert a != b
+
+
+def test_truncated_flag_forces_the_marker() -> None:
+    _, hashes = round_links([_user("q"), _assistant("a")], depth=10, truncated=True)
+    assert hashes[-1] == TRUNCATED
