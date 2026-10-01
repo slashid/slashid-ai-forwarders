@@ -12,18 +12,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+import yaml
+from pydantic import ValidationError
 
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     AIInvocationTokens,
     AIModel,
+    AIToolUse,
     AWSIdentityDetails,
     EventEnvelope,
     GCPIdentityDetails,
+    OpenAIIdentityDetails,
     build_event_from_normalized,
     build_sparse_event,
     parse_tool_name,
@@ -1578,10 +1583,6 @@ async def test_an_event_without_an_answer_has_no_round_hash() -> None:
 
 
 def test_openai_identity_details_round_trips_through_the_union() -> None:
-    from pydantic import ValidationError
-
-    from slashid_ai_forwarder_core.events import OpenAIIdentityDetails
-
     details = OpenAIIdentityDetails(user_id="user-abc")
     assert details.model_dump(exclude_none=True) == {"kind": "openai", "user_id": "user-abc"}
     with pytest.raises(ValidationError, match="openai identity carries no identifier"):
@@ -1607,8 +1608,6 @@ def test_openai_identity_details_round_trips_through_the_union() -> None:
 
 
 def test_tool_use_is_error_is_optional() -> None:
-    from slashid_ai_forwarder_core.events import AIToolUse
-
     assert AIToolUse(tool_id="t").model_dump(exclude_none=True) == {"tool_id": "t"}
 
 
@@ -1636,8 +1635,6 @@ def _bash_call(tool_use_id: str, name: str = "Bash", **extra: Any) -> Normalized
 
 
 async def test_requested_tool_uses_lists_output_tool_calls() -> None:
-    from slashid_ai_forwarder_core.events import AIToolUse
-
     invocation = _tool_call_invocation(_bash_call("call_1"), _bash_call("call_2", "Undeclared"))
     event = await build_event_from_normalized(invocation, _plain_envelope(), config=_config())
     bash_id = invocation.input.tools_declared[0].id
@@ -1697,6 +1694,7 @@ async def test_requested_tool_uses_from_anthropic_and_converse_normalizers() -> 
         input_messages=[{"role": "user", "content": [{"text": "ls"}]}],
         output_content=[{"toolUse": {"toolUseId": "tooluse_1", "name": "Bash", "input": {}}}],
     )
+    bash_id = build_tools_declared([("Bash", "shell", None)])[0][0].id
     for normalized, record, use_id in (
         (await anthropic_dict_to_normalized(anthropic_record), anthropic_record, "toolu_1"),
         (
@@ -1706,18 +1704,13 @@ async def test_requested_tool_uses_from_anthropic_and_converse_normalizers() -> 
         ),
     ):
         event = await build_event_from_normalized(normalized, _envelope(record), config=_config())
-        declared = {t.id for t in normalized.input.tools_declared}
         assert event.requested_tool_uses is not None
-        assert [(u.tool_id in declared, u.tool_use_id) for u in event.requested_tool_uses] == [
-            (True, use_id)
+        assert [(u.tool_id, u.tool_use_id) for u in event.requested_tool_uses] == [
+            (bash_id, use_id)
         ]
 
 
 async def test_requested_tool_uses_from_gemini_fixtures() -> None:
-    from pathlib import Path
-
-    import yaml
-
     fixtures = Path(__file__).parent / "normalize" / "test_gemini_to_normalized_invocation.yaml"
     cases = {
         doc["id"]: NormalizedInvocation.model_validate(doc["expected"])

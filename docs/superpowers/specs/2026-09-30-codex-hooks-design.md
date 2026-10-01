@@ -352,7 +352,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 **`shared/normalize/normalized/`** and **`shared/rounds.py`**
 
 - `NormalizedContent.kind` gains `compaction`, with the block's digest in `text`. `project` keeps it as `{"kind": "compaction", "digest"}`, so a compaction round has a round hash; the digest makes it unique, so compactions in different conversations never share a hash.
-- `_rounds` ends a response at a message holding a `compaction` block: such a message is a response of its own, with an empty consumed side, never merged with the assistant run before it. Otherwise a compaction right after a final answer would fold the previous round into its own, and later lists would skip the previous event's `round_hash`.
+- `_rounds` ends a response at a message holding a `compaction` block: such a message is a response of its own; its consumed side is whatever non-assistant messages precede it (normally none). It is never merged with the assistant run before it. Otherwise a compaction right after a final answer would fold the previous round into its own, and later lists would skip the previous event's `round_hash`.
 - `types.py`: `NormalizedContent` and `NormalizedMessage` frozen; `content` stays a list (never mutated).
 - `tools.py`: `resolve_tool(raw_name) -> (AITool, AIToolServer)` = `build_tools_declared([(raw_name, None, None)])`, so `parse_tool_name` decides the server (`mcp__s__t` → `s`, `s__t` → runtime `s`, bare → `builtin`). Every tool lands on a named server, as `joinAIToolUse` requires.
 
