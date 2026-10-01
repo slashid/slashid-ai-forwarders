@@ -11,6 +11,7 @@ import logging.handlers
 import os
 import secrets
 import socket
+import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -36,7 +37,6 @@ from .discovery import (
     DaemonLock,
     acquire_lock,
     clear_spawn_failure,
-    config_digest,
     ensure_state_dir,
     hmac_response,
     package_version,
@@ -44,6 +44,7 @@ from .discovery import (
     write_daemon_json,
 )
 from .emit import Collector, Trigger, Worker
+from .errors import log_failure, summary
 from .handler import DAEMON_ERROR, PREFLIGHT_EVENTS, TRIGGER_EVENTS, Handler
 from .http import make_client
 from .install import created_at
@@ -57,11 +58,13 @@ log = logging.getLogger(__name__)
 TICK_S = 1.0
 WATCHDOG_STALE_S = 10.0
 LOCK_WAIT_S = 3.0
+# Inside the watchdog's limit.
+WORKER_READY_S = 5.0
 LOG_MAX_BYTES = 1_000_000
 LOG_BACKUPS = 3
 MAX_NONCE_CHARS = 128
 # ``run_daemon`` exit codes; losing the lock to a live daemon is not a failure.
-EXIT_OK, EXIT_CONFIG = 0, 2
+EXIT_OK, EXIT_ERROR, EXIT_CONFIG = 0, 1, 2
 
 
 @dataclass
@@ -132,7 +135,11 @@ class Watchdog:
 
 
 async def tick(
-    lifetime: Lifetime, on_idle: Callable[[], None], *, interval: float = TICK_S
+    lifetime: Lifetime,
+    on_idle: Callable[[], None],
+    *,
+    interval: float = TICK_S,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Beats the heartbeat; calls ``on_idle`` once when the idle clock expires."""
     idle = False
@@ -142,7 +149,7 @@ async def tick(
             idle = True
             log.info("idle; exiting")
             on_idle()
-        await asyncio.sleep(interval)
+        await sleep(interval)
 
 
 def create_app(config: CodexConfig, secret: str, port: int, services: Services) -> FastAPI:
@@ -181,23 +188,22 @@ def create_app(config: CodexConfig, secret: str, port: int, services: Services) 
     @app.post("/hooks/{event}")
     async def hook(event: str, request: Request) -> Response:
         arrival = time.monotonic()
+        if event not in PREFLIGHT_EVENTS and event not in TRIGGER_EVENTS:
+            return Response(status_code=404)
         lifetime.touch()
+        payload = await request.body()
         if event in PREFLIGHT_EVENTS:
-            payload = await request.body()
             try:
                 verdict = await services.preflight(event, payload, arrival)
-            except Exception:
-                log.exception("preflight %s failed", event)
+            except Exception as exc:
+                log_failure(log, "preflight %s failed", event, exc=exc)
                 verdict = fail_verdict(config, DAEMON_ERROR)
             return JSONResponse(verdict.model_dump(exclude_none=True))
-        if event in TRIGGER_EVENTS:
-            payload = await request.body()
-            try:
-                services.enqueue_trigger(event, payload)
-            except Exception:
-                log.exception("trigger %s failed", event)
-            return JSONResponse({})
-        return Response(status_code=404)
+        try:
+            services.enqueue_trigger(event, payload)
+        except Exception as exc:
+            log_failure(log, "trigger %s failed", event, exc=exc)
+        return JSONResponse({})
 
     @app.post("/shutdown")
     async def shutdown() -> Response:
@@ -241,6 +247,7 @@ class Stopper:
 
 
 def setup_logging(path: Path) -> None:
+    """Uncaught exceptions go to the log too, not to ``daemon.stderr``."""
     handler = logging.handlers.RotatingFileHandler(
         path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
     )
@@ -249,15 +256,36 @@ def setup_logging(path: Path) -> None:
     root.addHandler(handler)
     root.setLevel(logging.INFO)
 
+    def excepthook(kind: type[BaseException], exc: BaseException, tb: object) -> None:
+        log_failure(log, "uncaught exception", exc=exc)
+
+    def thread_excepthook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_value is not None and not isinstance(args.exc_value, SystemExit):
+            name = args.thread.name if args.thread is not None else "?"
+            log_failure(log, "uncaught exception in thread %s", name, exc=args.exc_value)
+
+    sys.excepthook = excepthook
+    threading.excepthook = thread_excepthook
+
+
+def listen() -> socket.socket:
+    """``127.0.0.1``, a free port. Windows: no other socket may bind it."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if sys.platform == "win32":
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    return sock
+
 
 def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = None) -> int:
     ensure_state_dir(state_dir)
     setup_logging(state_dir / LOG_FILE)
     log.info("daemon %s starting, pid %d", package_version(), os.getpid())
     try:
-        config = CodexConfig.load(config_path)
+        config, digest = CodexConfig.load_with_digest(config_path)
     except (OSError, ValueError) as exc:
-        log.error("config %s unusable: %s", config_path, exc)
+        log.error("config %s unusable: %s", config_path, summary(exc))
         return EXIT_CONFIG
     if codex_home is not None:
         config = config.model_copy(update={"codex_home": codex_home})
@@ -267,17 +295,16 @@ def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = 
         return EXIT_OK
     stopper = Stopper(state_dir, lock)
     try:
-        _serve(config, config_path, state_dir, stopper)
+        served = _serve(config, digest, state_dir, stopper)
     finally:
         stopper()
     log.info("daemon stopped")
-    return EXIT_OK
+    return EXIT_OK if served else EXIT_ERROR
 
 
-def _serve(config: CodexConfig, config_path: Path, state_dir: Path, stopper: Stopper) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    sock.listen(128)
+def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) -> bool:
+    """``False`` if the collector was not ready in time."""
+    sock = listen()
     port: int = sock.getsockname()[1]
     secret = secrets.token_hex(32)
 
@@ -319,19 +346,23 @@ def _serve(config: CodexConfig, config_path: Path, state_dir: Path, stopper: Sto
     worker = Worker(open_collector, on_fatal=stopper)
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, lifespan="on"))
     stopper.server = server
-    info = DaemonInfo(port, secret, os.getpid(), package_version(), config_digest(config_path))
+    info = DaemonInfo(port, secret, os.getpid(), package_version(), digest)
     write_daemon_json(state_dir, info)
     clear_spawn_failure(state_dir)
     log.info("listening on 127.0.0.1:%d; %s written", port, INFO_FILE)
-    # Hooks wait in the listen backlog until the server runs.
-    worker.start()
     watchdog = Watchdog(lifetime, services.exit)
     watchdog.start()
     try:
+        # Hooks wait in the listen backlog until the server runs.
+        if not worker.start(timeout=WORKER_READY_S):
+            log.error("collector not ready after %.0f s; exiting", WORKER_READY_S)
+            sock.close()
+            return False
         asyncio.run(_run_server(server, sock, client))
     finally:
         watchdog.stop()
         worker.stop()
+    return True
 
 
 async def _run_server(

@@ -16,6 +16,8 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
 
+from .discovery import digest, resolve_path
+
 MIN_TOKEN_CHARS = 32
 _PATH_KEYS = ("push_token_file", "codex_bin", "codex_home")
 
@@ -52,17 +54,33 @@ class CodexConfig(BaseConfig):
 
     @classmethod
     def load(cls, path: Path) -> Self:
-        """Relative paths resolve against the file's directory."""
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return cls.load_with_digest(path)[0]
+
+    @classmethod
+    def load_with_digest(cls, path: Path) -> tuple[Self, str]:
+        """The config and its ``config_digest``, from one read of each file.
+        Relative paths resolve against the file's directory."""
+        raw = path.read_bytes()
+        data = tomllib.loads(raw.decode("utf-8"))
         for key in _PATH_KEYS:
             if isinstance(value := data.get(key), str):
-                data[key] = str(path.parent.absolute() / Path(value).expanduser())
-        return cls(**data)
+                data[key] = str(resolve_path(path, value))
+        token = b""
+        if isinstance(token_file := data.get("push_token_file"), str):
+            try:
+                token = Path(token_file).read_bytes()
+            except OSError as exc:
+                raise ValueError(
+                    f"cannot read push_token_file {token_file}: {exc.strerror}"
+                ) from None
+            data["push_token"] = token.decode("utf-8").strip()
+        return cls(**data), digest(raw, token)
 
     @model_validator(mode="before")
     @classmethod
     def _read_token_file(cls, data: object) -> object:
-        if not isinstance(data, dict):
+        """For the constructor; ``load`` reads the file itself."""
+        if not isinstance(data, dict) or "push_token" in data:
             return data
         try:
             token_file = _TokenFileRef.model_validate(data).push_token_file

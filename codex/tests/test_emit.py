@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -484,6 +485,25 @@ def test_worker_ready_before_sweep(
     assert time.monotonic() - start < 0.4
     assert swept.wait(5)
     worker.stop()
+
+
+def test_worker_ready_wait_bounded() -> None:
+    release = threading.Event()
+
+    @asynccontextmanager
+    async def open_collector() -> AsyncIterator[Collector]:
+        await asyncio.to_thread(release.wait, 10)
+        raise OSError("stuck")
+        yield
+
+    worker = Worker(open_collector, sweep=False)
+    start = time.monotonic()
+    try:
+        assert worker.start(timeout=0.2) is False
+        assert time.monotonic() - start < 1
+    finally:
+        release.set()
+        worker.stop()
 
 
 def test_worker_setup_failure_exits(caplog: pytest.LogCaptureFixture) -> None:

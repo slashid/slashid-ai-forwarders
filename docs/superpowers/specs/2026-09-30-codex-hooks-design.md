@@ -141,7 +141,7 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 
 `state_dir = platformdirs.user_data_dir("slashid-ai-forwarder-codex", "slashid")`: `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex`, `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. Per user, never set by the MDM config (a shared path would mix users' daemons and databases); `--state-dir` exists for tests.
 
-- POSIX: directory `0700`; files created `0600` via `os.open(O_CREAT | O_EXCL, 0o600)` and renamed into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
+- POSIX: directory `0700`, reset on every run; files created `0600` via `os.open(O_CREAT | O_EXCL, 0o600)` and renamed into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
 - `data.sqlite`: `LocalPlatform`'s database (watermarks), shared with the file records.
 - `created_at`: when the state was first created.
 - `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three files), `daemon.stderr` (the daemon's output: crash tracebacks only).
@@ -149,7 +149,7 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 ### Discovery
 
 1. The daemon holds an exclusive lock on `daemon.lock` (`fcntl.flock` / `msvcrt.locking`) for its life. A starting daemon waits up to 3 s for it, then exits if a live daemon holds it.
-2. It binds `127.0.0.1:0`, draws a 32-byte secret, and writes `daemon.json` atomically (temporary file, `os.replace`, retried briefly on Windows where an open reader blocks the replace): `{port, secret, pid, version, config_digest}`, `config_digest` being SHA-256 over the config and token files' bytes.
+2. It binds `127.0.0.1:0` (Windows: `SO_EXCLUSIVEADDRUSE`), draws a 32-byte secret, and writes `daemon.json` atomically (temporary file, `os.replace`, retried briefly on Windows where an open reader blocks the replace): `{port, secret, pid, version, config_digest}`, `config_digest` being SHA-256 over the config and token files' bytes, the same bytes the daemon loaded.
 3. The client authenticates the daemon before sending anything: `GET /ping?nonce=<random>` must return `HMAC-SHA256(secret, nonce)`. A process that took over a dead daemon's port cannot answer, so it never receives the secret or a payload. The event follows on the same connection with `Authorization: Bearer <secret>`. A ping answered with `Connection: close` (a daemon shutting down) fails the handshake, and the verified connection is never reopened: whoever holds the port by then is unverified. If the ping times out while a live daemon holds the lock, the client waits on it rather than spawning.
 4. If `daemon.json` is missing, the connection is refused or `/ping` fails, the client spawns `<python> -m slashid_codex daemon` with the state dir as its cwd and, for preflight events, polls `daemon.json` for up to 5 s. The spawn inherits none of the hook's pipes (`stdin=DEVNULL`, output to `daemon.stderr`, `close_fds=True`), or Codex would wait on them. POSIX: `start_new_session=True` (a closing terminal does not SIGHUP it). Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, retried without breakaway if the job forbids it.
 5. If the spawned daemon exits with an error, or no `daemon.json` appears while no live daemon holds the lock, the client writes `spawn-failed` and skips spawning for 5 minutes. The backoff is keyed by `version:config_digest`, so a fixed config or token applies at once. Losing the lock to a live daemon is not a failure. During the backoff the client still uses an existing `daemon.json`.
@@ -168,9 +168,9 @@ Every request needs `Host: 127.0.0.1:<port>` exactly (DNS rebinding) and no `Ori
 
 ### Threads
 
-- Preflight runs on the event loop, its blocking parts (SQLite, hashing, refreshing the log and advancing the head cursor) in `asyncio.to_thread`.
+- Preflight runs on the event loop, its blocking parts (SQLite, hashing, refreshing the log and advancing the head cursor) on a pool of four daemon threads of its own: hashing hung on a stuck mount starves nothing else and does not hold up exit.
 - Collection and the sweep run on one worker thread, so parsing and pushing never delay a verdict.
-- A watchdog thread `os._exit`s the daemon when the loop's 1 s heartbeat is more than 10 s stale, so a hung daemon releases its lock and the next hook replaces it.
+- A watchdog thread `os._exit`s the daemon when the loop's 1 s heartbeat is more than 10 s stale, so a hung daemon releases its lock and the next hook replaces it. It starts before the worker, which gets 5 s to set up. Uncaught exceptions, in any thread, go to `daemon.log`; validation errors are logged by location and type, without their input.
 
 ### Lifetime
 

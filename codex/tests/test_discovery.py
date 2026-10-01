@@ -24,6 +24,7 @@ from slashid_codex.discovery import (
     acquire_lock,
     config_digest,
     connect,
+    ensure_state_dir,
     hmac_response,
     in_backoff,
     lock_held,
@@ -42,6 +43,16 @@ INFO = DaemonInfo(port=4242, secret="s" * 64, pid=123, version="1.0", config_dig
 def test_state_dir_default_and_override(tmp_path: Path) -> None:
     assert state_dir() == Path(platformdirs.user_data_dir("slashid-ai-forwarder-codex", "slashid"))
     assert state_dir(tmp_path) == tmp_path
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+def test_state_dir_mode_fixed_on_every_run(tmp_path: Path) -> None:
+    path = tmp_path / "state"
+    ensure_state_dir(path)
+    assert path.stat().st_mode & 0o777 == 0o700
+    os.chmod(path, 0o755)
+    ensure_state_dir(path)
+    assert path.stat().st_mode & 0o777 == 0o700
 
 
 def test_daemon_json_round_trip(tmp_path: Path) -> None:

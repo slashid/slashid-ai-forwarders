@@ -51,11 +51,9 @@ def state_dir(override: Path | None = None) -> Path:
 
 
 def ensure_state_dir(path: Path) -> None:
-    """``0700`` on POSIX; Windows keeps ``%LOCALAPPDATA%``'s inherited ACL."""
-    try:
-        path.mkdir(mode=0o700, parents=True)
-    except FileExistsError:
-        return
+    """``0700`` on POSIX, reset on every run; Windows keeps
+    ``%LOCALAPPDATA%``'s inherited ACL."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
     if sys.platform != "win32":
         os.chmod(path, 0o700)
 
@@ -153,6 +151,15 @@ def _read_bytes(path: Path) -> bytes:
         return b""
 
 
+def resolve_path(config_path: Path, value: str) -> Path:
+    """A path in the config, resolved against the config file's directory."""
+    return config_path.parent.absolute() / Path(value).expanduser()
+
+
+def digest(config: bytes, token: bytes) -> str:
+    return hashlib.sha256(config + b"\0" + token).hexdigest()
+
+
 def config_digest(config_path: Path) -> str:
     """SHA-256 over the config file's bytes, then the token file's; a missing
     file counts as empty."""
@@ -163,9 +170,8 @@ def config_digest(config_path: Path) -> str:
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
         value = None
     if isinstance(value, str):
-        # As ``CodexConfig.load`` resolves it.
-        token = _read_bytes(config_path.parent.absolute() / Path(value).expanduser())
-    return hashlib.sha256(config + b"\0" + token).hexdigest()
+        token = _read_bytes(resolve_path(config_path, value))
+    return digest(config, token)
 
 
 # --------------------------------------------------------------------------

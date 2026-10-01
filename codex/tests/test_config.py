@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from slashid_codex.config import CodexConfig
+from slashid_codex.discovery import config_digest
 
 TOKEN = "t" * 32
 
@@ -156,3 +157,21 @@ def test_example_config_loads(tmp_path: Path) -> None:
     config = CodexConfig.load(config_path)
     assert config.verdict_fail_mode == "deny"
     assert config.push_token == "t" * 32
+
+
+def test_digest_from_the_bytes_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _write(tmp_path, BASE)
+    expected = config_digest(path)
+    reads: list[str] = []
+    for method in ("read_bytes", "read_text"):
+        real = getattr(Path, method)
+
+        def spy(self: Path, *args: object, _real=real, **kwargs: object) -> object:
+            reads.append(self.name)
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, method, spy)
+    config, digest = CodexConfig.load_with_digest(path)
+    assert digest == expected
+    assert config.push_token == TOKEN
+    assert sorted(reads) == ["config.toml", "token"]

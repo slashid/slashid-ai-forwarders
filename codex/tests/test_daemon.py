@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import socket
+import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -9,6 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import FastAPI
+from pydantic import ValidationError
 
 from slashid_codex.cache import SessionCache
 from slashid_codex.config import CodexConfig
@@ -20,6 +25,8 @@ from slashid_codex.daemon import (
     Watchdog,
     create_app,
     lifetime_of,
+    listen,
+    setup_logging,
     tick,
 )
 from slashid_codex.discovery import (
@@ -197,9 +204,41 @@ async def test_trigger_routes_answer_at_once(
     assert fakes.preflights == []
 
 
-async def test_unknown_event_404(client: httpx.AsyncClient) -> None:
+async def test_unknown_event_404(app: FastAPI, client: httpx.AsyncClient, fakes: Fakes) -> None:
+    fakes.clock.now += 600
     response = await client.post("/hooks/PostToolUse", content=b"{}", headers=AUTH)
     assert response.status_code == 404
+    # Not activity.
+    assert lifetime_of(app).idle_expired()
+
+
+def _invalid() -> Verdict:
+    """Raises a ``ValidationError`` quoting its input."""
+    return Verdict.model_validate({"decision": "SECRET-PROMPT"})
+
+
+async def test_route_errors_logged_without_input(
+    config: CodexConfig, fakes: Fakes, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def invalid(event: str, payload: bytes, arrival: float) -> Verdict:
+        return _invalid()
+
+    def invalid_trigger(event: str, payload: bytes) -> None:
+        _invalid()
+
+    services = fakes.services()
+    services.preflight = invalid
+    services.enqueue_trigger = invalid_trigger
+    app = create_app(config, SECRET, PORT, services)
+    with caplog.at_level(logging.INFO):
+        async with _client(app) as client:
+            response = await client.post("/hooks/PreToolUse", content=b"{}", headers=AUTH)
+            assert response.json()["decision"] == "block"
+            assert (await client.post("/hooks/Stop", content=b"{}", headers=AUTH)).json() == {}
+    ours = [r for r in caplog.records if r.name.startswith("slashid_codex")]
+    assert [r.funcName for r in ours] == ["hook", "hook"]
+    assert "SECRET-PROMPT" not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)
 
 
 async def test_preflight_crash_answers_fail_mode(
@@ -248,18 +287,29 @@ async def test_idle_clock_reset_by_hooks_and_publishes_only(
     assert lifetime.idle_expired()
 
 
+class _Done(Exception):
+    pass
+
+
 async def test_tick_calls_on_idle_once() -> None:
     clock = Clock()
     lifetime = Lifetime(clock, 10)
-    idle: list[int] = []
-    task = asyncio.create_task(tick(lifetime, lambda: idle.append(1), interval=0.01))
-    await asyncio.sleep(0.05)
-    assert idle == []
-    clock.now += 10
-    await asyncio.sleep(0.05)
-    task.cancel()
-    assert idle == [1]
-    # It kept beating after going idle.
+    idle: list[float] = []
+    ticks = 0
+
+    async def sleep(interval: float) -> None:
+        nonlocal ticks
+        ticks += 1
+        clock.now += 5
+        if ticks == 2:
+            # Idle from here on; beats keep coming.
+            clock.now += WATCHDOG_STALE_S
+        if ticks == 6:
+            raise _Done
+
+    with pytest.raises(_Done):
+        await tick(lifetime, lambda: idle.append(clock.now), sleep=sleep)
+    assert idle == [1000.0 + 10 + WATCHDOG_STALE_S]
     assert not lifetime.stale()
 
 
@@ -292,6 +342,55 @@ def test_watchdog_thread(fakes: Fakes) -> None:
         time.sleep(0.01)
     watchdog.stop()
     assert fakes.exits == [1]
+
+
+def test_uncaught_exceptions_logged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = logging.getLogger()
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    monkeypatch.setattr(root, "handlers", list(root.handlers))
+    monkeypatch.setattr(root, "level", root.level)
+    before = set(root.handlers)
+    setup_logging(tmp_path / "daemon.log")
+    [handler] = set(root.handlers) - before
+    try:
+        try:
+            raise RuntimeError("main boom")
+        except RuntimeError as exc:
+            sys.excepthook(type(exc), exc, exc.__traceback__)
+        try:
+            _invalid()
+        except ValidationError as exc:
+            sys.excepthook(type(exc), exc, exc.__traceback__)
+
+        def thread_boom() -> None:
+            raise ZeroDivisionError("thread boom")
+
+        thread = threading.Thread(target=thread_boom, name="boom")
+        thread.start()
+        thread.join()
+    finally:
+        handler.close()
+    text = (tmp_path / "daemon.log").read_text()
+    assert "main boom" in text
+    assert "Traceback" in text
+    assert "thread boom" in text
+    assert "ValidationError" in text
+    assert "SECRET-PROMPT" not in text
+
+
+def test_listen_on_loopback() -> None:
+    with listen() as sock:
+        host, port = sock.getsockname()
+        assert host == "127.0.0.1"
+        assert port > 0
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows socket option")
+def test_listen_exclusive_on_windows() -> None:
+    with listen() as sock:
+        option = socket.SO_EXCLUSIVEADDRUSE  # ty: ignore[unresolved-attribute]
+        assert sock.getsockopt(socket.SOL_SOCKET, option) == 1
 
 
 def test_stopper_deletes_json_then_releases_lock(tmp_path: Path) -> None:
@@ -392,6 +491,23 @@ async def test_handler_invalid_payload_fail_mode(
     else:
         assert verdict == Verdict()
     assert env.preflight.calls == []
+
+
+async def test_handler_validation_error_logged_without_input(
+    make_config: Callable[..., CodexConfig], caplog: pytest.LogCaptureFixture
+) -> None:
+    env = HandlerEnv(make_config())
+
+    async def invalid(hook: PreToolUseHook, *, deadline: float | None = None) -> Verdict:
+        return _invalid()
+
+    env.preflight.pre_tool_use = invalid  # ty: ignore[invalid-assignment]
+    with caplog.at_level(logging.INFO):
+        verdict = await env.handler.preflight("PreToolUse", _payload("pre_tool_use_bash_sed.json"))
+    assert verdict.decision == "block"
+    assert caplog.records
+    assert "SECRET-PROMPT" not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)
 
 
 async def test_handler_preflight_exception_fail_mode(

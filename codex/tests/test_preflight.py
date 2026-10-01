@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -371,6 +373,35 @@ async def test_slow_preparation_fails_at_deadline(
     assert verdict.reason is not None
     assert "deadline" in verdict.reason
     assert env.sink.invocations == []
+
+
+async def test_preparation_on_its_own_bounded_pool(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preparation stuck on a dead mount neither starves the default executor
+    nor keeps the process from exiting."""
+    release = threading.Event()
+
+    def stuck(*_: object) -> None:
+        release.wait(10)
+
+    monkeypatch.setattr(env.preflight, "_workdir", stuck)
+    before = {t for t in threading.enumerate() if t.name.startswith("codex-preflight")}
+    try:
+        start = time.monotonic()
+        verdicts = await asyncio.gather(
+            *(
+                env.preflight.pre_tool_use(_ptu("ls", cwd=env.tmp_path), deadline=start + 0.2)
+                for _ in range(40)
+            )
+        )
+        assert {v.decision for v in verdicts} == {"block"}
+        assert await asyncio.wait_for(asyncio.to_thread(lambda: 1), 2) == 1
+        pool = {t for t in threading.enumerate() if t.name.startswith("codex-preflight")} - before
+        assert len(pool) == preflight_module.PREPARE_WORKERS
+        assert all(t.daemon for t in pool)
+    finally:
+        release.set()
 
 
 async def test_hashing_stops_past_half_the_budget(

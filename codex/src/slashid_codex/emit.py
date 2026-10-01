@@ -24,6 +24,7 @@ from slashid_ai_forwarder_core.platform.local import LocalPlatform
 from .cache import Session, SessionCache, locate
 from .config import CodexConfig
 from .cursor import RolloutInvocation
+from .errors import log_failure, summary
 from .events import SessionContext, build_event, record_keys
 from .hooks import SessionEndHook, SessionStartHook, StopHook
 from .mcp_servers import McpServers
@@ -116,8 +117,8 @@ class Collector:
         _, _, trigger = await self._queue.get()
         try:
             await self.collect(trigger)
-        except Exception:
-            log.exception("collection of %s failed", trigger.session_id)
+        except Exception as exc:
+            log_failure(log, "collection of %s failed", trigger.session_id, exc=exc)
 
     # ----------------------------------------------------------------------
     # One session
@@ -187,7 +188,12 @@ class Collector:
                     await self._sink.push(events)
                 break
             except Exception as exc:
-                log.warning("batch for %s failed: %r", context.session_id, exc)
+                log.warning(
+                    "batch for %s failed: %s: %s",
+                    context.session_id,
+                    type(exc).__name__,
+                    summary(exc),
+                )
                 if delay is None:
                     return False
                 await self._sleep(delay)
@@ -330,9 +336,10 @@ class Worker:
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._main, name="codex-collector", daemon=True)
 
-    def start(self) -> None:
+    def start(self, timeout: float | None = None) -> bool:
+        """Whether the collector was set up (or failed) within ``timeout``."""
         self._thread.start()
-        self._ready.wait()
+        return self._ready.wait(timeout)
 
     def submit(self, trigger: Trigger) -> None:
         """From any thread."""
@@ -358,8 +365,8 @@ class Worker:
             async with contextlib.AsyncExitStack() as stack:
                 try:
                     collector = await stack.enter_async_context(self._open())
-                except Exception:
-                    log.exception("collector setup failed; exiting")
+                except Exception as exc:
+                    log_failure(log, "collector setup failed; exiting", exc=exc)
                     self._on_fatal()
                     return
                 self._collector = collector
@@ -369,6 +376,6 @@ class Worker:
                 if self._sweep:
                     try:
                         await collector.startup_sweep()
-                    except Exception:
-                        log.exception("startup sweep failed")
+                    except Exception as exc:
+                        log_failure(log, "startup sweep failed", exc=exc)
                 await collector.run()

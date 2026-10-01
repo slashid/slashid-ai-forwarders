@@ -8,11 +8,10 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
-from pydantic import ValidationError
-
 from .cache import SessionCache
 from .config import CodexConfig
 from .emit import Trigger
+from .errors import log_failure, summary
 from .hooks import (
     PreToolUseHook,
     SessionEndHook,
@@ -66,7 +65,7 @@ class Handler:
         try:
             hook = parse_hook(event, payload)
         except ValueError as exc:
-            log.warning("invalid %s payload: %s", event, _summary(exc))
+            log.warning("invalid %s payload: %s", event, summary(exc))
             return fail_verdict(self._config, INVALID_PAYLOAD)
         self._cache.touch_hook(hook.session_id)
         try:
@@ -74,8 +73,8 @@ class Handler:
                 return await self._preflight.user_prompt_submit(hook, deadline=deadline)
             if isinstance(hook, PreToolUseHook):
                 return await self._preflight.pre_tool_use(hook, deadline=deadline)
-        except Exception:
-            log.exception("preflight for %s failed", hook.session_id)
+        except Exception as exc:
+            log_failure(log, "preflight for %s failed", hook.session_id, exc=exc)
             return fail_verdict(self._config, DAEMON_ERROR)
         return fail_verdict(self._config, INVALID_PAYLOAD)
 
@@ -84,17 +83,8 @@ class Handler:
         try:
             hook = parse_hook(event, payload)
         except ValueError as exc:
-            log.warning("invalid %s payload: %s", event, _summary(exc))
+            log.warning("invalid %s payload: %s", event, summary(exc))
             return
         self._cache.touch_hook(hook.session_id)
         if isinstance(hook, SessionStartHook | StopHook | SessionEndHook):
             self._submit(Trigger.from_hook(hook))
-
-
-def _summary(exc: ValueError) -> str:
-    """The error without payload content."""
-    if isinstance(exc, ValidationError):
-        return "; ".join(
-            f"{'.'.join(map(str, e['loc']))}: {e['type']}" for e in exc.errors(include_input=False)
-        )
-    return str(exc)

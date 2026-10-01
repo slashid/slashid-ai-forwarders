@@ -84,6 +84,21 @@ def test_modelled_type_failing_validation_raises() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"timestamp":"t","type":"token_usage_record","payload":{"response_id":["SECRET"]}}',
+        b'{"timestamp":"t","type":"event_msg","payload":"SECRET"}',
+        b'{"timestamp":["SECRET"],"type":"turn_context","payload":{}}',
+        b'{"type": ["SECRET"]}',
+    ],
+)
+def test_errors_do_not_quote_the_line(raw: bytes) -> None:
+    with pytest.raises(RolloutLineError) as exc:
+        parse_line(raw)
+    assert "SECRET" not in str(exc.value)
+
+
 def test_script_mode_shapes() -> None:
     lines = _parsed("script")
     meta = lines[0].payload

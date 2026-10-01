@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import mimetypes
+import queue
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import Future
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -52,6 +56,7 @@ MAX_FILES = 50
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
 # Of the verdict budget, the share hashing may spend.
 HASH_BUDGET_SHARE = 0.5
+PREPARE_WORKERS = 4
 
 Provenance = Literal["tool_result", "attachment"]
 _PreflightHook = UserPromptSubmitHook | PreToolUseHook
@@ -130,6 +135,49 @@ class _Hasher:
         return entry
 
 
+class _Pool:
+    """Up to ``workers`` daemon threads, started as needed. A thread hung on a
+    stuck mount costs this pool only, and does not hold up exit (the default
+    executor's threads are joined at exit)."""
+
+    def __init__(self, workers: int, name: str) -> None:
+        self._workers = workers
+        self._name = name
+        self._jobs: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._threads = 0
+        self._idle = 0
+
+    def submit[T](self, fn: Callable[[], T]) -> Future[T]:
+        future: Future[T] = Future()
+
+        def job() -> None:
+            if not future.set_running_or_notify_cancel():
+                return
+            try:
+                future.set_result(fn())
+            except BaseException as exc:
+                future.set_exception(exc)
+
+        with self._lock:
+            if self._idle == 0 and self._threads < self._workers:
+                self._threads += 1
+                threading.Thread(
+                    target=self._work, name=f"{self._name}-{self._threads}", daemon=True
+                ).start()
+            self._jobs.put(job)
+        return future
+
+    def _work(self) -> None:
+        while True:
+            with self._lock:
+                self._idle += 1
+            job = self._jobs.get()
+            with self._lock:
+                self._idle -= 1
+            job()
+
+
 class Preflight:
     def __init__(
         self,
@@ -147,6 +195,7 @@ class Preflight:
         self._sessions = sessions
         self._clock = clock
         self._monotonic = monotonic
+        self._pool = _Pool(PREPARE_WORKERS, "codex-preflight")
 
     async def user_prompt_submit(
         self, hook: UserPromptSubmitHook, *, deadline: float | None = None
@@ -172,7 +221,8 @@ class Preflight:
         hash_until = now + (deadline - now) * HASH_BUDGET_SHARE
         try:
             invocation = await asyncio.wait_for(
-                asyncio.to_thread(build, hook, hash_until), timeout=max(deadline - now, 0.0)
+                asyncio.wrap_future(self._pool.submit(functools.partial(build, hook, hash_until))),
+                timeout=max(deadline - now, 0.0),
             )
         except TimeoutError:
             log.warning("preflight for %s: deadline exceeded preparing", hook.session_id)

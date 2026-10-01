@@ -6,7 +6,9 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -36,6 +38,11 @@ class StubSlashID:
         self.pushed: list[dict[str, Any]] = []
         self.auth: set[str] = set()
         self.pushed_event = threading.Event()
+        # Pushes to receive and never answer, and what they carried.
+        self.cut_off = 0
+        self.cut: list[dict[str, Any]] = []
+        self.cut_event = threading.Event()
+        self.release = threading.Event()
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -50,6 +57,12 @@ class StubSlashID:
                 if self.path == "/ip/nhi/events/ai-invocations/preflight":
                     stub.preflights.append(body)
                     self._reply({"deny_reasons": stub.deny})
+                elif self.path == "/ip/nhi/events/ai-invocations" and stub.cut_off:
+                    stub.cut_off -= 1
+                    stub.cut.extend(body["events"])
+                    stub.cut_event.set()
+                    stub.release.wait(30)
+                    self.close_connection = True
                 elif self.path == "/ip/nhi/events/ai-invocations":
                     stub.pushed.extend(body["events"])
                     self._reply({})
@@ -72,6 +85,7 @@ class StubSlashID:
         self.endpoint = f"http://127.0.0.1:{self.server.server_address[1]}"
 
     def close(self) -> None:
+        self.release.set()
         self.server.shutdown()
         self.server.server_close()
 
@@ -115,11 +129,22 @@ def test_plain_http_config_is_test_only(daemons: Daemons) -> None:
     assert PlainHttpConfig.load(daemons.config).endpoint.startswith("http://")
 
 
-def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
+def _rollout(daemons: Daemons) -> Path:
     day = daemons.codex_home / "sessions" / "2026" / "09" / "30"
     day.mkdir(parents=True)
     rollout = day / f"rollout-2026-09-30T15-33-36-{SESSION}.jsonl"
     shutil.copy(ROLLOUTS / "script.jsonl", rollout)
+    return rollout
+
+
+def _wait_pushed(stub: StubSlashID, count: int) -> None:
+    give_up = time.monotonic() + 15
+    while len(stub.pushed) < count and time.monotonic() < give_up:
+        time.sleep(0.05)
+
+
+def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
+    rollout = _rollout(daemons)
     note = daemons.root / "note.txt"
     note.write_text("hello\n")
 
@@ -152,15 +177,36 @@ def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
     stop = _payload("stop.json", transcript_path=str(rollout))
     assert json.loads(daemons.hook("Stop", stop).stdout) == {}
     assert stub.pushed_event.wait(15)
-    give_up = time.monotonic() + 10
     expected = _response_ids(rollout)
-    while len(stub.pushed) < len(expected) and time.monotonic() < give_up:
-        time.sleep(0.05)
+    _wait_pushed(stub, len(expected))
     assert [e["request_id"] for e in stub.pushed] == expected
     assert {e["parsed_as"] for e in stub.pushed} == {"codex-rollout"}
     assert stub.auth == {f"Bearer {TOKEN}"}
     # Same daemon throughout.
     assert daemons.info() == info
+
+
+def test_push_cut_off_by_exit_resent(daemons: Daemons, stub: StubSlashID) -> None:
+    """The watermark was not saved, so the next daemon's trigger sends the same
+    events again; the server deduplicates them by ``request_id``."""
+    rollout = _rollout(daemons)
+    stop = _payload("stop.json", transcript_path=str(rollout))
+    expected = _response_ids(rollout)
+    stub.cut_off = 1
+    old = daemons.start("-m", "tests.e2e_daemon")
+    assert json.loads(daemons.hook("Stop", stop).stdout) == {}
+    assert stub.cut_event.wait(15)
+    os.kill(old.pid, signal.SIGTERM)
+    assert wait_dead(old.pid)
+    assert stub.pushed == []
+
+    daemons.start("-m", "tests.e2e_daemon")
+    assert json.loads(daemons.hook("Stop", stop).stdout) == {}
+    _wait_pushed(stub, len(expected))
+    sent = [e["request_id"] for e in stub.pushed]
+    assert sent == expected
+    cut = [e["request_id"] for e in stub.cut]
+    assert cut == sent[: len(cut)]
 
 
 def _spawn_e2e(argv: list[str], cwd: Path, stderr_path: Path) -> subprocess.Popen[bytes]:

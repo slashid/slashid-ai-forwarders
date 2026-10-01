@@ -10,6 +10,7 @@ from pydantic import BeforeValidator, ConfigDict, Field, ValidationError
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import ResponsesItem
 
+from .errors import summary
 from .usage import CodexUsage
 
 
@@ -224,12 +225,12 @@ def parse_line(raw: bytes) -> RolloutLine | None:
     try:
         header = _Header.model_validate_json(raw)
     except ValidationError as exc:
-        raise RolloutLineError(str(exc)) from exc
+        raise RolloutLineError(summary(exc)) from None
     if header.type == "event_msg":
         try:
             event = _EventHeader.model_validate_json(raw)
         except ValidationError as exc:
-            raise RolloutLineError(str(exc)) from exc
+            raise RolloutLineError(summary(exc)) from None
         if event.payload.type not in _EVENTS:
             return None
         envelope: type[_Envelope] = _EventMsgLine
@@ -240,7 +241,7 @@ def parse_line(raw: bytes) -> RolloutLine | None:
     try:
         line = envelope.model_validate_json(raw)
     except ValidationError as exc:
-        raise RolloutLineError(str(exc)) from exc
+        raise RolloutLineError(summary(exc)) from None
     return RolloutLine.model_construct(
         timestamp=line.timestamp, type=header.type, payload=line.payload
     )
