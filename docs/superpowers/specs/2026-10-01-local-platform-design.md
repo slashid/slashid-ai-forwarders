@@ -12,7 +12,7 @@ The only platform is `gcp`, so nothing that uses the seam can run, or be tested,
 ## Goals
 
 1. `LocalPlatform` implements `Platform` on SQLite: `checkpoint_store`, `tick_lease`, `blob_sink`, `scheduler_auth`.
-2. It runs on a file or on `:memory:`, and defaults to a per-application file in the user's data directory.
+2. It runs on a file or on `:memory:`. The caller chooses where: the platform has no default location.
 3. It exposes the database as a property, the way `GcpPlatform` exposes `firestore`, so an adapter with state of its own can share the connection.
 
 ## Non-goals
@@ -23,17 +23,15 @@ The Anthropic `PendingStore` on SQLite (on hold), `platform: "local"` in any ada
 
 ### Shape
 
-`platform/local/__init__.py` holds `LocalPlatform`; the stores sit beside it, as `platform/gcp/firestore.py` does. `platform/__init__.py` registers it: `_PLATFORMS["local"] = "slashid_ai_forwarder_core.platform.local:LocalPlatform"`, so `platforms.get("local", path=…)` works and nothing loads `aiosqlite` until asked. A `[local]` extra on `shared` carries `aiosqlite` and `platformdirs`.
+`platform/local/__init__.py` holds `LocalPlatform`; the stores sit beside it, as `platform/gcp/firestore.py` does. `platform/__init__.py` registers it: `_PLATFORMS["local"] = "slashid_ai_forwarder_core.platform.local:LocalPlatform"`, so `platforms.get("local", path=…)` works and nothing loads `aiosqlite` until asked. A `[local]` extra on `shared` carries `aiosqlite`.
 
 ```python
-LocalPlatform(path: str | Path | None = None, *, app: str | None = None)
+LocalPlatform(path: str | Path)
 ```
 
 ### Where the data lives
 
-`path` wins when given, and `":memory:"` is accepted. Otherwise the file is `platformdirs.user_data_dir(name, "slashid") / "data.sqlite"`, with the directory created on first use, where `name` is the first of: `app`; the distribution that owns the calling code; `"slashid-forwarder"`.
-
-The calling distribution is found by walking the stack to the first frame outside `slashid_ai_forwarder_core`, taking its top-level package, writing underscores as hyphens (`slashid_vertex_forwarder` → `slashid-vertex-forwarder`) and keeping it only if a distribution of that name is installed. `importlib.metadata.packages_distributions()` is not used: it returns nothing for editable installs, which is how the workspace runs. The walk finds nothing from a script or under pytest, hence the fallback; anything that needs a known location passes `app` or `path`.
+`path` is required: a file path, or `":memory:"`. Where a file belongs (a user data directory, a state directory, a temporary one) is the caller's decision, so the platform reads no environment and imports no directory library. For a file, the platform creates the parent directory on first use.
 
 ### The database property
 
@@ -55,12 +53,11 @@ Times are stored as integer microseconds since the epoch (UTC), which is exact a
 - `LocalPlatform(":memory:")` for every test, inside `async with`.
 - One suite for `checkpoint_store` and `tick_lease` that runs against both `GcpPlatform` (with the existing async Firestore fakes) and `LocalPlatform`, so they cannot drift: first-load empty, round trip, naive datetime, separate documents, separate collections; lease taken, refused while held, taken after expiry, released by its owner, not released by a stranger, released on an exception.
 - Blobs: put, replace, get, buckets are separate. Scheduler auth: accepted, wrong token, unset principal.
-- Location: an explicit `path` and `:memory:`; the default under `app`; the default from an adapter module's namespace resolves to its distribution (run from inside a package namespace, as the probe did); from a plain script it falls back to `slashid-forwarder`. Use a temporary `XDG_DATA_HOME` so nothing touches the real data directory.
+- Location: a file path in a temporary directory, including one whose parent does not exist yet (created on first use), and `:memory:`; a second `LocalPlatform` on the same file sees the first one's data.
 - Lifecycle: the connection starts once under concurrent first use, `aclose` is safe twice, and using a closed platform raises clearly.
 - `platforms.get("local")` resolves; `platforms.get` on an unknown name lists `local` among the known.
 
 ## Risks
 
-- **The stack walk is a convenience.** It has no answer under pytest, a REPL or a frozen build, and a wrapper outside the adapter package confuses it; the fallback name and the explicit `app` and `path` are the answer.
 - **One connection, one thread.** aiosqlite serializes statements on one worker thread, so a slow statement delays the others. That is fine for checkpoints, a lease and blobs; a future pending store with heavier queries is a reason to revisit it.
 - **Two processes on one file.** WAL and `BEGIN IMMEDIATE` make the lease correct across processes; the busy timeout bounds the wait.
