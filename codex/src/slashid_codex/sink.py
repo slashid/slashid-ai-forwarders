@@ -23,8 +23,9 @@ DRY_RUN_DELAY_S = 1.0
 
 
 def _connection_lost(exc: PreflightError) -> bool:
-    """A kept-alive connection that died while the machine slept, not a
-    slow or refusing server."""
+    """A connection-level error (reset, refused, DNS), such as a kept-alive
+    connection that died while the machine slept; not a timeout or an HTTP
+    error."""
     cause = exc.__cause__
     return isinstance(cause, httpx.NetworkError | httpx.RemoteProtocolError) and not isinstance(
         cause, httpx.TimeoutException

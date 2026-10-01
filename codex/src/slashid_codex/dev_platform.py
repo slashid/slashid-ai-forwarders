@@ -34,7 +34,7 @@ class DevPlatform:
         if not self._db.exists():
             with contextlib.suppress(FileExistsError):
                 os.close(os.open(self._db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-        conn = sqlite3.connect(self._db, timeout=BUSY_TIMEOUT_MS / 1000, check_same_thread=False)
+        conn = sqlite3.connect(self._db, timeout=BUSY_TIMEOUT_MS / 1000)
         conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA journal_mode = WAL")
         return conn

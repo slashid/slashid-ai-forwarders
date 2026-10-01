@@ -1659,6 +1659,7 @@ name = "slashid-codex"
 version = "0.1.0"
 source = { editable = "codex" }
 dependencies = [
+    { name = "certifi" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "platformdirs" },
@@ -1670,6 +1671,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "platformdirs", specifier = ">=4.2" },
