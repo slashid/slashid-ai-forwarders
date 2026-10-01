@@ -14,10 +14,11 @@ The only platform is `gcp`, so nothing that uses the seam can run, or be tested,
 1. `LocalPlatform` implements `Platform` on SQLite: `checkpoint_store`, `tick_lease`, `blob_sink`, `scheduler_auth`.
 2. It runs on a file or on `:memory:`. The caller chooses where: the platform has no default location.
 3. It exposes the database as a property, the way `GcpPlatform` exposes `firestore`, so an adapter with state of its own can share the connection.
+4. Every platform has the same lifecycle: `async def aclose()` and `async with`, on the `Platform` protocol, so `LocalPlatform` (which must be closed) and `GcpPlatform` (which today closes nothing) are used the same way.
 
 ## Non-goals
 
-The Anthropic `PendingStore` on SQLite (on hold), `platform: "local"` in any adapter's config (Anthropic needs the pending store; Vertex's sources are GCP-specific), and replacing the Firestore fake in existing tests. The platform is built and tested on its own.
+The Anthropic `PendingStore` on SQLite (on hold), `platform: "local"` in any adapter's config (Anthropic needs the pending store; Vertex's sources are GCP-specific), and replacing the Firestore fake in existing tests. The platform is built and tested on its own; the only change to existing services is closing their platform at shutdown.
 
 ## Design
 
@@ -33,6 +34,13 @@ LocalPlatform(path: str | Path)
 
 `path` is required: a file path, or `":memory:"`. Where a file belongs (a user data directory, a state directory, a temporary one) is the caller's decision, so the platform reads no environment and imports no directory library. For a file, the platform creates the parent directory on first use.
 
+### Lifecycle on the seam
+
+`Platform` gains `async def aclose() -> None`, and every platform is an async context manager (`__aenter__` returns the platform, `__aexit__` awaits `aclose()`); a small base class, `PlatformBase`, supplies the two dunder methods so each platform writes only `aclose()` (and `LocalPlatform` also writes an `open()` that `__aenter__` calls).
+
+- `GcpPlatform.aclose()` calls the Firestore `AsyncClient.close()` (a plain method, not a coroutine) if the cached client was ever built, and is safe to call twice. Nothing else it hands out holds a connection of its own: the GCS sink and the auth transport are per use.
+- The services close their platform at shutdown. Anthropic's lifespan already closes its httpx client and gains `await platform.aclose()`; Vertex has no lifespan and gains one that does the same. Both build the platform in `app()`, so the lifespan receives it from the factory.
+
 ### The database property
 
 `LocalPlatform.sqlite` is the cached `aiosqlite.Connection`, built without I/O (`aiosqlite.connect(path)` does nothing until awaited) the way `GcpPlatform.firestore` is built without I/O. One connection serves every store: an in-memory database exists per connection, so sharing is what makes `:memory:` work, and a file database behaves the same way.
@@ -43,7 +51,7 @@ aiosqlite starts a connection by awaiting it, and awaiting a started one raises,
 - open the connection with `isolation_level=None`, so every statement commits by itself and no implicit transaction is ever left open for a later one to trip over;
 - create the tables (`CREATE TABLE IF NOT EXISTS`).
 
-Every interface method awaits `_open()` first. A caller using the property directly awaits `platform.open()`, which returns the started connection, and never uses the connection itself as a context manager (`async with connection` awaits it, which fails once started). `LocalPlatform` is itself an async context manager, whose `__aenter__` is `open()` and `__aexit__` is `aclose()`; `aclose()` is idempotent and marks the platform closed, and any later use raises `RuntimeError("LocalPlatform is closed")`.
+Every interface method awaits `_open()` first. A caller using the property directly awaits `platform.open()`, which returns the started connection, and never uses the connection itself as a context manager (`async with connection` awaits it, which fails once started). `LocalPlatform`'s `__aenter__` is `open()`, and its `aclose()` is idempotent and marks the platform closed; any later use raises `RuntimeError("LocalPlatform is closed")`.
 
 The worker thread aiosqlite starts is not a daemon, so a platform that is never closed keeps the interpreter from exiting. `aclose()` (or the context manager) is therefore part of the contract, and every consumer closes it.
 
@@ -63,6 +71,7 @@ Times are stored as integer microseconds since the epoch (UTC), converted back w
 - Blobs: put, replace, get, buckets are separate. Scheduler auth: accepted, wrong token, non-ASCII token, unset principal.
 - Concurrency: `asyncio.gather` of `hold` on one lease on one platform admits exactly one; two `LocalPlatform`s on one file contend correctly and the loser reports not held; a statement that waits past the busy timeout raises.
 - Location and lifecycle: a file path in a temporary directory whose parent does not exist yet; a second platform on the same file sees the first one's data; the connection starts once under concurrent first use; `aclose` twice is safe; use after `aclose` raises `RuntimeError`.
+- Lifecycle on the seam: `async with GcpPlatform(...)` yields the platform, closes the Firestore client once when one was built, and does nothing when none was; closing twice is safe. Each service's shutdown closes its platform (the Anthropic and Vertex app tests assert `aclose` ran when the app's lifespan ends).
 - Registry: `platforms.get("local", path=…)` resolves, and `test_get_names_the_known_platforms_for_an_unknown_one` now expects `known: ['gcp', 'local']`.
 
 ## Packaging
