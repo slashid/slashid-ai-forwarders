@@ -42,11 +42,13 @@ class SessionContext:
 
 
 def record_keys(invocation: RolloutInvocation) -> tuple[list[str], list[str]]:
-    """The file-record keys the response consumed: its user messages' turns
-    and its tool results' ``item_completed`` ids."""
-    return list(invocation.consumed_turn_ids), [
-        item.id for item in invocation.consumed_items if item.id is not None
-    ]
+    """The file-record keys the response consumed, as preflight keys them:
+    its user messages' turns, and its tool results' call ids with their
+    ``item_completed`` ids."""
+    items = (item.id for item in invocation.consumed_items if item.id is not None)
+    return list(invocation.consumed_turn_ids), list(
+        dict.fromkeys([*invocation.consumed_call_ids, *items])
+    )
 
 
 async def build_event(

@@ -42,6 +42,10 @@ LIVE, SWEEP = 0, 1
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
+class Unbuildable(Exception):
+    pass
+
+
 class PushSink(Protocol):
     async def push(self, events: list[AIInvocationObservedV1]) -> int: ...
 
@@ -132,7 +136,8 @@ class Collector:
 
     async def process(self, session: Session) -> bool:
         """Send batches until the send cursor reaches the end. A batch that
-        still fails after its retries rewinds the cursor to the watermark."""
+        still fails after its retries, or any error escaping it, rewinds the
+        cursor to the watermark."""
         if session.watermark is None:
             mark = await self.watermark(session.session_id)
             with session.lock:
@@ -155,6 +160,9 @@ class Collector:
                 session.batch_in_flight = True
             try:
                 sent = await self._send(session, context, batch)
+            except BaseException:
+                self._rewind(session)
+                raise
             finally:
                 session.batch_in_flight = False
             if not sent:
@@ -191,7 +199,9 @@ class Collector:
     async def _build(
         self, context: SessionContext, batch: list[RolloutInvocation]
     ) -> list[AIInvocationObservedV1]:
-        """A response that cannot be built is dropped; a database error fails the batch."""
+        """A response that cannot be built is dropped; a database error, or
+        none built, fails the batch. Logs carry no exception text: a
+        validation error quotes its input."""
         events: list[AIInvocationObservedV1] = []
         for invocation in batch:
             try:
@@ -202,8 +212,10 @@ class Collector:
                 )
             except (sqlite3.Error, RecordStoreBusy):
                 raise
-            except Exception:
-                log.exception("dropped response %s", invocation.response_id)
+            except Exception as exc:
+                log.warning("dropped response %s: %s", invocation.response_id, type(exc).__name__)
+        if not events:
+            raise Unbuildable(f"none of {len(batch)} responses could be built")
         return events
 
     async def _commit(self, session: Session, batch: list[RolloutInvocation]) -> None:
@@ -221,6 +233,7 @@ class Collector:
             else:
                 with session.lock:
                     session.watermark = mark
+        # Deleted even if the save failed: the server dedups a resend by request_id.
         turn_ids: dict[str, None] = {}
         tool_ids: dict[str, None] = {}
         finished: dict[str, None] = {}
@@ -297,16 +310,20 @@ def _session_id(path: Path) -> str | None:
 
 class Worker:
     """Collection's thread and event loop. ``open_collector`` runs on that
-    loop, so the HTTP client it creates is the worker's own."""
+    loop, so the HTTP client and database it opens are the worker's own. If
+    it raises, ``on_fatal`` is called: the daemon exits and the next hook
+    starts another."""
 
     def __init__(
         self,
         open_collector: Callable[[], AbstractAsyncContextManager[Collector]],
         *,
         sweep: bool = True,
+        on_fatal: Callable[[], None] = lambda: None,
     ) -> None:
         self._open = open_collector
         self._sweep = sweep
+        self._on_fatal = on_fatal
         self._loop: asyncio.AbstractEventLoop | None = None
         self._collector: Collector | None = None
         self._task: asyncio.Task[None] | None = None
@@ -338,7 +355,13 @@ class Worker:
     async def _serve(self) -> None:
         self._task = asyncio.current_task()
         with contextlib.suppress(asyncio.CancelledError):
-            async with self._open() as collector:
+            async with contextlib.AsyncExitStack() as stack:
+                try:
+                    collector = await stack.enter_async_context(self._open())
+                except Exception:
+                    log.exception("collector setup failed; exiting")
+                    self._on_fatal()
+                    return
                 self._collector = collector
                 self._loop = asyncio.get_running_loop()
                 # Before the sweep, which can be slow: the spawning hook is waiting.

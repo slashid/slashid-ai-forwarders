@@ -22,6 +22,7 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 log = logging.getLogger(__name__)
 
 TIMEOUT_S = 5.0
+MAX_OUTPUT_BYTES = 1 << 20
 CACHE_S = 600.0
 # macOS and Windows bundle paths are unverified.
 _LINUX_BUNDLE = Path("/usr/lib/chatgpt/resources/codex")
@@ -85,10 +86,12 @@ class McpServers:
         self,
         codex_bin: Path | None,
         *,
+        codex_home: Path,
         find: Callable[[], Path | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._find = find or (lambda: find_codex(codex_bin))
+        self._env = {**os.environ, "CODEX_HOME": str(codex_home)}
         self._clock = clock
         self._cached: list[AIToolServer] = []
         self._fetched_at: float | None = None
@@ -113,22 +116,40 @@ class McpServers:
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
+                env=self._env,
                 start_new_session=_POSIX,
             )
         except OSError as exc:
             log.info("codex mcp list: %s", exc)
             return []
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), TIMEOUT_S)
+            stdout = await asyncio.wait_for(_read(proc), TIMEOUT_S)
         except TimeoutError:
             _kill(proc)
             await proc.wait()
             log.info("codex mcp list timed out")
             return []
+        if stdout is None:
+            _kill(proc)
+            await proc.wait()
+            log.info("codex mcp list output over %d bytes", MAX_OUTPUT_BYTES)
+            return []
         if proc.returncode != 0:
             log.info("codex mcp list exited %s", proc.returncode)
             return []
         return parse_servers(stdout)
+
+
+async def _read(proc: asyncio.subprocess.Process) -> bytes | None:
+    """Stdout to EOF, then the exit; ``None`` past ``MAX_OUTPUT_BYTES``."""
+    assert proc.stdout is not None
+    out = bytearray()
+    while chunk := await proc.stdout.read(1 << 16):
+        out += chunk
+        if len(out) > MAX_OUTPUT_BYTES:
+            return None
+    await proc.wait()
+    return bytes(out)
 
 
 def _kill(proc: asyncio.subprocess.Process) -> None:

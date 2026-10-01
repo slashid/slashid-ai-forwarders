@@ -312,11 +312,11 @@ def _serve(config: CodexConfig, config_path: Path, state_dir: Path, stopper: Sto
                 platform,
                 cache,
                 created_at=created,
-                mcp=McpServers(config.codex_bin),
+                mcp=McpServers(config.codex_bin, codex_home=config.codex_home),
                 on_published=lifetime.touch,
             )
 
-    worker = Worker(open_collector)
+    worker = Worker(open_collector, on_fatal=stopper)
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, lifespan="on"))
     stopper.server = server
     info = DaemonInfo(port, secret, os.getpid(), package_version(), config_digest(config_path))

@@ -69,7 +69,9 @@ class RolloutInvocation(BaseModel):
     # Turns of the prompts (user messages with a ``UserMessage`` item) in the
     # consumed round; not the injected ``<turn_aborted>`` message.
     consumed_turn_ids: tuple[str, ...] = ()
-    # ``item_completed`` items of the tool calls whose outputs are in the consumed round.
+    # Call ids of the tool outputs in the consumed round.
+    consumed_call_ids: tuple[str, ...] = ()
+    # ``item_completed`` items of those calls.
     consumed_items: tuple[CodexItem, ...] = ()
     # Turns whose ``task_complete``/``turn_aborted`` was read up to this response.
     finished_turn_ids: tuple[str, ...] = ()
@@ -368,6 +370,7 @@ class RolloutCursor:
             consumed_turn_ids=tuple(
                 dict.fromkeys(p.turn_id for p in consumed if p.prompt and p.turn_id is not None)
             ),
+            consumed_call_ids=tuple(_output_call_ids(round_items)),
             consumed_items=self._join(round_items),
             finished_turn_ids=tuple(self._finished),
         )
@@ -380,12 +383,7 @@ class RolloutCursor:
 
     def _join(self, round_items: list[ResponsesItem]) -> tuple[CodexItem, ...]:
         joined: list[CodexItem] = []
-        call_ids = dict.fromkeys(
-            i.call_id
-            for i in round_items
-            if isinstance(i, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
-        )
-        for call_id in call_ids:
+        for call_id in _output_call_ids(round_items):
             if (item := self._items.pop(call_id, None)) is not None:
                 joined.append(item)
             joined.extend(self._script_items.pop(call_id, []))
@@ -399,3 +397,13 @@ class RolloutCursor:
         self._script_items = {k: v for k, v in self._script_items.items() if k in open_calls}
         self._renamed &= open_calls
         return tuple(joined)
+
+
+def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            i.call_id
+            for i in items
+            if isinstance(i, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
+        )
+    )

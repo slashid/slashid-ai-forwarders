@@ -83,7 +83,7 @@ async def test_lists_and_caches(tmp_path: Path) -> None:
     calls = tmp_path / "calls"
     binary = _script(tmp_path, f'echo x >> "{calls}"\ncat "{FIXTURE}"')
     now = [0.0]
-    listing = McpServers(binary, clock=lambda: now[0])
+    listing = McpServers(binary, codex_home=tmp_path, clock=lambda: now[0])
     assert [s.name for s in await listing.get()] == ["node_repl", "cua_repl", "docs"]
     now[0] = 599.0
     await listing.get()
@@ -96,20 +96,40 @@ async def test_lists_and_caches(tmp_path: Path) -> None:
 async def test_args(tmp_path: Path) -> None:
     out = tmp_path / "args"
     binary = _script(tmp_path, f'echo "$@" > "{out}"\necho "[]"')
-    assert await McpServers(binary).get() == []
+    assert await McpServers(binary, codex_home=tmp_path).get() == []
     assert out.read_text().strip() == "mcp list --json"
 
 
 @pytest.mark.parametrize("body", ["exit 1", "echo garbage", f'cat "{FIXTURE}"; exit 2'])
 async def test_failures_are_empty(tmp_path: Path, body: str) -> None:
-    assert await McpServers(_script(tmp_path, body)).get() == []
+    assert await McpServers(_script(tmp_path, body), codex_home=tmp_path).get() == []
 
 
 async def test_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mcp_servers, "TIMEOUT_S", 0.2)
-    assert await McpServers(_script(tmp_path, "sleep 5")).get() == []
+    assert await McpServers(_script(tmp_path, "sleep 5"), codex_home=tmp_path).get() == []
 
 
 async def test_missing_binary(tmp_path: Path) -> None:
-    assert await McpServers(tmp_path / "nope").get() == []
-    assert await McpServers(None, find=lambda: None).get() == []
+    assert await McpServers(tmp_path / "nope", codex_home=tmp_path).get() == []
+    assert await McpServers(None, codex_home=tmp_path, find=lambda: None).get() == []
+
+
+async def test_codex_home_passed(tmp_path: Path) -> None:
+    out = tmp_path / "home"
+    home = tmp_path / "custom-codex"
+    binary = _script(tmp_path, f'echo "$CODEX_HOME" > "{out}"\necho "[]"')
+    assert await McpServers(binary, codex_home=home).get() == []
+    assert out.read_text().strip() == str(home)
+
+
+async def test_oversized_output_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_servers, "MAX_OUTPUT_BYTES", 64)
+    binary = _script(tmp_path, f'cat "{FIXTURE}"')
+    assert len(FIXTURE.read_bytes()) > 64
+    assert await McpServers(binary, codex_home=tmp_path).get() == []
+
+
+async def test_endless_output_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mcp_servers, "MAX_OUTPUT_BYTES", 1 << 16)
+    assert await McpServers(_script(tmp_path, "yes"), codex_home=tmp_path).get() == []

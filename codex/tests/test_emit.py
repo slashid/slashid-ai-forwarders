@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import threading
@@ -232,6 +233,97 @@ async def test_resume_from_watermark(env: Env) -> None:
     assert env.sink.pushed == [[i.response_id for i in invocations[3:]]]
 
 
+class FailingMcp:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def get(self) -> list:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("mcp listing broke")
+        return []
+
+
+async def test_escaping_error_rewinds(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(emit, "BATCH_SIZE", 2)
+    invocations = _invocations("function")
+    sid = SESSIONS["function"]
+    session = env.session("function")
+    assert await env.collector.process(session) is True
+    env.sink.pushed.clear()
+    # The session again from scratch, with a listing that fails once.
+    env.cache._sessions.clear()
+    await env.store(sid).save(Checkpoint(invocations[1].timestamp, invocations[1].response_id))
+    env.collector._mcp = FailingMcp()  # ty: ignore[invalid-assignment]
+    session = env.session("function")
+
+    with pytest.raises(RuntimeError):
+        await env.collector.process(session)
+    assert not session.batch_in_flight
+
+    env.collector.trigger(Trigger(sid, None))
+    await env.collector.drain()
+    assert _flat(env.sink.pushed) == [i.response_id for i in invocations[2:]]
+
+
+async def test_publish_hook_error_keeps_watermark(env: Env) -> None:
+    invocations = _invocations("script")
+    session = env.session("script")
+
+    def boom() -> None:
+        raise RuntimeError("hook")
+
+    env.collector._on_published = boom
+    with pytest.raises(RuntimeError):
+        await env.collector.process(session)
+    last = invocations[-1]
+    assert session.watermark == Checkpoint(last.timestamp, last.response_id)
+    assert session.send.next_closed() is None
+
+
+async def test_unbuildable_response_dropped_quietly(
+    env: Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    invocations = _invocations("function")
+    bad = invocations[1].response_id
+    real = emit.build_event
+
+    async def build(invocation: RolloutInvocation, *args: object, **kwargs: object):
+        if invocation.response_id == bad:
+            raise ValueError("secret prompt text")
+        return await real(invocation, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(emit, "build_event", build)
+    with caplog.at_level(logging.DEBUG):
+        assert await env.collector.process(env.session("function"))
+
+    assert env.sink.pushed == [[i.response_id for i in invocations if i.response_id != bad]]
+    assert "secret prompt text" not in caplog.text
+    [record] = [r for r in caplog.records if bad in r.getMessage()]
+    assert "ValueError" in record.getMessage()
+    assert record.exc_info is None
+
+
+async def test_batch_of_unbuildable_responses_fails(
+    env: Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def build(*_args: object, **_kwargs: object):
+        raise ValueError("secret prompt text")
+
+    monkeypatch.setattr(emit, "build_event", build)
+    session = env.session("script")
+    with caplog.at_level(logging.DEBUG):
+        assert not await env.collector.process(session)
+
+    assert env.sink.calls == []
+    assert env.sleeps == list(emit.RETRY_DELAYS_S)
+    assert "secret prompt text" not in caplog.text
+    assert await env.store(SESSIONS["script"]).load() == Checkpoint(None, None)
+    nxt = session.send.next_closed()
+    assert nxt is not None
+    assert nxt.response_id == _invocations("script")[0].response_id
+
+
 # --------------------------------------------------------------------------
 # collect
 # --------------------------------------------------------------------------
@@ -392,3 +484,19 @@ def test_worker_ready_before_sweep(
     assert time.monotonic() - start < 0.4
     assert swept.wait(5)
     worker.stop()
+
+
+def test_worker_setup_failure_exits(caplog: pytest.LogCaptureFixture) -> None:
+    exited = threading.Event()
+
+    @asynccontextmanager
+    async def open_collector() -> AsyncIterator[Collector]:
+        raise OSError("disk full")
+        yield
+
+    worker = Worker(open_collector, on_fatal=exited.set)
+    with caplog.at_level(logging.ERROR):
+        worker.start()
+        assert exited.wait(5)
+        worker.stop()
+    assert any(r.levelno == logging.ERROR and r.name == emit.__name__ for r in caplog.records)

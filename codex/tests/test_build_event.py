@@ -10,7 +10,7 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from slashid_codex.config import CodexConfig
 from slashid_codex.cursor import RolloutCursor, RolloutInvocation
-from slashid_codex.events import SessionContext, build_event
+from slashid_codex.events import SessionContext, build_event, record_keys
 from slashid_codex.log import SessionLog
 from slashid_codex.mcp_servers import parse_servers
 from slashid_codex.state import SqliteFileRecordStore, connect
@@ -160,3 +160,14 @@ async def test_history_truncated(builder: Builder) -> None:
     [first, _] = await builder.events("script", history_truncated=True)
     assert first.recent_round_hashes is not None
     assert first.recent_round_hashes[-1] == "..."
+
+
+def test_record_keys_without_item_completed() -> None:
+    # A function-mode call whose ``item_completed`` is missing still keys its record.
+    invocations, _ = _invocations("function")
+    [image] = invocations[4].consumed_items
+    bare = invocations[4].model_copy(update={"consumed_items": ()})
+    assert record_keys(bare)[1] == [image.id]
+    assert record_keys(invocations[4])[1] == [image.id]
+    turns, _ = record_keys(invocations[0])
+    assert turns == list(invocations[0].consumed_turn_ids)
