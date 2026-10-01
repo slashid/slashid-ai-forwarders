@@ -92,7 +92,7 @@ variable "slashid_endpoint" {
 }
 
 variable "slashid_push_token" {
-  description = "Bearer token for the SlashID push connection. Sensitive — stored in Secret Manager."
+  description = "Bearer token for the SlashID push connection. Sensitive — stored in Secret Manager. Read only when the secret version is created or replaced; later values are ignored."
   type        = string
   sensitive   = true
 }

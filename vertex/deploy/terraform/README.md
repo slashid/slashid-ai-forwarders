@@ -86,6 +86,11 @@ where `region_slug` replaces `-` with `_` (BQ dataset IDs disallow
 variable in your root module and source it from a secret manager
 (not `.tfvars` committed to VCS).
 
+The token is read only when its secret version is created, so a later
+apply leaves it alone whatever value it passes. To rotate it, replace
+the version with the new value:
+`terraform apply -replace='module.slashid_vertex_forwarder.google_secret_manager_secret_version.push_token'`.
+
 ## `fileData` bucket grants
 
 Gemini `fileData` (`gs://bucket/object`) attachments need the

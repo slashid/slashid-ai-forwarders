@@ -14,4 +14,10 @@ resource "google_secret_manager_secret" "push_token" {
 resource "google_secret_manager_secret_version" "push_token" {
   secret      = google_secret_manager_secret.push_token.id
   secret_data = var.slashid_push_token
+
+  # The value is read once, when the version is created, so an apply cannot
+  # rotate the token. Rotate with ``terraform apply -replace``.
+  lifecycle {
+    ignore_changes = [secret_data]
+  }
 }
