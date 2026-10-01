@@ -171,7 +171,7 @@ Every request needs `Host: 127.0.0.1:<port>` exactly (DNS rebinding) and no `Ori
 
 ### Lifetime
 
-Events are queued and sent as their responses become ready, so exiting needs no flush. The daemon exits `daemon_idle_seconds` (600) after the last hook request or successfully published batch, whichever is later: a sweep that is publishing keeps it alive, and failing pushes alone do not. It stops accepting, deletes `daemon.json`, releases the lock and exits. Unsent responses stay past the watermark for the next daemon's sweep, and a push cut off mid-batch is resent and deduplicated by the server. A crash loses only caches.
+Events are built and sent as their responses close, so exiting needs no flush. The daemon exits `daemon_idle_seconds` (600) after the last hook request or successfully published batch, whichever is later: a sweep that is publishing keeps it alive, and failing pushes alone do not. It stops accepting, deletes `daemon.json`, releases the lock and exits. Unsent responses stay past the watermark for the next daemon's sweep, and a push cut off mid-batch is resent and deduplicated by the server. A crash loses only caches.
 
 On Linux (measured), a hook-spawned daemon is adopted by `systemd --user` and survives the desktop app quitting; systemd keeps the app's scope while it has processes. It ends at logout.
 
@@ -196,18 +196,18 @@ The daemon keeps, per session, one `SessionLog` and two `RolloutCursor`s, under 
 - A file smaller than `offset`, or with another identity (inode / Windows file index), is read again from byte 0 into a new log, and the session's cursors are recreated.
 - A fork's log starts with its parent's lines up to `end_byte_offset` (see Fork base below).
 
-**`RolloutCursor`**: a position in the log and the state derived up to it by the rules below: `committed` (history up to the last ready response), `pending` (the in-flight response's output and unconsumed tool results), `base_instructions`, `originator`, `cli_version`, current `model` and `turn_id`, `window_number`, `history_truncated`, and the tool-call index (`call_id` → `item_completed` item(s)).
+**`RolloutCursor`**: a position in the log and the state derived up to it by the rules below: `committed` (history up to the last closed response), `pending` (the in-flight response's output and unconsumed tool results), `base_instructions`, `originator`, `cli_version`, current `model` and `turn_id`, `window_number`, `history_truncated`, and the `item_completed` items read since the last closed response.
 
-- `next_ready() -> RolloutInvocation | None`: advance until the next response is ready and return it with the history it consumed as an immutable snapshot; `None` when the log has nothing more to give.
+- `next_closed() -> RolloutInvocation | None`: advance to the next `token_usage_record` and return the response it closes, with the history it consumed as an immutable snapshot; `None` when the log has nothing more to give.
 - `skip_to(watermark)`: advance, folding every line, past the response the watermark names (or, if it is gone, past the last response at or before its timestamp), without returning anything.
 - `advance_to_end()`; `view() -> tuple[NormalizedMessage, ...]`: `committed + pending` and the current context.
 
-A round returned by `next_ready()` is self-contained: a later `turn_aborted` or `compacted` changes only the cursor's state, never the log or a round already returned. `NormalizedMessage` and `NormalizedContent` are frozen and shared between rounds and snapshots, never copied.
+A round returned by `next_closed()` is self-contained: a later `turn_aborted` or `compacted` changes only the cursor's state, never the log or a round already returned. `NormalizedMessage` and `NormalizedContent` are frozen and shared between rounds and snapshots, never copied.
 
 The two cursors:
 
 - **Head cursor**, for preflight: `refresh()`, `advance_to_end()`, `view()`. Always at the end of the log.
-- **Send cursor**, for collection: created with `skip_to(watermark)`, then pulled a batch at a time with `next_ready()`. A backlog stays in the log, not in memory as built events, and is built only as fast as it is sent.
+- **Send cursor**, for collection: created with `skip_to(watermark)`, then pulled a batch at a time with `next_closed()`. A backlog stays in the log, not in memory as built events, and is built only as fast as it is sent.
 
 Eviction: a session (log and cursors) is dropped when `send_cursor_at_end and no batch in flight and (not session_started or now > last_hook_at + 10 min)`. `session_started` becomes true with any hook for the session and false with its `SessionEnd`; sessions loaded by the startup sweep start false. A dropped session is rebuilt from byte 0 on next use (a resume after `SessionEnd` included).
 
@@ -217,9 +217,9 @@ These rules fold the log into a cursor's state.
 
 - `session_meta` sets `base_instructions`, `originator`, `cli_version`; `turn_context` sets `model` and `turn_id`.
 - `response_item`s append to `pending`. Model-produced items written since the previous `token_usage_record` (assistant `message`, `reasoning`, `*_call`) are the current response's output; everything before is its input.
-- `token_usage_record` closes the response: request `{instructions: base_instructions, input: <input items>}`, response `{id: response_id, output: <output items>, status: "completed", usage}`.
-- A closed response is **ready** once the outputs of all its tool calls are read, or the next response starts, whichever is first. The script-mode rename and the response's files come from lines after its `token_usage_record`. A ready response has its calls renamed and moves to `committed`, so a call carries the same name and id in its own response, in every later history and in preflight.
-- **Rename.** The index maps a call to its logical item(s): in function mode the item whose `id` equals the `call_id`; in script mode the tool items between the `custom_tool_call` and its output. A call with exactly one `CommandExecution` becomes `function_call{name: "Bash", call_id: <item id>, arguments: {command: <script>}}`, its output the matching `function_call_output`. `<script>` equals the hook's `tool_input.command`: the last argv element for `[<shell>, "-lc" | "-c", <script>]`, else `shlex.join(argv)`. Function-mode `exec_command` is renamed the same way. Anything else (no item, several items from one script, overlapping parallel calls, uncaptured item types) keeps its raw name and `call_id`, and still counts as a declared and used tool.
+- **Shell calls are `Bash`.** The hook calls the shell tool `Bash`; the model calls `exec_command` (function mode) or `exec` (script mode). Each call is mapped as it is read, from its own line: `function_call("exec_command", {cmd, workdir, …})` → `Bash` with `{command: cmd, workdir}`; `custom_tool_call("exec", <js>)` → `Bash` with `{script: <js>}`. Outputs follow their call. `call_id`s are kept: in function mode they equal the hook's `tool_use_id`; in script mode they do not (the hook's `exec-<uuid>`), and the arguments differ from the hook's `command`, a documented script-mode limitation. A script that runs several commands, or other tools, is still one `Bash` call.
+- `token_usage_record` closes the response: request `{instructions: base_instructions, input: <input items>}`, response `{id: response_id, output: <output items>, status: "completed", usage}`. The response moves to `committed` and is returned by `next_closed()`.
+- A tool result's `is_error` comes from the `CommandExecution` with the same id (`exit_code`, `status`) in function mode, and is `false` in script mode, where no item links to the call.
 - **Interrupts.** A response without a `token_usage_record` is never emitted. On `turn_aborted` its model-produced items (`reasoning`, assistant text) are dropped from `pending`; its tool results stay, for the next response to consume. The `<turn_aborted>` user message stays.
 - **Compaction.** The compaction call's `token_usage_record` closes a response like any other: input is the history before it, output an opaque compaction marker (the summary is encrypted). Then `compacted` starts a new `committed` list from `replacement_history` (user messages, and the `compaction` item as an opaque block), sets `window_number`, and the history no longer reaches round one.
 - **Fork base.** A `session_meta` with `history_base` makes the log start with the parent's rollout (found by `thread_id` under `sessions/` or `archived_sessions/`, recursively if the parent is a fork) up to `end_byte_offset`, followed by the fork's own lines. The parent's responses are context only: a fork's send cursor first skips past them, so it sends only responses from its own file. The fork inherits the parent's `window_number`.
@@ -279,8 +279,8 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 1. Locates the rollout: `transcript_path`, else `*-<session_id>*.jsonl` under `sessions/` and `archived_sessions/`, else stops. A trigger with a `null` `transcript_path` and no file is ignored.
 2. Refreshes the log. A new send cursor starts with `skip_to(watermark)`.
-3. Pulls up to a batch of ready rounds from the send cursor with `next_ready()` and builds their events.
-4. Sends the batch through `push_invocations` and saves the watermark at its last `token_usage_record`, then repeats from 3 until `next_ready()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
+3. Pulls up to a batch of closed responses from the send cursor with `next_closed()` and builds their events.
+4. Sends the batch through `push_invocations` and saves the watermark at its last `token_usage_record`, then repeats from 3 until `next_closed()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
 
 **Watermark.** `Checkpoint(timestamp, id)` in `checkpoint_store("codex-rollouts", session_id)`: the line `timestamp` and `response_id` of the last sent `token_usage_record`. A response is past it if it follows the record with that `response_id`, or, when that record is gone, if its line `timestamp` is later. Empty means everything. Saves only move forward.
 
@@ -362,7 +362,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `handler.py` | `handle(event, payload, config)`. |
 | `hooks.py` | Hook payload models. |
 | `log.py` | `SessionLog`: parsed lines, offset, refresh, file identity, fork base. |
-| `cursor.py` | `RolloutCursor`: the fold, `next_ready`, `skip_to`, `advance_to_end`, `view`. |
+| `cursor.py` | `RolloutCursor`: the fold, `next_closed`, `skip_to`, `advance_to_end`, `view`. |
 | `cache.py` | Per-session log and cursors, locking, eviction. |
 | `rollout.py` | Rollout line models. |
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: only when the text starts with the section, up to `## My request:`; each `## ` line split at the last `": "` before an absolute path (`/` or `X:\`). |
@@ -460,7 +460,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
   - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted` or `compacted`; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
-  - Rollout in both modes: `Bash` rename with the hook's id and command; readiness waiting for `item_completed` and outputs; four parallel `exec_command` calls; attachments on the first response of their turn; reads after their output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; an interrupted response dropped without losing its tool results.
+  - Rollout in both modes: `exec_command` and `exec` mapped to `Bash` from their own lines (function mode: the hook's id and command; script mode: `call_id` and `{script}`); each response emitted at its `token_usage_record`; four parallel `exec_command` calls; attachments on the first response of their turn; reads after their output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; an interrupted response dropped without losing its tool results.
   - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
   - MCP listing from a captured `codex mcp list --json`, `env` never copied, every failure leaving events otherwise unchanged.
