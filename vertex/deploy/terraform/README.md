@@ -29,13 +29,13 @@ dataset all live in the one region:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.10"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.11"
 
   project_id         = "customer-project-123456"
   regions            = ["us-central1"]
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-  release_version    = "vertex-v0.1.10"
+  release_version    = "vertex-v0.1.11"
 
   # While the image package is private:
   ghcr_username = "a-github-user-with-read-access"
@@ -50,7 +50,7 @@ non-`global` entry:
 
 ```hcl
 module "slashid_vertex_forwarder" {
-  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.10"
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-v0.1.11"
 
   project_id      = "customer-project-123456"
   regions         = ["us-central1", "europe-west1", "asia-northeast1"]
@@ -147,7 +147,7 @@ enablement — the first BigQuery row (and therefore the first forwarded
 event) may take that long to appear after `terraform apply` returns.
 
 The image tag is derived from `var.release_version`
-(`vertex-v0.1.10` pulls `slashid-vertex-forwarder:0.1.10`). The first
+(`vertex-v0.1.11` pulls `slashid-vertex-forwarder:0.1.11`). The first
 revision fails to start if the image cannot be pulled, so while the
 package is private set `ghcr_username` and `ghcr_token`.
 
