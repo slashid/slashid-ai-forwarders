@@ -34,27 +34,36 @@ from .types import NormalizedMessage
 
 
 class _ToolSpec(BaseModel):
-    """Per-tool declaration: which input field carries the file path (or
-    ``path_from`` to derive it), an optional cleanup function to apply to the
-    returned content before hashing (or ``content_from`` to derive the bytes),
-    and whether the content is ``binary`` and so never kept as text."""
+    """Per-tool declaration: ``path_from`` derives the file path from the
+    tool input, an optional cleanup function to apply to the returned content
+    before hashing (or ``content_from`` to derive the bytes), and whether the
+    content is ``binary`` and so never kept as text."""
 
     model_config = ConfigDict(frozen=True)
-    field_name: str | None = None
-    path_from: Callable[[JsonValue], str | None] | None = None
+    path_from: Callable[[JsonValue], str | None]
     content_from: Callable[[JsonValue], bytes | None] | None = None
     cleanup: Callable[[str], str] | None = None
     binary: bool = False
 
 
+def _field(name: str) -> Callable[[JsonValue], str | None]:
+    def path_from(tool_input: JsonValue) -> str | None:
+        if not isinstance(tool_input, dict):
+            return None
+        val = tool_input.get(name)
+        return val if isinstance(val, str) and val else None
+
+    return path_from
+
+
 # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
 _READ_TOOLS: dict[str, _ToolSpec] = {
-    "Read": _ToolSpec(field_name="file_path", cleanup=strip_cat_n),  # Claude Code
-    "ReadFile": _ToolSpec(field_name="path"),  # OpenCode, Amazon Q Developer, Gemini CLI
-    "read_file": _ToolSpec(field_name="path"),  # snake_case variants
-    "view_file": _ToolSpec(field_name="path"),  # some agents
+    "Read": _ToolSpec(path_from=_field("file_path"), cleanup=strip_cat_n),  # Claude Code
+    "ReadFile": _ToolSpec(path_from=_field("path")),  # OpenCode, Amazon Q Developer, Gemini CLI
+    "read_file": _ToolSpec(path_from=_field("path")),  # snake_case variants
+    "view_file": _ToolSpec(path_from=_field("path")),  # some agents
     "str_replace_based_edit_tool": _ToolSpec(
-        field_name="path"
+        path_from=_field("path")
     ),  # Claude computer-use text editor view
     "Bash": _ToolSpec(
         path_from=shell_read_path,
@@ -115,10 +124,7 @@ def extract_tool_result_files(
             if not spec:
                 continue
 
-            if spec.path_from is not None:
-                path = spec.path_from(tool_input)
-            else:
-                path = _get_path_field(tool_input, spec.field_name)
+            path = spec.path_from(tool_input)
             if not path:
                 continue
 
@@ -140,13 +146,6 @@ def extract_tool_result_files(
             seen.add(key)
             out.append(file)
     return out
-
-
-def _get_path_field(tool_input: JsonValue, field_name: str | None) -> str | None:
-    if field_name is None or not isinstance(tool_input, dict):
-        return None
-    val = tool_input.get(field_name)
-    return val if isinstance(val, str) and val else None
 
 
 def _bytes_from_tool_output(
