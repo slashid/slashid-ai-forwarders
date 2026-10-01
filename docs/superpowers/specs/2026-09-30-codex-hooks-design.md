@@ -275,7 +275,7 @@ The server derives `invoke_model`, one `use_attachment` per file and, for `PreTo
 
 Every tool result is consumed by a later round, but within its own turn: after a tool returns, Codex calls the model again without a prompt, and no hook fires for that round. By the next prompt the turn's last response has consumed every result, so `UserPromptSubmit`'s round normally holds only the prompt and its attachments; it holds tool results only when the user interrupted a response before it consumed them.
 
-This is a coverage gap compared with Anthropic, whose inference hook fires on every model call, tool-result rounds included. In Codex a tool's result reaches the model unchecked; the only check is `PreToolUse`, on the file before the read. Collection still reports those rounds after the fact.
+Unlike Anthropic, whose inference hook fires on every model call, Codex has no hook on these tool-result rounds. They need none: `PreToolUse` already sent the same decision inputs before the tool ran, the tool as `requested_tool_uses` and the file it reads as `accessed_files`. What no hook checks is output not tied to a recognised read (`curl`, `pdftotext`, pipelines), which a later check could not match to a file either. Collection reports those rounds after the fact.
 
 **`PreToolUse`** checks only the file its own call reads. `get_file_read_by_tool(tool_name, tool_input, workdir)` returns it: `view_image` → `path`; `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'`, split with `shlex`; a pipe, `;`, `&&`, redirection, glob or several paths → `None`. Relative paths resolve against the call's own `workdir`, which the hook's `tool_input` drops: it comes from the call in `pending` (function mode), else the payload's `cwd`.
 
