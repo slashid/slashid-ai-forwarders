@@ -6,10 +6,11 @@ import json
 import pathlib
 import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
+from google.cloud.firestore import AsyncClient
 from slashid_ai_forwarder_core.platform import TickLease
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
@@ -190,7 +191,9 @@ async def test_a_store_failure_never_reaches_the_verdict(sign: Signer) -> None:
         async def upsert(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("firestore unreachable")
 
-    store = Broken(client=FakeFirestore(), collection="c", join_wait=timedelta(hours=1))
+    store = Broken(
+        client=cast(AsyncClient, FakeFirestore()), collection="c", join_wait=timedelta(hours=1)
+    )
     body = json.dumps(TOOL_FRAME).encode()
     async with _client(_config(), store=store) as c:
         r = await c.post("/", content=body, headers=sign(body, "msg_1"))
@@ -207,7 +210,9 @@ async def test_the_record_is_written_after_the_response_is_sent(sign: Signer) ->
             order.append("store")
             return await super().upsert(*args, **kwargs)
 
-    store = Noted(client=FakeFirestore(), collection="c", join_wait=timedelta(hours=1))
+    store = Noted(
+        client=cast(AsyncClient, FakeFirestore()), collection="c", join_wait=timedelta(hours=1)
+    )
     body = json.dumps(TOOL_FRAME).encode()
     headers = sign(body, "msg_1")
     app = create_app(_config(), store=store, client=Sink().client())
@@ -298,7 +303,9 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
     Chunk 7 would not, and their checkpoint has no precondition."""
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
-    lease = FirestoreTickLease(client=fake(store), collection="anthropic_pending")
+    lease = FirestoreTickLease(
+        client=cast(AsyncClient, fake(store)), collection="anthropic_pending"
+    )
     assert await lease.take(TICK_LEASE, owner="the-tick-already-running") is True
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
@@ -310,7 +317,9 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
 async def test_a_tick_releases_the_lease_so_the_next_one_runs() -> None:
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
-    lease = FirestoreTickLease(client=fake(store), collection="anthropic_pending")
+    lease = FirestoreTickLease(
+        client=cast(AsyncClient, fake(store)), collection="anthropic_pending"
+    )
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 1}

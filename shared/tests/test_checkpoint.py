@@ -8,7 +8,9 @@ narrow load/save surface this store exposes.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
+
+from google.cloud.firestore import AsyncClient
 
 from slashid_ai_forwarder_core.platform import Checkpoint
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreCheckpointStore
@@ -56,7 +58,7 @@ def _store() -> tuple[FirestoreCheckpointStore, _FakeFirestoreClient]:
     client = _FakeFirestoreClient()
     return (
         FirestoreCheckpointStore(
-            client=client,
+            client=cast(AsyncClient, client),
             collection="slashid_vertex",
             document="checkpoint",
         ),

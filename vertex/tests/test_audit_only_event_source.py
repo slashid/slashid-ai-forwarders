@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
+from google.cloud.logging import Client as LoggingClient
 from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_vertex_forwarder.config import Config
@@ -55,7 +56,7 @@ def test_query_audit_only_entries_filter_uses_loose_ge_on_timestamp() -> None:
         id="audit-xyz",
     )
     query_audit_only_entries(
-        client=client,
+        client=cast(LoggingClient, client),
         project_id="p1",
         regions=["europe-west1"],
         checkpoint=cp,
@@ -89,7 +90,7 @@ def test_query_audit_only_entries_filter_ors_multiple_regions() -> None:
 
     client = _FakeLoggingClient()
     query_audit_only_entries(
-        client=client,
+        client=cast(LoggingClient, client),
         project_id="p1",
         regions=["us-central1", "europe-west1", "asia-northeast1"],
         checkpoint=Checkpoint(timestamp=None, id=None),
@@ -113,7 +114,7 @@ def test_query_audit_only_entries_filter_empty_checkpoint_omits_tiebreak() -> No
 
     client = _FakeLoggingClient()
     query_audit_only_entries(
-        client=client,
+        client=cast(LoggingClient, client),
         project_id="p1",
         regions=["europe-west1"],
         checkpoint=Checkpoint(timestamp=None, id=None),
@@ -190,7 +191,7 @@ async def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
         ]
     )
     source = AuditOnlyEventSource(
-        logging_client=fake_client,
+        logging_client=cast(LoggingClient, fake_client),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],
@@ -243,7 +244,7 @@ async def test_fetch_advances_next_checkpoint_across_filter_drops() -> None:
         ]
     )
     source = AuditOnlyEventSource(
-        logging_client=fake_client,
+        logging_client=cast(LoggingClient, fake_client),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],
@@ -268,7 +269,7 @@ async def test_fetch_advances_next_checkpoint_across_parse_failures() -> None:
         ]
     )
     source = AuditOnlyEventSource(
-        logging_client=fake_client,
+        logging_client=cast(LoggingClient, fake_client),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],
@@ -285,7 +286,7 @@ async def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 
     source = AuditOnlyEventSource(
-        logging_client=_FakeLoggingClient([]),
+        logging_client=cast(LoggingClient, _FakeLoggingClient([])),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],
@@ -329,7 +330,7 @@ async def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
         initial=Checkpoint(timestamp=t1_truncated, id="1hvqc9mf1uny5x"),
     )
     source = AuditOnlyEventSource(
-        logging_client=fake_client,
+        logging_client=cast(LoggingClient, fake_client),
         checkpoint_store=store,
         project_id="p",
         regions=["r"],
@@ -367,7 +368,7 @@ async def test_fetch_captures_errored_google_call_as_audit_event() -> None:
         ]
     )
     source = AuditOnlyEventSource(
-        logging_client=fake_client,
+        logging_client=cast(LoggingClient, fake_client),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],
@@ -415,7 +416,7 @@ async def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> N
         ]
     )
     source = AuditOnlyEventSource(
-        logging_client=fake_client,
+        logging_client=cast(LoggingClient, fake_client),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],
@@ -438,7 +439,7 @@ async def test_commit_saves_to_checkpoint_store() -> None:
 
     store = _FakeCheckpointStore()
     source = AuditOnlyEventSource(
-        logging_client=_FakeLoggingClient([]),
+        logging_client=cast(LoggingClient, _FakeLoggingClient([])),
         checkpoint_store=store,
         project_id="p",
         regions=["r"],
@@ -465,7 +466,7 @@ async def test_fetch_propagates_user_agent_to_wire_event() -> None:
     entry.payload["requestMetadata"] = {"callerSuppliedUserAgent": "google-cloud-sdk/1.2.3"}
 
     source = AuditOnlyEventSource(
-        logging_client=_FakeLoggingClient([entry]),
+        logging_client=cast(LoggingClient, _FakeLoggingClient([entry])),
         checkpoint_store=_FakeCheckpointStore(),
         project_id="p",
         regions=["r"],

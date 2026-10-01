@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from google.cloud.bigquery import Client as BigQueryClient
 from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_vertex_forwarder.config import Config
@@ -153,7 +154,7 @@ def _source(
     client = _FakeBqClient(rows)
     store = _FakeCheckpointStore(initial=checkpoint)
     src = BqEventSource(
-        client=client,
+        client=cast(BigQueryClient, client),
         checkpoint_store=store,
         config=_config(),
         project_id="vertex-test-507702",

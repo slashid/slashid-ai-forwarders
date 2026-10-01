@@ -9,12 +9,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING
 
 from .. import BlobSink, SchedulerAuth
 from ..checkpoint import CheckpointStore
 from ..lease import TickLease
 from .firestore import FirestoreCheckpointStore, FirestoreTickLease
+
+if TYPE_CHECKING:
+    from google.cloud.firestore import AsyncClient
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ class GcpPlatform:
         self._firestore_database = firestore_database
 
     @cached_property
-    def firestore(self) -> Any:
+    def firestore(self) -> AsyncClient:
         from google.cloud import firestore
 
         return firestore.AsyncClient(project=self._project, database=self._firestore_database)
