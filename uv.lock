@@ -11,6 +11,7 @@ members = [
     "slashid-ai-forwarder-core",
     "slashid-anthropic-forwarder",
     "slashid-bedrock-forwarder",
+    "slashid-codex",
     "slashid-vertex-forwarder",
 ]
 
@@ -1652,6 +1653,31 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], editable = "shared" }]
+
+[[package]]
+name = "slashid-codex"
+version = "0.1.0"
+source = { editable = "codex" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "slashid-ai-forwarder-core" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "platformdirs", specifier = ">=4.2" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "slashid-ai-forwarder-core", editable = "shared" },
+    { name = "uvicorn", specifier = ">=0.32" },
+]
 
 [[package]]
 name = "slashid-vertex-forwarder"

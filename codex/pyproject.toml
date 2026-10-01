@@ -1,0 +1,52 @@
+[project]
+name = "slashid-codex"
+version = "0.1.0"
+description = "Codex managed hook and per-user daemon: preflight verdicts and rollout events for SlashID NHI"
+requires-python = ">=3.13"
+license = { text = "Apache-2.0" }
+authors = [{ name = "SlashID" }]
+dependencies = [
+    "slashid-ai-forwarder-core",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "platformdirs>=4.2",
+]
+
+[project.scripts]
+slashid-codex = "slashid_codex.cli:main"
+
+[tool.uv.sources]
+slashid-ai-forwarder-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slashid_codex"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
+]
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
