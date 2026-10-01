@@ -455,7 +455,8 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 
 ## Security
 
-- **Identity is claimed.** The push token is per OpenAI connection and readable by the user, so a user can send any `user_id`, in preflight and in events. Codex-client called itself a managed-client guardrail too, but derived identity on the server. Follow-up: per-user tokens bound to a `user_id`.
+- **Identity resolves.** The configured `user-…` id is the ChatGPT workspace user, the same id the OpenAI connection syncs as `IdentifierFromSource` (confirmed), so the server resolves it.
+- **Identity is claimed, not proven.** The push token is per OpenAI connection and readable by the user, so a user can send any `user_id`, in preflight and in events. Codex-client called itself a managed-client guardrail too, but derived identity on the server. Follow-up: per-user tokens bound to a `user_id`.
 - **The attachment section is prompt text.** A typed fake section makes `slashid-codex` hash files the user can already read and ask whether they are sensitive, a membership oracle the server already accepts, bounded by the push token and counted per organization.
 - **The daemon's port is reachable by every local user and by browsers.** The secret in a user-only file, the `Host` check and the `Origin` rejection stop them driving it; the `/ping` HMAC stops a process squatting a dead daemon's port from receiving the secret or payloads. The daemon holds nothing the user's own hook could not read.
 - Config and token file are MDM-owned and read-only to users; the token never appears in arguments.
@@ -503,9 +504,8 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 
 ## Open questions
 
-1. **Identity id space.** Does the configured `user-…` (ChatGPT workspace user) match the OpenAI connection's synced `IdentifierFromSource`? If not, every preflight under a policy denies as `identity_absent`.
-2. **Other tools.** Capture MCP calls, `apply_patch`, web search, a failing command, parallel calls and a script-mode `exec` running several commands: whether `PreToolUse` fires, its `tool_name` (`mcp__<server>__<tool>` is documented, not seen) and `item_completed` type. Include a turn with reasoning to check the token math.
-3. **Compaction as an event.** The compaction call is emitted as an invocation so its tokens are counted (input: the history before it; output: an opaque marker). To confirm: whether consumers should see it under its own `parsed_as` or `stop_reason`.
-4. **Subagents.** Whether their tool hooks fire, and under which `session_id` and rollout.
-5. **Mode per surface.** Desktop used function mode, `codex exec` script mode; whether the CLI, IDE extension and later versions switch is unknown, hence both.
-6. **Daemon lifetime on macOS and Windows.** Linux is measured. Open: macOS; Windows kill-on-close jobs and whether breakaway is allowed; endpoint-security tools. If the daemon dies with the app, the next sweep covers the gap.
+1. **Other tools.** Capture MCP calls, `apply_patch`, web search, a failing command, parallel calls and a script-mode `exec` running several commands: whether `PreToolUse` fires, its `tool_name` (`mcp__<server>__<tool>` is documented, not seen) and `item_completed` type. Include a turn with reasoning to check the token math.
+2. **Compaction as an event.** The compaction call is emitted as an invocation so its tokens are counted (input: the history before it; output: an opaque marker). To confirm: whether consumers should see it under its own `parsed_as` or `stop_reason`.
+3. **Subagents.** Whether their tool hooks fire, and under which `session_id` and rollout.
+4. **Mode per surface.** Desktop used function mode, `codex exec` script mode; whether the CLI, IDE extension and later versions switch is unknown, hence both.
+5. **Daemon lifetime on macOS and Windows.** Linux is measured. Open: macOS; Windows kill-on-close jobs and whether breakaway is allowed; endpoint-security tools. If the daemon dies with the app, the next sweep covers the gap.
