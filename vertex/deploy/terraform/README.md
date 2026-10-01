@@ -1,7 +1,7 @@
 # SlashID Vertex forwarder — Terraform module
 
 Provisions the customer-side GCP resources for the Vertex AI forwarder
-Cloud Function:
+Cloud Run service:
 
 - One BigQuery dataset PER observed region + one table per logged
   publisher model within each dataset.
@@ -9,18 +9,22 @@ Cloud Function:
   routes request-response logs into the matching regional dataset.
 - Firestore Native database (optional — reuse an existing one by
   setting `create_database = false`).
-- Cloud Function 2nd gen (source zip fetched from GitHub Releases).
-  Deployed to a single region (the first non-`global` entry in
-  `regions`); observes every region in `regions` via API calls.
-- Cloud Scheduler cron → Pub/Sub topic → Cloud Function trigger.
-- Secret Manager entry for the SlashID push token.
+- Cloud Run service running the container image published to GitHub
+  Container Registry (pulled through an Artifact Registry remote
+  repository). Deployed to a single region (the first non-`global`
+  entry in `regions`); observes every region in `regions` via API calls.
+- Cloud Scheduler cron → `POST /tick` on that service, authenticated
+  with an OIDC token for a dedicated scheduler service account. A
+  Firestore lease makes an overlapping tick a no-op.
+- Secret Manager entry for the SlashID push token (and for the ghcr
+  token, while the image package is private).
 - Service account with least-privilege role grants.
 - Log-sink exclusion for Vertex Data Access audit logs (cost mitigation
   — the underlying capture stays enabled for future correlation work).
 
 ## Usage
 
-Single region — the Cloud Function, Firestore, Scheduler, and BigQuery
+Single region — the Cloud Run service, Firestore, Scheduler, and BigQuery
 dataset all live in the one region:
 
 ```hcl
@@ -32,12 +36,16 @@ module "slashid_vertex_forwarder" {
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
   release_version    = "vertex-v0.1.9"
+
+  # While the image package is private:
+  ghcr_username = "a-github-user-with-read-access"
+  ghcr_token    = var.ghcr_token # sensitive, scope read:packages
 }
 ```
 
 Multi-region — one BigQuery dataset per entry, all sharing a single
-Cloud Function whose audit-log filter OR's the per-region matches.
-The CF itself, Firestore, and Cloud Scheduler deploy to the first
+Cloud Run service whose audit-log filter OR's the per-region matches.
+The service itself, Firestore, and Cloud Scheduler deploy to the first
 non-`global` entry:
 
 ```hcl
@@ -75,8 +83,8 @@ region; reordering `regions` so the deployment region changes would
 move it, and since dataset location is immutable Terraform would
 destroy and recreate it, losing unprocessed rows.
 
-At least one entry must not be `global` — the Cloud Function, Firestore
-and Scheduler need somewhere to live.
+At least one entry must not be `global` — the Cloud Run service,
+Firestore and Scheduler need somewhere to live.
 
 Per-region datasets are named `{bq_dataset_prefix}_{region_slug}`,
 where `region_slug` replaces `-` with `_` (BQ dataset IDs disallow
@@ -138,10 +146,10 @@ weekly and opens a PR when the catalog moves.
 enablement — the first BigQuery row (and therefore the first forwarded
 event) may take that long to appear after `terraform apply` returns.
 
-The module fetches the source zip from a GitHub Release under
-`var.release_version` at plan time. If the tag does not exist yet the
-`data "http"` block will 404 and plan will fail — that's the intended
-behaviour, preventing a phantom deploy.
+The image tag is derived from `var.release_version`
+(`vertex-v0.1.9` pulls `slashid-vertex-forwarder:0.1.9`). The first
+revision fails to start if the image cannot be pulled, so while the
+package is private set `ghcr_username` and `ghcr_token`.
 
 ## Rollback
 
@@ -173,21 +181,19 @@ retained rows before rolling back.
   on the project. Predefined roles that include it: `roles/aiplatform.admin`
   and `roles/owner`. `roles/aiplatform.user` and `roles/aiplatform.viewer`
   do **not**.
-- `gh` CLI authenticated for `slashid/slashid-ai-forwarders` on the
-  machine running `terraform apply` — the release-zip download step
-  uses `gh release download` (the repo is private today; a bare
-  `curl` against the releases URL is anonymous and 404s). Verify
-  with `gh auth status`.
-- APIs enabled by the module: aiplatform, bigquery, cloudbuild,
-  cloudfunctions, cloudscheduler, eventarc, firestore, logging, pubsub,
-  run, secretmanager, storage.
+- A GitHub token with `read:packages` (`ghcr_token`) while the image
+  package is private; the registry's service agent reads it from
+  Secret Manager.
+- APIs enabled by the module: aiplatform, artifactregistry, bigquery,
+  cloudresourcemanager, cloudscheduler, firestore, iam, logging, run,
+  secretmanager, storage.
 
 ## Naming
 
 Every provisioned identifier is prefixed:
 
 - `slashid_vertex_` (underscore) — BigQuery, Secret Manager, Firestore.
-- `slashid-vertex-` (hyphen) — GCS bucket, Cloud Function, Pub/Sub,
-  Scheduler, Service Account.
+- `slashid-vertex-` (hyphen) — Cloud Run service, Artifact Registry
+  repository, Scheduler, Service Accounts.
 
 Override individually via the naming variables in `variables.tf`.

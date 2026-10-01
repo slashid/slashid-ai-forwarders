@@ -4,7 +4,7 @@
 # infrastructure sits between the customer and their data. Every
 # resource identifier follows the ``slashid_vertex_`` prefix convention
 # (underscore for BQ / Secret Manager / Firestore, hyphen for GCS /
-# Cloud Function / Pub/Sub / Scheduler / SA per GCP naming rules).
+# Cloud Run / Scheduler / SA per GCP naming rules).
 
 provider "google" {
   project = var.project_id
@@ -30,12 +30,12 @@ locals {
 
   google_observed = [for m in local.effective_observed_models : m if startswith(m, "google/")]
 
-  # The Cloud Function, Firestore, Scheduler, and release bucket all
-  # deploy to the first NON-GLOBAL region in ``var.regions`` — a single
+  # The Cloud Run service, Firestore, Scheduler and registry all deploy
+  # to the first NON-GLOBAL region in ``var.regions`` — a single
   # physical home. ``global`` is a Vertex routing target, not a place
   # that can host them. Vertex regions observed are the full list;
-  # deployment region is a separate concern (where the CF lives, not
-  # what it queries).
+  # deployment region is a separate concern (where the service lives,
+  # not what it queries).
   deployment_region = [for r in var.regions : r if r != "global"][0]
 
   # ``global`` has no location of its own, so its dataset lives with the
@@ -84,18 +84,13 @@ locals {
     r => "${var.bq_dataset_prefix}_${local.region_slugs[r]}"
   }
 
-  # GCS bucket names are global — default suffix keeps first-time
-  # deployments from colliding across customer projects.
-  release_bucket = coalesce(
-    var.release_bucket_name,
-    "slashid-vertex-release-${var.project_id}"
-  )
-
-  # Release artefact naming. Matches bedrock's convention
-  # ``slashid-<vendor>-forwarder-v<X.Y.Z>.zip``, which drops the
-  # tag prefix — hence the ``trimprefix`` step.
-  release_version_short = trimprefix(var.release_version, "vertex-")
-  release_zip_filename  = "slashid-vertex-forwarder-${local.release_version_short}.zip"
+  # The image tag is the bare version: the release workflow strips the
+  # ``vertex-v`` of the git tag.
+  version_short = trimprefix(var.release_version, "vertex-v")
+  image = var.image != "" ? var.image : join("", [
+    "${local.deployment_region}-docker.pkg.dev/${var.project_id}/${var.registry_repository_id}",
+    "/slashid/slashid-vertex-forwarder:${local.version_short}",
+  ])
 }
 
 # ---------------------------------------------------------------------------
@@ -109,14 +104,13 @@ locals {
 resource "google_project_service" "required" {
   for_each = toset([
     "aiplatform.googleapis.com",
+    "artifactregistry.googleapis.com",
     "bigquery.googleapis.com",
-    "cloudbuild.googleapis.com",
-    "cloudfunctions.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
     "cloudscheduler.googleapis.com",
-    "eventarc.googleapis.com",
     "firestore.googleapis.com",
+    "iam.googleapis.com",
     "logging.googleapis.com",
-    "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
@@ -140,5 +134,9 @@ resource "google_project_iam_audit_config" "vertex_data_access" {
     log_type = "DATA_WRITE"
   }
 
+  depends_on = [google_project_service.required]
+}
+
+data "google_project" "this" {
   depends_on = [google_project_service.required]
 }

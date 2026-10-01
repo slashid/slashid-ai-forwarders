@@ -11,7 +11,7 @@
 # customers will leave them around and reuse across cycles).
 #
 # The checkpoint document itself is created on the first
-# ``FirestoreCheckpointStore.save`` call by the Cloud Function — no
+# ``FirestoreCheckpointStore.save`` call by the service — no
 # TF resource creates it up-front.
 
 resource "google_firestore_database" "vertex" {
