@@ -7,6 +7,7 @@
 **Server, on main:** `POST /ip/nhi/events/ai-invocations/preflight` with the sensitive-file check and the AI hook policy ([ng-evangelion#7847](https://github.com/slashid/ng-evangelion/pull/7847)), `NormalizeAIInvocation` (#7846), and the OpenAI adapter's `ResolveAIInvocationIdentity`.
 **Server, needed first:** `requested_tool_uses` (see Shared changes). Until it ships, `PreToolUse` enforces model and file rules but not tool rules.
 **Builds on:** `2026-09-30-input-scope-and-round-hashes-design.md` (#74).
+**Depends on:** the `LocalPlatform` PR (separate). `codex/` is written against the platform interfaces and tested with in-memory fakes; the daemon is wired to `LocalPlatform` once that PR merges, and runs only from then.
 
 ## Summary
 
@@ -142,7 +143,7 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 `state_dir = platformdirs.user_data_dir("slashid-ai-forwarder-codex", "slashid")`: `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex`, `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. Per user, never set by the MDM config (a shared path would mix users' daemons and databases); `--state-dir` exists for tests.
 
 - POSIX: directory `0700`; files created `0600` via `os.open(O_CREAT | O_EXCL, 0o600)` and renamed into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
-- `state.sqlite3`: the local platform's database (watermarks, file records).
+- `state.sqlite3`: `LocalPlatform`'s database (watermarks, file records).
 - `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three files).
 
 ### Discovery
@@ -363,13 +364,12 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 **`shared/files.py`**: `hash_local_file(path, *, max_bytes) -> AIAccessedFile`: basename, `sha256`/`sha1`/`md5` (the algorithms the server indexes), `media_type` from the extension, `byte_length`. Over the cap, missing or unreadable → no `content_hashes`.
 
-**`shared/platform/local/`** (new): `LocalPlatform(state_dir: Path)`, registered as `"local"`, one SQLite database `state_dir/state.sqlite3`.
+**Requirements on `LocalPlatform`** (built in its own PR; this design relies on them):
 
-- WAL, `busy_timeout`, each read-modify-write one `BEGIN IMMEDIATE` transaction (a restarting daemon can overlap the old one briefly).
-- `checkpoint_store(collection, document)`: one row per key; `save` writes only a later `timestamp` than the stored one.
+- One per-user SQLite database under the directory it is given (`state_dir/state.sqlite3`), safe for two processes at once (a restarting daemon can briefly overlap the old one).
+- `checkpoint_store(collection, document)`: `save` only moves forward (writes only a `timestamp` later than the stored one).
 - `created_at()`: when the database was created.
-- `tick_lease` and `blob_sink` raise; `scheduler_auth` refuses every token.
-- Synchronous like `CheckpointStore`; `asyncio.to_thread` if the async-checkpoint follow-up lands first.
+- A way for `codex/` to keep its own tables in that database (`FileRecordStore`).
 
 **`bedrock/`**
 
@@ -394,7 +394,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: only when the text starts with the section, up to `## My request:`; each `## ` line split at the last `": "` before an absolute path (`/` or `X:\`). |
 | `preflight.py` | The preflight invocation, `sink.preflight_invocation`, the verdict. |
 | `emit.py` | Triggers, batches pulled from the send cursor, ordered sending, watermark, startup sweep. |
-| `state.py` | `FileRecordStore` protocol and its SQLite implementation: entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
+| `state.py` | `FileRecordStore` protocol, an in-memory implementation for tests, and the SQLite implementation on `LocalPlatform`'s database once it lands: entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
 | `deploy/requirements.toml` | The managed block below. |
 
 ## Deployment
@@ -479,9 +479,8 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 
 - **Fixtures** from the 2026-09-30 captures: hook payloads in both modes (the four-attachment prompt, `view_image`), script- and function-mode rollouts, Bedrock MIL records (plain and streamed). Trimmed of `base_instructions`, environment context and personal content; images replaced by a small PNG with a known hash.
 - **shared:** Responses normalizer on both Bedrock records; stop reasons; usage; `resolve_tool`; `hash_local_file` (cap, missing file); `_READ_TOOLS` `Bash` and `view_image` entries and the Codex output cleanup; `OpenAIIdentityDetails`; `requested_tool_uses` from the Anthropic, Converse, Gemini and Responses fixtures, unresolvable calls skipped; frozen messages.
-- **local platform:** forward-only save under two racing processes; WAL with two writers; unsupported members raising.
 - **bedrock:** both Responses formats selected; no cross-matching with existing formats.
-- **codex:**
+- **codex** (against in-memory `CheckpointStore` and `FileRecordStore` fakes until `LocalPlatform` lands; the fakes honour the forward-only save):
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
   - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted` or `compacted`; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
@@ -493,7 +492,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
   - Daemon: racing starts (one daemon, both served); stale `daemon.json`; squatted port receiving nothing; restarts on version, config and token change without backoff; daemon started during backoff used; missing secret, wrong `Host`, `Origin` refused; watchdog; crash mid-request; request during idle exit; the idle clock reset by hooks and by published batches, not by failing pushes; a push cut off by exit resent and deduplicated; spawn backoff; spawn holding none of the hook's pipes; daemon unavailable answering `verdict_fail_mode` with its reason, both modes, within each deadline; triggers spawning without waiting; `state_dir` from `platformdirs`.
   - Windows: a detached spawn surviving its parent, with and without a job forbidding breakaway.
   - End to end: client and daemon subprocesses against a stub SlashID.
-- **Live**, before merge: managed block against a dev endpoint and a pilot `user_id`: allow, deny by model rule, by tool rule, by a sensitive attachment and by a sensitive `sed` read; fail-closed with the server down; events landing with their `accessed_files`; preflight latency with a warm daemon; the first hook after login, which starts the daemon.
+- **Live**, once wired to `LocalPlatform` and before release: managed block against a dev endpoint and a pilot `user_id`: allow, deny by model rule, by tool rule, by a sensitive attachment and by a sensitive `sed` read; fail-closed with the server down; events landing with their `accessed_files`; preflight latency with a warm daemon; the first hook after login, which starts the daemon.
 
 ## Open questions
 
