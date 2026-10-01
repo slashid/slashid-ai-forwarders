@@ -30,8 +30,8 @@ The OpenAI Responses mapping lives in `shared/`, so it also parses Bedrock MIL r
 **Goals**
 
 1. Parity with codex-client: deny prompts and tool calls by the organization's AI hook policy, fail closed by default.
-2. Attachments: hash every attached file when it is attached, check it in preflight, report it on the event whether or not the model opens it.
-3. Simple tool reads (`cat`/`sed`/`head`/`tail`/`nl` on one path, `view_image`): check before the read, report after it.
+2. Attachments: hash every attached file when it is attached, check it in preflight, report that hash on the event whether or not the model opens it.
+3. Simple tool reads (`cat`/`sed`/`head`/`tail`/`nl` on one path, `view_image`): hash and check before the read, report that hash on the event.
 4. One `AIInvocationObservedV1` per model response, attributed to a configured OpenAI user.
 5. One shared OpenAI Responses normalizer for Codex and Bedrock.
 
@@ -234,11 +234,16 @@ These rules fold the log into a cursor's state.
 
 ### Files on a response
 
-An event's `accessed_files` lists every file new in its input since the previous response, the round it consumed:
+Files are hashed only by the preflight hooks, when the model is about to see them; collection never reads a file. A backlogged event therefore reports the file as it was checked, even if it has since changed or gone.
 
-- **Attachments**, on the first response after their user message: entries from the `UserPromptSubmit` file record for that `turn_id`; without one (hook missed, state lost), from `parse_attachments` on the rollout message and `hash_local_file` at emit time, images from the decoded `input_image`. `provenance: "attachment"`, whether or not the model opens the file.
-- **Tool reads**, on the first response after the call's output: `CommandExecution` with `parsed_cmd[].type == "read"`, name from `parsed_cmd`, path resolved against the item's decoded `cwd`; hashes from the `PreToolUse` file record for that `tool_use_id`, else `hash_local_file` at emit time. The file is hashed, not `stdout`: a ranged `sed` returns part of a long file, and a partial hash never matches a sensitive-file hash. `ImageView`: name from its decoded `path`, hashes from the decoded output image. `provenance: "tool_result"`.
-- No other command contributes a file.
+**File records** (`FileRecordStore`, in `state.sqlite3`), one per hook, with the time it was written:
+
+- `UserPromptSubmit` stores the prompt's attachments under its `turn_id` (`provenance: "attachment"`).
+- `PreToolUse` stores the file its call reads under its `tool_use_id` (`provenance: "tool_result"`). That id is also the `item_completed` item id for the call: `call_…` in function mode, `exec-<uuid>` in script mode, so the record joins in both modes.
+
+An event's `accessed_files` lists every file new in the input of the round it consumed: the records for the `turn_id` of the user message in that round, and the records for the `item_completed` tool items whose outputs are in it. No record, no file: reads `get_file_read_by_tool` does not recognise, and turns that ran while the daemon was unavailable, carry no `accessed_files`.
+
+When the watermark is saved, every record written before that `token_usage_record`'s `timestamp` is deleted; this also clears records of calls that never produced output (e.g. denied). The sweep deletes records older than 7 days as a backstop.
 
 ## Enforcement
 
@@ -268,7 +273,7 @@ The round's tool results are usually empty: they exist only when the user interr
 
 **`PreToolUse`** checks only the file its own call reads. `get_file_read_by_tool(tool_name, tool_input, workdir)` returns it: `view_image` → `path`; `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'`, split with `shlex`; a pipe, `;`, `&&`, redirection, glob or several paths → `None`. Relative paths resolve against the call's own `workdir`, which the hook's `tool_input` drops: it comes from the call in `pending` (function mode), else the payload's `cwd`.
 
-**Hashing limits.** At most 50 files and 200 MiB per request, each file at most `max_file_bytes`; beyond that, entries go without hashes and the server counts them unchecked. Hashes are stored in the file records (by `turn_id`, by `tool_use_id`), so events report a file as it was checked.
+**Hashing limits.** At most 50 files and 200 MiB per request, each file at most `max_file_bytes`; beyond that, entries go without hashes and the server counts them unchecked. The entries are stored as file records (see Files on a response), so events report a file as it was checked.
 
 **Verdict.**
 
@@ -287,7 +292,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 1. Locates the rollout: `transcript_path`, else `*-<session_id>*.jsonl` under `sessions/` and `archived_sessions/`, else stops. A trigger with a `null` `transcript_path` and no file is ignored.
 2. Refreshes the log. A new send cursor starts with `skip_to(watermark)`.
 3. Pulls up to a batch of closed responses from the send cursor with `next_closed()` and builds their events.
-4. Sends the batch through `push_invocations` and saves the watermark at its last `token_usage_record`, then repeats from 3 until `next_closed()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
+4. Sends the batch through `push_invocations`, saves the watermark at its last `token_usage_record` and deletes the file records written before it, then repeats from 3 until `next_closed()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
 
 **Watermark.** `Checkpoint(timestamp, id)` in `checkpoint_store("codex-rollouts", session_id)`: the line `timestamp` and `response_id` of the last sent `token_usage_record`. A response is past it if it follows the record with that `response_id`, or, when that record is gone, if its line `timestamp` is later. Empty means everything. Saves only move forward.
 
@@ -376,7 +381,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `reads.py` | `get_file_read_by_tool`. |
 | `preflight.py` | The preflight invocation, `sink.preflight_invocation`, the verdict. |
 | `emit.py` | Triggers, batches pulled from the send cursor, ordered sending, watermark, startup sweep. |
-| `state.py` | `FileRecordStore` protocol and its SQLite implementation (attachment entries by `turn_id`, pre-read entries by `tool_use_id`). |
+| `state.py` | `FileRecordStore` protocol and its SQLite implementation: entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its write time; deletion before a timestamp and by age. |
 | `deploy/requirements.toml` | The managed block below. |
 
 ## Deployment
@@ -467,7 +472,8 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
   - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted` or `compacted`; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
-  - Rollout in both modes: `exec_command` and `exec` mapped to `Bash` from their own lines (function mode: the hook's id and command; script mode: a single `tools.exec_command` or `tools.view_image` call unwrapped, any other script kept as `exec`); each response emitted at its `token_usage_record`; four parallel `exec_command` calls; attachments on the first response of their turn; reads after their output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; an interrupted response dropped without losing its tool results.
+  - Rollout in both modes: `exec_command` and `exec` mapped to `Bash` from their own lines (function mode: the hook's id and command; script mode: a single `tools.exec_command` or `tools.view_image` call unwrapped, any other script kept as `exec`); each response emitted at its `token_usage_record`; four parallel `exec_command` calls; an interrupted response dropped without losing its tool results.
+  - Files on events: attachment records on the first response of their turn; read records joined by `item_completed` id in both modes (`call_…`, `exec-<uuid>`); a file changed or deleted after its preflight reported with its preflight hash; no record, no file; records deleted when the watermark passes them, including those of denied calls.
   - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
   - MCP listing from a captured `codex mcp list --json`, `env` never copied, every failure leaving events otherwise unchanged.
