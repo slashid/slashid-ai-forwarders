@@ -60,6 +60,11 @@ class Session:
         self.head.advance_to_end()
         return added
 
+    def rewind_send(self, watermark: Checkpoint) -> None:
+        """Back to the watermark, after a batch that could not be sent."""
+        self.send = RolloutCursor(self.log)
+        self.send.skip_to(watermark)
+
 
 class SessionCache:
     def __init__(

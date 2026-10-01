@@ -78,6 +78,14 @@ class DevPlatform:
     def checkpoint_store(self, *, collection: str, document: str) -> _CheckpointStore:
         return _CheckpointStore(self, collection, document)
 
+    def prune_checkpoints(self, *, collection: str, older_than: datetime) -> None:
+        """Not in the ``LocalPlatform`` contract; the collector calls it when present."""
+        with contextlib.closing(_CheckpointStore(self, collection, "")._connect()) as conn, conn:
+            conn.execute(
+                "DELETE FROM dev_checkpoints WHERE collection = ? AND timestamp < ?",
+                (collection, _utc_text(older_than)),
+            )
+
 
 class _CheckpointStore:
     def __init__(self, platform: DevPlatform, collection: str, document: str) -> None:
