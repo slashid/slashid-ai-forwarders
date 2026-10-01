@@ -76,7 +76,7 @@ A 2nd-gen function is itself a Cloud Run service with the function's name, which
 
 ## Rollout and verification
 
-After the merge and a release, plan and apply against the live Vertex state, then trigger one tick (`gcloud scheduler jobs run`) and check the `tick complete:` log line, that the checkpoint documents advance, and that no `401` or lease errors appear. Then run a Gemini conversation and check events and stitching as in the earlier validation.
+After the merge and a release, move the live deployment in the two steps above, then trigger one tick (`gcloud scheduler jobs run`) and check the `tick complete:` log line, that the checkpoint documents advance, and that no `401` or lease errors appear. Then run a Gemini conversation and check events and stitching as in the earlier validation.
 
 ## Risks
 
