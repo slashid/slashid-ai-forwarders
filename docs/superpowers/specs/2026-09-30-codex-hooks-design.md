@@ -150,7 +150,7 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 3. The client authenticates the daemon before sending anything: `GET /ping?nonce=<random>` must return `HMAC-SHA256(secret, nonce)`. A process that took over a dead daemon's port cannot answer, so it never receives the secret or a payload. The event follows on the same connection with `Authorization: Bearer <secret>`.
 4. If `daemon.json` is missing, the connection is refused or `/ping` fails, the client spawns `slashid-codex daemon` and polls `daemon.json` for up to 1.5 s. The spawn inherits none of the hook's pipes (`stdin=DEVNULL`, output to `daemon.log`, `close_fds=True`), or Codex would wait on them. POSIX: `start_new_session=True` (a closing terminal does not SIGHUP it). Windows: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, retried without breakaway if the job forbids it.
 5. If the spawned daemon exits with an error, or no `daemon.json` appears while no live daemon holds the lock, the client writes `spawn-failed` and skips spawning for 5 minutes. Losing the lock to a live daemon is not a failure. During the backoff the client still uses an existing `daemon.json`.
-6. If `version` or `config_digest` differ from the client's, the client calls `POST /shutdown`, which returns once the old daemon has flushed (≤ 2 s), deleted `daemon.json` and released the lock, then spawns a new one. Upgrades, config edits and token rotations take effect on the next hook, at a one-off cost of about 4 s.
+6. If `version` or `config_digest` differ from the client's, the client calls `POST /shutdown`, which returns once the old daemon has deleted `daemon.json` and released the lock, then spawns a new one. Upgrades, config edits and token rotations take effect on the next hook, at a one-off cost of about 2 s.
 
 ### Requests
 
@@ -161,7 +161,7 @@ Every request needs `Host: 127.0.0.1:<port>` exactly (DNS rebinding) and no `Ori
 | `GET /ping?nonce=` | `HMAC-SHA256(secret, nonce)` |
 | `POST /hooks/UserPromptSubmit`, `/hooks/PreToolUse` | the verdict (Codex's JSON output) |
 | `POST /hooks/Stop`, `/hooks/SessionStart`, `/hooks/SessionEnd` | `{}` at once; work is queued |
-| `POST /shutdown` | stop accepting, flush ≤ 2 s, exit |
+| `POST /shutdown` | stop accepting, delete `daemon.json`, release the lock, exit |
 
 ### Threads
 
@@ -171,7 +171,7 @@ Every request needs `Host: 127.0.0.1:<port>` exactly (DNS rebinding) and no `Ori
 
 ### Lifetime
 
-The idle timer counts hook requests only. After `daemon_idle_seconds` (600) without one, the daemon stops accepting, flushes collection for ≤ 10 s, deletes `daemon.json`, releases the lock and exits; pushes still failing are left to the next daemon's sweep. A crash loses only caches.
+Events are queued and sent as their responses become ready, so exiting needs no flush. The daemon exits once `daemon_idle_seconds` (600) pass without a hook request **and** the worker has nothing left but retries of failing pushes; a sweep still making progress keeps it alive. It stops accepting, deletes `daemon.json`, releases the lock and exits. Unsent responses stay past the watermark for the next daemon's sweep, and a push cut off mid-batch is resent and deduplicated by the server. A crash loses only caches.
 
 On Linux (measured), a hook-spawned daemon is adopted by `systemd --user` and survives the desktop app quitting; systemd keeps the app's scope while it has processes. It ends at logout.
 
@@ -429,7 +429,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 | Connection to the daemon breaks mid-preflight | Retried in-process if budget remains, else `fail_mode` |
 | Daemon accepted a preflight, no verdict by the deadline | `fail_mode` |
 | Stale `daemon.json` | Connection refused, or `/ping` fails on a reused port: nothing is sent; a new daemon is spawned and takes over |
-| `version` or `config_digest` changed | Old daemon shut down (≤ 2 s flush), new one spawned |
+| `version` or `config_digest` changed | Old daemon shut down, new one spawned |
 | Bad config or token file | Daemon logs and exits; spawn backoff; fallback preflight applies `fail_mode`, collection does nothing |
 | Invalid hook payload | Preflight `fail_mode`; collection ignores it |
 | File missing, unreadable or over a cap | Entry without hashes, counted unchecked by the server |
@@ -453,7 +453,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
   - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
   - MCP listing from a captured `codex mcp list --json`, `env` never copied, every failure leaving events otherwise unchanged.
-  - Daemon: racing starts (one daemon, both served); stale `daemon.json`; squatted port receiving nothing; restarts on version, config and token change without backoff or fallback; daemon started during backoff used; missing secret, wrong `Host`, `Origin` refused; watchdog; crash mid-request; request during idle exit; idle exit with a failing push; spawn backoff; spawn holding none of the hook's pipes; fallback within each budget; `state_dir` from `platformdirs`.
+  - Daemon: racing starts (one daemon, both served); stale `daemon.json`; squatted port receiving nothing; restarts on version, config and token change without backoff or fallback; daemon started during backoff used; missing secret, wrong `Host`, `Origin` refused; watchdog; crash mid-request; request during idle exit; idle exit with only failing pushes left; no idle exit while the sweep is progressing; a push cut off by exit resent and deduplicated; spawn backoff; spawn holding none of the hook's pipes; fallback within each budget; `state_dir` from `platformdirs`.
   - Windows: a detached spawn surviving its parent, with and without a job forbidding breakaway.
   - End to end: client and daemon subprocesses against a stub SlashID.
 - **Live**, before merge: managed block against a dev endpoint and a pilot `user_id`: allow, deny by model rule, by tool rule, by a sensitive attachment and by a sensitive `sed` read; fail-closed with the server down; events landing with their `accessed_files`; preflight latency warm versus in-process.
