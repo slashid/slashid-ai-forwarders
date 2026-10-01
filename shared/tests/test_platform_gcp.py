@@ -55,11 +55,20 @@ async def test_scheduler_auth_without_a_principal_refuses_every_token() -> None:
     assert await check("any-token") is False
 
 
-def test_get_resolves_a_platform_by_name() -> None:
+async def test_get_returns_a_context_manager_yielding_the_platform() -> None:
     from slashid_ai_forwarder_core import platform
 
-    built = platform.get("gcp", project="p", firestore_database="d")
-    assert isinstance(built, GcpPlatform)
+    async with platform.get("gcp", project="p", firestore_database="d") as built:
+        assert isinstance(built, GcpPlatform)
+
+
+def test_get_requires_the_options_the_factory_takes() -> None:
+    import pytest
+
+    from slashid_ai_forwarder_core import platform
+
+    with pytest.raises(TypeError):
+        platform.get("gcp")
 
 
 def test_get_names_the_known_platforms_for_an_unknown_one() -> None:

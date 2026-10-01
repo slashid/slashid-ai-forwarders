@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx
@@ -32,7 +32,7 @@ from .hook.frame import PromptFrame
 from .hook.signature import verify
 from .hook.verdict import decide
 from .pending import TICK_LEASE, flush_due, unanswered_round, write_from_frame
-from .platform import build_backends
+from .platform import Backends, open_backends
 from .store import PendingStore
 
 log = logging.getLogger(__name__)
@@ -92,9 +92,11 @@ def create_app(
     cursors: Cursors | None = None,
     tick_auth: SchedulerAuth | None = None,
     client: httpx.AsyncClient | None = None,
+    backends: Callable[[], contextlib.AbstractAsyncContextManager[Backends]] | None = None,
 ) -> FastAPI:
-    """Every stateful piece is injected; ``app()`` builds them for the
-    configured platform, and tests hand in fakes."""
+    """Every stateful piece is injected, or opened at startup by ``backends``
+    (which ``app()`` points at the configured platform) and closed at
+    shutdown; tests hand in fakes."""
     authorize = tick_auth or _refuse
     held: dict[str, httpx.AsyncClient | None] = {"client": client}
 
@@ -107,7 +109,20 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        yield
+        # The routes read these names when a request arrives, so rebinding
+        # them here is all the opened backends need.
+        nonlocal capture, store, lease, cursors, authorize
+        async with contextlib.AsyncExitStack() as stack:
+            if backends is not None:
+                opened = await stack.enter_async_context(backends())
+                capture, store, lease, cursors = (
+                    opened.capture,
+                    opened.store,
+                    opened.lease,
+                    opened.cursors,
+                )
+                authorize = opened.tick_auth
+            yield
         if client is None and held["client"] is not None:
             await held["client"].aclose()
 
@@ -230,12 +245,4 @@ def app() -> FastAPI:
         format="%(levelname)s %(name)s: %(message)s",
     )
     config = load_config()
-    backends = build_backends(config)
-    return create_app(
-        config,
-        capture=backends.capture,
-        store=backends.store,
-        lease=backends.lease,
-        cursors=backends.cursors,
-        tick_auth=backends.tick_auth,
-    )
+    return create_app(config, backends=lambda: open_backends(config))

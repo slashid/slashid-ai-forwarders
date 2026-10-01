@@ -21,7 +21,7 @@ from slashid_vertex_forwarder import handler
 from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 from slashid_vertex_forwarder.config import Config
 from slashid_vertex_forwarder.event_source import BqEventSource
-from slashid_vertex_forwarder.main import _sources, create_app
+from slashid_vertex_forwarder.main import Backends, _sources, create_app
 from tests.test_bq_event_source import _row, _source
 from tests.test_handler import _config, _event
 
@@ -151,6 +151,30 @@ async def test_a_bigquery_failure_through_tick_commits_nothing_and_the_next_sour
     assert response.status_code == 200
     assert store.saves == []
     assert healthy.fetch_count == 1 and healthy.commits == [Checkpoint(None, "7")]
+
+
+async def test_the_platform_is_opened_at_startup_used_by_the_tick_and_closed_at_shutdown() -> None:
+    source = _FakeSource([_event()])
+    lease = _FakeLease()
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        events.append("open")
+        yield Backends(sources=[source], lease=lease, tick_auth=_accept)
+        events.append("close")
+
+    app = create_app(_config(), backends=opened)
+    async with app.router.lifespan_context(app):
+        assert events == ["open"]
+        response = await _post(app)
+        # the opened source, lease and auth did the work, not nothing given up front
+        assert (response.status_code, response.json()) == (
+            200,
+            {"events_pushed": 1, "envelopes_seen": 1},
+        )
+        assert source.commits == [Checkpoint(None, "7")] and lease.durations
+    assert events == ["open", "close"]
 
 
 # --- source wiring -----------------------------------------------------------

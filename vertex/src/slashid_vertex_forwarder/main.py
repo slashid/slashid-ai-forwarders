@@ -12,7 +12,8 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass
 from datetime import timedelta
 
 from fastapi import FastAPI, Request, Response
@@ -118,17 +119,55 @@ def _bearer(header: str | None) -> str | None:
     return token if scheme.lower() == "bearer" and token else None
 
 
+@dataclass(frozen=True)
+class Backends:
+    sources: Sequence[EventSource]
+    lease: TickLease | None
+    tick_auth: SchedulerAuth | None
+
+
+@contextlib.asynccontextmanager
+async def open_backends(config: Config) -> AsyncIterator[Backends]:
+    """The backends for the configured platform, which stays open while the
+    block does. The app's lifespan holds it for the life of the process."""
+    async with platforms.get(
+        config.platform, project=config.project_id, firestore_database=config.database
+    ) as platform:
+        yield Backends(
+            sources=_sources(config, platform),
+            lease=platform.tick_lease(collection=config.checkpoint_collection, document="tick"),
+            tick_auth=platform.scheduler_auth(
+                principal=config.tick_principal, audience=config.tick_audience
+            ),
+        )
+
+
 def create_app(
     config: Config,
     *,
-    sources: Sequence[EventSource],
+    sources: Sequence[EventSource] = (),
     lease: TickLease | None = None,
     tick_auth: SchedulerAuth | None = None,
+    backends: Callable[[], contextlib.AbstractAsyncContextManager[Backends]] | None = None,
 ) -> FastAPI:
-    """Every stateful piece is injected; ``app()`` builds them for the
-    configured platform, and tests hand in fakes."""
+    """Every stateful piece is injected, or opened at startup by ``backends``
+    (which ``app()`` points at the configured platform) and closed at
+    shutdown; tests hand in fakes."""
     authorize = tick_auth or _refuse
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # The route reads these names when a request arrives, so rebinding
+        # them here is all the opened backends need.
+        nonlocal sources, lease, authorize
+        async with contextlib.AsyncExitStack() as stack:
+            if backends is not None:
+                opened = await stack.enter_async_context(backends())
+                sources, lease = opened.sources, opened.lease
+                authorize = opened.tick_auth or _refuse
+            yield
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @app.post("/tick")
     async def tick(request: Request) -> Response:
@@ -160,14 +199,4 @@ def app() -> FastAPI:
         format="%(levelname)s %(name)s: %(message)s",
     )
     config = load_config()
-    platform = platforms.get(
-        config.platform, project=config.project_id, firestore_database=config.database
-    )
-    return create_app(
-        config,
-        sources=_sources(config, platform),
-        lease=platform.tick_lease(collection=config.checkpoint_collection, document="tick"),
-        tick_auth=platform.scheduler_auth(
-            principal=config.tick_principal, audience=config.tick_audience
-        ),
-    )
+    return create_app(config, backends=lambda: open_backends(config))

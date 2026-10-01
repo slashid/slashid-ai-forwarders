@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import pathlib
 import re
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any, cast
 
@@ -18,9 +20,11 @@ from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
+from slashid_anthropic_forwarder.platform import Backends
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
+from tests.test_cursors import _cursors
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
 
 FRAME: dict[str, Any] = {
@@ -328,6 +332,57 @@ async def test_a_tick_releases_the_lease_so_the_next_one_runs() -> None:
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 1}
         assert (await c.post("/tick", headers=SCHEDULER)).json() == {"flushed": 0}
+    assert sink.request_ids == [ADDRESS]
+
+
+class _RecordingLease:
+    """Holds every time, and counts."""
+
+    def __init__(self) -> None:
+        self.holds = 0
+
+    @contextlib.asynccontextmanager
+    async def hold(self, lease: timedelta) -> AsyncIterator[bool]:
+        self.holds += 1
+        yield True
+
+
+async def test_the_platform_is_opened_at_startup_used_by_the_tick_and_closed_at_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_readers(**_: Any) -> dict[str, int]:
+        return {}
+
+    monkeypatch.setattr(main, "run_readers", no_readers)
+    store = a_store(join_wait=timedelta(seconds=-1))  # born already due
+    await seed(store)
+    lease = _RecordingLease()
+    sink = Sink()
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        events.append("open")
+        cursors, _ = _cursors()
+        yield Backends(
+            store=store,
+            lease=lease,
+            cursors=cursors,
+            tick_auth=_accepts_the_scheduler,
+            capture=None,
+        )
+        events.append("close")
+
+    app = create_app(_config(), backends=opened, client=sink.client())
+    async with app.router.lifespan_context(app):
+        assert events == ["open"]
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/tick", headers=SCHEDULER)
+        # the opened store and lease did the work, not nothing given up front
+        assert r.json() == {"flushed": 1}
+        assert lease.holds == 1
+    assert events == ["open", "close"]
     assert sink.request_ids == [ADDRESS]
 
 

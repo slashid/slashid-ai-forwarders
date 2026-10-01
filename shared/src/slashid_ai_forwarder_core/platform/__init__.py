@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 from .checkpoint import Checkpoint, CheckpointStore
@@ -57,17 +58,19 @@ class Platform(Protocol):
         ...
 
 
-# Name -> "module:class", imported only when asked for, so resolving one
-# platform never loads another cloud's SDK.
-_PLATFORMS = {"gcp": "slashid_ai_forwarder_core.platform.gcp:GcpPlatform"}
+# Name -> "module:factory". A factory is an async context manager that yields
+# the platform and releases whatever it holds when the block ends. Imported
+# only when asked for, so resolving one platform never loads another's SDK.
+_PLATFORMS = {"gcp": "slashid_ai_forwarder_core.platform.gcp:create_gcp_platform"}
 
 
-def get(name: str, **options: Any) -> Platform:
-    """The platform called ``name``, built with ``options``: each takes its
-    own, such as ``project`` and ``firestore_database`` for ``gcp``."""
+def get(name: str, **options: Any) -> AbstractAsyncContextManager[Platform]:
+    """The platform called ``name``, as an async context manager built with
+    ``options``: each takes its own, such as ``project`` and
+    ``firestore_database`` for ``gcp``."""
     try:
         target = _PLATFORMS[name]
     except KeyError:
         raise ValueError(f"unknown platform {name!r}; known: {sorted(_PLATFORMS)}") from None
-    module, _, cls = target.partition(":")
-    return getattr(importlib.import_module(module), cls)(**options)
+    module, _, factory = target.partition(":")
+    return getattr(importlib.import_module(module), factory)(**options)
