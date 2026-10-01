@@ -1545,7 +1545,7 @@ async def test_event_carries_round_hash_and_recent_hashes() -> None:
         _invocation([_msg("user", "a")]), _plain_envelope(), config=_config()
     )
     assert event.round_hash is not None
-    assert event.recent_round_hashes == [event.round_hash, "conversation-start"]
+    assert event.recent_round_hashes == [event.round_hash, "start"]
 
 
 async def test_round_link_depth_comes_from_config() -> None:
@@ -1555,7 +1555,8 @@ async def test_round_link_depth_comes_from_config() -> None:
         _plain_envelope(),
         config=_config(round_link_depth=3),
     )
-    assert event.recent_round_hashes is not None and len(event.recent_round_hashes) == 3
+    assert event.recent_round_hashes is not None
+    assert len(event.recent_round_hashes) == 4 and event.recent_round_hashes[-1] == "..."
 
 
 async def test_an_event_with_no_transcript_carries_no_links() -> None:
@@ -1573,7 +1574,4 @@ async def test_an_event_without_an_answer_has_no_round_hash() -> None:
     )
     event = await build_event_from_normalized(invocation, _plain_envelope(), config=_config())
     assert event.round_hash is None
-    assert (
-        event.recent_round_hashes is not None
-        and event.recent_round_hashes[-1] == "conversation-start"
-    )
+    assert event.recent_round_hashes is not None and event.recent_round_hashes[-1] == "start"

@@ -20,8 +20,9 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 if TYPE_CHECKING:
     from .normalize.normalized.types import NormalizedContent, NormalizedMessage
 
-# Not a digest, so it cannot collide with a real hash.
-CONVERSATION_START = "conversation-start"
+# Not digests, so neither can collide with a real hash.
+START = "start"  # the list reaches the conversation's first round
+TRUNCATED = "..."  # older rounds exist beyond the list
 
 
 class _Block(BaseModel):
@@ -123,9 +124,9 @@ def round_links(
     """``(round_hash, recent_round_hashes)`` for an event.
 
     ``messages`` is the transcript including the event's response, if it has
-    one. The list is newest first, at most ``depth`` hashes, and ends with the
-    guard when it reaches round one. Only the last ``depth`` rounds are
-    projected.
+    one. The list is newest first, at most ``depth`` hashes, and ends with
+    ``START`` when it reaches round one and ``TRUNCATED`` when it does not.
+    Only the last ``depth`` rounds are projected.
     """
     own: str | None = None
     hashes: list[str] = []
@@ -142,6 +143,5 @@ def round_links(
         hashes.append(digest)
     if not hashes:
         return None, []
-    if reaches_start:
-        hashes.append(CONVERSATION_START)
+    hashes.append(START if reaches_start else TRUNCATED)
     return own, hashes

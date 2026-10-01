@@ -66,18 +66,18 @@ It is validated against live traffic per source before the schema is closed. Unt
 | Field | Content |
 | --- | --- |
 | `round_hash` | `round_hash[k]`. Absent when the event has no `O[k]`: an enforced denial, or an input-only tail or flushed record. |
-| `recent_round_hashes` | `[round_hash[k], round_hash[k-1], …]`, newest first, at most N, only complete rounds. An event without `O[k]` lists the N complete rounds before it. Ends with the guard `"conversation-start"` when its oldest entry is the conversation's first round. |
+| `recent_round_hashes` | `[round_hash[k], round_hash[k-1], …]`, newest first, at most N, only complete rounds. An event without `O[k]` lists the N complete rounds before it. Ends with one marker: `"start"` when its oldest entry is the conversation's first round, `"..."` when older rounds may exist beyond it. |
 
-The guard is a literal, not a digest, so it cannot collide with a real hash. It is appended after the oldest round whenever the list reaches the first round, so a list holds at most N hashes plus the guard. It tells a conversation that is shorter than N apart from one the producer could only see the last N rounds of. An event with no complete round and no response (an audit-log-only event, a first-turn tail) carries neither field. A producer emits the guard only when its transcript demonstrably starts at the beginning of the conversation; a source with windowed history (Codex after a watermark, a reader that caps what it sees) never does.
+The markers are literals, not digests, so they cannot collide with a real hash. One is appended after the oldest hash, so a list holds at most N hashes plus a marker. `"start"` tells a conversation that is shorter than N apart from one the producer could only see the last N rounds of, which end in `"..."`. An event with no complete round and no response (an audit-log-only event, a first-turn tail) carries neither field. A producer emits `"start"` only when its transcript demonstrably starts at the beginning of the conversation; a source with windowed history (Codex after a watermark, a reader that caps what it sees) ends its list with `"..."` even when it reaches the start of its window.
 
-`SLASHID_ROUND_LINK_DEPTH` sets N, default **10**. Only the last N rounds, and one more to decide the guard, are projected and hashed, so the cost is O(N) rounds per event even in `session` scope.
+`SLASHID_ROUND_LINK_DEPTH` sets N, default **10**. Only the last N rounds, and one more to decide the marker, are projected and hashed, so the cost is O(N) rounds per event even in `session` scope.
 
 ## Stitching (server side)
 
-Two events are the same conversation if their `recent_round_hashes` share at least M real hashes, **M = 4** by default, counting the guard for nothing: every fresh conversation ends in one. If the shorter list carries the guard it is the whole conversation so far, and the requirement drops to `min(M, its real hashes)`. M is a server rule; producers only guarantee N.
+Two events are the same conversation if their `recent_round_hashes` share at least M real hashes, **M = 4** by default, counting the markers for nothing: every fresh conversation ends in `"start"`. If the shorter list ends in `"start"` it is the whole conversation so far, and the requirement drops to `min(M, its real hashes)`. M is a server rule; producers only guarantee N.
 
 - Events d rounds apart share N-d entries, so the events on either side of g lost ones share N-g-1, and with N=10 and M=4 a chain survives 5 consecutive lost events.
-- The relaxed rule applies only with the guard, so the first M-1 events of a session stitch, while a short list from a source that merely sees little history still needs M.
+- The relaxed rule applies only with `"start"`, so the first M-1 events of a session stitch, while a short list from a source that merely sees little history still needs M.
 - A single matching hash is weak evidence: identical short rounds ("continue" → same reply) collide across sessions. Four in a row make that practically impossible, which is why M is not 1.
 - Local, not cumulative, hashes recover from history rewrites. After Claude Code compacts a context, events match again M rounds later.
 
@@ -93,14 +93,14 @@ Two events are the same conversation if their `recent_round_hashes` share at lea
 - A round's hash is as guessable as its content; for short rounds it is no less reversible than the existing `input` hash.
 - `session` scope keeps the quadratic input cost, and is opt-in.
 - A transcript ending on an assistant message is read as ending on the event's response, so a prefill request that errored claims its last history round as its own `round_hash`.
-- The guard marks where the visible transcript starts. A client that trims its own context window makes a later event look like a conversation start, and so does a compaction.
-- **Claude Code compaction** (one `claude -p` capture, `/compact` on a five-message session, behind a logging proxy). The summarising call is itself a model call: the unchanged history, with the compaction instruction appended to the last user message as an extra text block, so its round differs from the one that already answered that message. The next request holds none of the earlier rounds: a user message with the summary, the last assistant message kept verbatim, and synthetic `system` messages re-injecting recent file reads. Its only complete round is `(summary → kept assistant message)`, so its list is that hash plus the guard, and nothing stitches across the compaction. Not verified: whether a larger session keeps more than the last message, or whether interactive and auto compaction differ.
+- `"start"` marks where the visible transcript starts. A client that trims its own context window makes a later event look like a conversation start, and so does a compaction.
+- **Claude Code compaction** (one `claude -p` capture, `/compact` on a five-message session, behind a logging proxy). The summarising call is itself a model call: the unchanged history, with the compaction instruction appended to the last user message as an extra text block, so its round differs from the one that already answered that message. The next request holds none of the earlier rounds: a user message with the summary, the last assistant message kept verbatim, and synthetic `system` messages re-injecting recent file reads. Its only complete round is `(summary → kept assistant message)`, so its list is that hash plus `start`, and nothing stitches across the compaction. Not verified: whether a larger session keeps more than the last message, or whether interactive and auto compaction differ.
 
 ## Tests
 
 - Rounds: merged assistant runs are one response; a transcript without an assistant message is one round; `system` messages are ignored.
 - Projection: a response and the same message replayed inside the next request hash equal, including a reasoning block present only on the response and a response run split into several messages in the replay.
 - Scope: `round` equals `after_last_assistant`; `input` hashes the messages only, so changing `tools_declared` leaves it unchanged; a leading `system` message is in round 1 and absent from round 2.
-- Fields: first event lists one hash and the guard; the 10th lists ten hashes and the guard, the 11th ten and no guard; the 11th event lists ten; consecutive events share N-1 entries; denial and tail records omit `round_hash` and still list prior rounds.
+- Fields: first event lists one hash and `start`; the 10th lists ten hashes and `start`, the 11th ten and `...`; the 11th event lists ten; consecutive events share N-1 entries; denial and tail records omit `round_hash` and still list prior rounds.
 - Stitch property test: up to N-M-1 consecutive events dropped from a stream, the survivors on either side still stitch.
 - Live capture per source before closing the projection.

@@ -212,7 +212,7 @@ async def test_a_tail_has_no_round_hash_and_lists_the_rounds_its_neighbour_does(
     assert tail.recent_round_hashes == event.recent_round_hashes
     assert event.recent_round_hashes is not None
     assert event.recent_round_hashes[0] == event.round_hash
-    assert event.recent_round_hashes[-1] == "conversation-start"
+    assert event.recent_round_hashes[-1] == "start"
 
 
 async def test_the_fresh_round_cannot_change_the_record() -> None:

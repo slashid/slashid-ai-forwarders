@@ -350,7 +350,7 @@ class AIInvocationObservedV1(_WireModel):
     conversation_id: str | None = None
     # Stitching hashes (see ``rounds.py``). ``round_hash`` is absent when the
     # event has no response. ``recent_round_hashes`` is newest first and ends
-    # with ``"conversation-start"`` when it reaches the first round.
+    # with ``"start"`` when it reaches the first round and ``"..."`` when not.
     round_hash: str | None = None
     recent_round_hashes: list[str] | None = None
     input: AIInvocationContent | None = None

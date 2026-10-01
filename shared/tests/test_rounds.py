@@ -13,7 +13,8 @@ from slashid_ai_forwarder_core.normalize.normalized.types import (
     NormalizedMessage,
 )
 from slashid_ai_forwarder_core.rounds import (
-    CONVERSATION_START,
+    START,
+    TRUNCATED,
     Round,
     project,
     round_links,
@@ -151,30 +152,30 @@ def _history(rounds: int) -> list[NormalizedMessage]:
 def test_first_event_lists_its_own_round_and_the_guard() -> None:
     own, recent = round_links([_user("u0"), _assistant("a0")], depth=10)
     assert own == Round([_user("u0")], [_assistant("a0")]).digest()
-    assert recent == [own, CONVERSATION_START]
+    assert recent == [own, START]
 
 
-def test_links_are_newest_first_and_end_at_the_guard_when_short() -> None:
+def test_links_are_newest_first_and_end_at_start_when_short() -> None:
     own, recent = round_links([*_history(2), _user("u2"), _assistant("a2")], depth=10)
     assert recent[0] == own
     assert recent[1:] == [
         Round([_user("u1")], [_assistant("a1")]).digest(),
         Round([_user("u0")], [_assistant("a0")]).digest(),
-        CONVERSATION_START,
+        START,
     ]
 
 
-def test_the_guard_marks_exactly_the_events_that_reach_round_one() -> None:
+def test_start_marks_exactly_the_events_that_reach_round_one_and_the_rest_are_truncated() -> None:
     _, tenth = round_links([*_history(9), _user("u9"), _assistant("a9")], depth=10)
     _, eleventh = round_links([*_history(10), _user("u10"), _assistant("a10")], depth=10)
-    assert len(tenth) == 11 and tenth[-1] == CONVERSATION_START
-    assert len(eleventh) == 10 and CONVERSATION_START not in eleventh
+    assert len(tenth) == 11 and tenth[-1] == START
+    assert len(eleventh) == 11 and eleventh[-1] == TRUNCATED and START not in eleventh
 
 
 def test_consecutive_events_share_all_but_one_hash() -> None:
     _, a = round_links([*_history(12), _user("u12"), _assistant("a12")], depth=10)
     _, b = round_links([*_history(13), _user("u13"), _assistant("a13")], depth=10)
-    assert set(a) & set(b) == set(a[:9])
+    assert (set(a) & set(b)) - {TRUNCATED} == set(a[:9])
 
 
 def test_no_answer_lists_the_complete_rounds_and_no_own_hash() -> None:
@@ -183,7 +184,7 @@ def test_no_answer_lists_the_complete_rounds_and_no_own_hash() -> None:
     assert recent == [
         Round([_user("u1")], [_assistant("a1")]).digest(),
         Round([_user("u0")], [_assistant("a0")]).digest(),
-        CONVERSATION_START,
+        START,
     ]
 
 
@@ -244,7 +245,7 @@ def test_a_round_whose_answer_projects_empty_is_skipped_and_not_counted() -> Non
         role="assistant", content=[NormalizedContent(kind="reasoning", text="hm")]
     )
     _, recent = round_links([_user("a"), thinking, _user("b"), _assistant("c")], depth=2)
-    assert len(recent) == 2 and recent[-1] == CONVERSATION_START
+    assert len(recent) == 2 and recent[-1] == START
 
 
 def test_events_stitch_after_up_to_n_minus_m_are_lost() -> None:
@@ -255,10 +256,10 @@ def test_events_stitch_after_up_to_n_minus_m_are_lost() -> None:
         return round_links([*history, _user(f"u{k}"), _assistant(f"a{k}")], depth=n)[1]
 
     def stitches(a: list[str], b: list[str]) -> bool:
-        real_a = [h for h in a if h != CONVERSATION_START]
-        real_b = [h for h in b if h != CONVERSATION_START]
+        real_a = [h for h in a if h not in (START, TRUNCATED)]
+        real_b = [h for h in b if h not in (START, TRUNCATED)]
         shorter = a if len(real_a) <= len(real_b) else b
-        need = min(m, len(real_a), len(real_b)) if CONVERSATION_START in shorter else m
+        need = min(m, len(real_a), len(real_b)) if START in shorter else m
         return len(set(real_a) & set(real_b)) >= need
 
     for k in range(0, 40):
@@ -278,12 +279,12 @@ def test_a_run_of_assistant_messages_is_one_round_in_the_list() -> None:
 
 def test_depth_bounds_the_list() -> None:
     _, recent = round_links([*_history(30), _user("u30"), _assistant("a30")], depth=4)
-    assert len(recent) == 4 and CONVERSATION_START not in recent
+    assert len(recent) == 5 and recent[-1] == TRUNCATED
 
 
 def test_a_history_ending_on_an_assistant_message_merges_with_the_answer() -> None:
     own, recent = round_links([_user("a"), _assistant("b"), _assistant("c")], depth=10)
-    assert recent == [own, CONVERSATION_START]
+    assert recent == [own, START]
     assert own == Round([_user("a")], [_assistant("b"), _assistant("c")]).digest()
 
 
