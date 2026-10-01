@@ -20,7 +20,7 @@ from slashid_codex.preflight import Preflight, Verdict, fail_verdict
 from slashid_codex.state import RecordStoreBusy, SqliteFileRecordStore
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
-INTERRUPT_SESSION = "01a0f392-6406-7d82-8234-af07c8203a7c"
+INTERRUPT_SESSION = "01a0f38b-f3a4-7c70-95e2-420a7fcbcc03"
 SESSION = "sess-1"
 TURN = "turn-1"
 BASH = resolve_tool("Bash")
@@ -45,10 +45,10 @@ class Env:
         self.config = config
         self.sink = sink
         self.store = SqliteFileRecordStore(DevPlatform(tmp_path / "state").connect)
-        cache = SessionCache(
+        self.cache = SessionCache(
             codex_home=config.codex_home, load_watermark=lambda _: Checkpoint(None, None)
         )
-        self.preflight = Preflight(config, sink, self.store, cache)
+        self.preflight = Preflight(config, sink, self.store, self.cache)
 
     @property
     def sent(self) -> AIInvocationObservedV1:
@@ -177,6 +177,8 @@ async def test_prompt_after_interrupt(env: Env) -> None:
     assert sent.available_tools == [BASH[0]]
     assert sent.available_tool_servers == [BASH[1]]
     assert sent.accessed_files == [entry]
+    # Released for eviction once the head is read.
+    assert [s.in_use for s in env.cache._sessions.values()] == [0]
 
 
 async def test_record_store_busy_still_answers(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:

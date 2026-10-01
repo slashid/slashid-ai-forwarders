@@ -164,7 +164,10 @@ class _PayloadHeader(_LenientModel):
 
 class _Header(_LenientModel):
     type: str
-    payload: _PayloadHeader | None = None
+
+
+class _EventHeader(_LenientModel):
+    payload: _PayloadHeader
 
 
 class _SessionMetaLine(_LenientModel):
@@ -223,7 +226,11 @@ def parse_line(raw: bytes) -> RolloutLine | None:
     except ValidationError as exc:
         raise RolloutLineError(str(exc)) from exc
     if header.type == "event_msg":
-        if header.payload is None or header.payload.type not in _EVENTS:
+        try:
+            event = _EventHeader.model_validate_json(raw)
+        except ValidationError as exc:
+            raise RolloutLineError(str(exc)) from exc
+        if event.payload.type not in _EVENTS:
             return None
         envelope: type[_Envelope] = _EventMsgLine
     elif header.type in _LINES:

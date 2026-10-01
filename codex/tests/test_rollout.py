@@ -61,6 +61,17 @@ def test_unmodelled_types_are_none() -> None:
     assert parse_line(raw) is None
 
 
+@pytest.mark.parametrize("payload", [b"[]", b'"x"', b"null"])
+def test_unmodelled_types_with_any_payload_are_none(payload: bytes) -> None:
+    raw = b'{"timestamp":"2026-09-30T18:33:37.717Z","type":"other","payload":' + payload + b"}"
+    assert parse_line(raw) is None
+
+
+def test_event_msg_with_non_object_payload_raises() -> None:
+    with pytest.raises(RolloutLineError):
+        parse_line(b'{"timestamp":"2026-09-30T18:33:37.717Z","type":"event_msg","payload":[]}')
+
+
 def test_broken_json_raises() -> None:
     with pytest.raises(RolloutLineError):
         parse_line(b'{"timestamp": "2026-09-30T18:33:37.717Z", "type": ')

@@ -37,8 +37,9 @@ from slashid_ai_forwarder_core.reads import get_file_read_by_tool
 from slashid_ai_forwarder_core.sink import PreflightError
 
 from .attachments import parse_attachments
-from .cache import Session, SessionCache, locate
+from .cache import SessionCache, locate
 from .config import CodexConfig
+from .cursor import RolloutCursor
 from .envelope import declared_from_calls, failed_calls, mark_errors, used_declarations, wire_time
 from .hooks import PreToolUseHook, UserPromptSubmitHook
 from .rollout import CodexItem
@@ -74,6 +75,20 @@ class PreflightSink(Protocol):
     async def preflight(
         self, invocation: AIInvocationObservedV1, *, deadline: float
     ) -> list[str]: ...
+
+
+def _unconsumed(
+    head: RolloutCursor,
+) -> tuple[tuple[NormalizedMessage, ...], list[str], list[CodexItem]]:
+    """The history, and the tool results after its last answer with their items."""
+    view = head.view()
+    round_ids = [
+        b.tool_use_id
+        for m in after_last_assistant(view)
+        for b in m.content
+        if b.kind == "tool_result" and b.tool_use_id
+    ]
+    return view, round_ids, [i for call_id in round_ids for i in head.items_for(call_id)]
 
 
 class _Workdir(_LenientModel):
@@ -153,18 +168,8 @@ class Preflight:
 
         messages: list[NormalizedMessage] = []
         record_keys: list[str] = []
-        if (session := self._session(hook)) is not None:
-            with session.lock:
-                view = session.head.view()
-                round_ids = [
-                    b.tool_use_id
-                    for m in after_last_assistant(view)
-                    for b in m.content
-                    if b.kind == "tool_result" and b.tool_use_id
-                ]
-                items: list[CodexItem] = [
-                    i for call_id in round_ids for i in session.head.items_for(call_id)
-                ]
+        if (read := self._read_head(hook, _unconsumed)) is not None:
+            view, round_ids, items = read
             messages = mark_errors(view, failed_calls(items))
             record_keys = list(dict.fromkeys([*round_ids, *(i.id for i in items if i.id)]))
         tools, servers = declared_from_calls(messages)
@@ -216,32 +221,29 @@ class Preflight:
 
     def _workdir(self, hook: PreToolUseHook) -> str:
         """The call's own ``workdir`` (function mode), else the payload's ``cwd``."""
-        session = self._session(hook)
-        if session is not None:
-            with session.lock:
-                call = session.head.pending_call(hook.tool_use_id)
-            if call is not None:
-                try:
-                    workdir = _Workdir.model_validate_json(call.arguments).workdir
-                except ValidationError:
-                    workdir = None
-                if workdir:
-                    return workdir
+        call = self._read_head(hook, lambda head: head.pending_call(hook.tool_use_id))
+        if call is not None:
+            try:
+                workdir = _Workdir.model_validate_json(call.arguments).workdir
+            except ValidationError:
+                workdir = None
+            if workdir:
+                return workdir
         return hook.cwd
 
-    def _session(self, hook: _PreflightHook) -> Session | None:
-        """The session with its head at the end of the rollout, if there is one."""
+    def _read_head[T](self, hook: _PreflightHook, read: Callable[[RolloutCursor], T]) -> T | None:
+        """``read`` of the session's head moved to the end of the rollout;
+        ``None`` if there is no readable rollout."""
         path = locate(hook.session_id, hook.transcript_path, self._config.codex_home)
         if path is None:
             return None
         try:
-            session = self._sessions.get(hook.session_id, path)
-            with session.lock:
+            with self._sessions.session(hook.session_id, path) as session, session.lock:
                 session.refresh()
+                return read(session.head)
         except OSError as exc:
             log.warning("rollout %s unreadable: %s", path, exc)
             return None
-        return session
 
     def _store(self, write: Callable[[], None]) -> None:
         """A record that cannot be written costs the event its file, not the verdict."""

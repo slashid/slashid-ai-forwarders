@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,16 +13,17 @@ from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
 from .cursor import RolloutCursor
 from .log import LogReset, SessionLog
+from .rollout import RolloutLineError, SessionMeta, parse_line
 
 HOOK_IDLE = timedelta(minutes=10)
 _ROOTS = ("sessions", "archived_sessions")
 
 
 def locate(session_id: str, transcript_path: Path | None, codex_home: Path) -> Path | None:
-    """The hook's ``transcript_path``, else ``*-<id>.jsonl`` or ``*-<id>_*.jsonl``
-    under ``sessions/`` and ``archived_sessions/``, the most recently modified
-    if several (measured: a session can leave an abandoned earlier rollout
-    under the exact name)."""
+    """The hook's ``transcript_path``, else the most recently modified
+    ``*-<id>.jsonl`` or ``*-<id>_*.jsonl`` under ``sessions/`` and
+    ``archived_sessions/`` whose ``session_meta`` id is ``session_id``
+    (measured: the exact name can be an abandoned earlier rollout)."""
     if transcript_path is not None and transcript_path.is_file():
         return transcript_path
     found = [
@@ -29,13 +31,26 @@ def locate(session_id: str, transcript_path: Path | None, codex_home: Path) -> P
         for root in _ROOTS
         for pattern in (f"*-{session_id}.jsonl", f"*-{session_id}_*.jsonl")
         for path in (codex_home / root).rglob(pattern)
-        if path.is_file()
+        if path.is_file() and _meta_id(path) == session_id
     ]
     return max(found, key=lambda path: path.stat().st_mtime, default=None)
 
 
+def _meta_id(path: Path) -> str | None:
+    try:
+        with path.open("rb") as f:
+            line = parse_line(f.readline())
+    except (OSError, RolloutLineError):
+        return None
+    if line is None or not isinstance(line.payload, SessionMeta):
+        return None
+    return line.payload.id
+
+
 @dataclass(eq=False)
 class Session:
+    """``refresh``, ``rewind_send`` and the cursors require ``lock``."""
+
     session_id: str
     log: SessionLog
     # Preflight; always at the end of the log.
@@ -48,6 +63,8 @@ class Session:
     session_started: bool = False
     last_hook_at: datetime | None = None
     batch_in_flight: bool = False
+    # Holders inside ``SessionCache.session``; not evicted while positive.
+    in_use: int = 0
 
     def refresh(self) -> int:
         """Read appended lines and move the head to the end. A shrunk or
@@ -83,14 +100,29 @@ class SessionCache:
     def locate_parent(self, thread_id: str) -> Path | None:
         return locate(thread_id, None, self._codex_home)
 
+    @contextmanager
+    def session(self, session_id: str, path: Path) -> Iterator[Session]:
+        """``get``, kept from eviction until the block exits."""
+        session = self._get(session_id, path, hold=True)
+        try:
+            yield session
+        finally:
+            with self._lock:
+                session.in_use -= 1
+
     def get(self, session_id: str, path: Path) -> Session:
         """The cached session, else one read from byte 0 with its send cursor
-        past the watermark. Raises ``OSError`` if the rollout is unreadable."""
+        past the watermark. Raises ``OSError`` if the rollout is unreadable.
+        It can be evicted before use; prefer ``session``."""
+        return self._get(session_id, path, hold=False)
+
+    def _get(self, session_id: str, path: Path, *, hold: bool) -> Session:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is not None:
                 # Archiving moves the file; its identity is unchanged.
                 session.log.path = path
+                session.in_use += hold
                 return session
 
         def open_log(path: Path) -> tuple[SessionLog, RolloutCursor, RolloutCursor]:
@@ -105,7 +137,9 @@ class SessionCache:
         log, head, send = open_log(path)
         built = Session(session_id, log, head, send, open_log)
         with self._lock:
-            return self._sessions.setdefault(session_id, built)
+            session = self._sessions.setdefault(session_id, built)
+            session.in_use += hold
+            return session
 
     def touch_hook(self, session_id: str) -> None:
         with self._lock:
@@ -124,7 +158,7 @@ class SessionCache:
             or session.last_hook_at is None
             or self._clock() > session.last_hook_at + HOOK_IDLE
         )
-        return session.send.at_end and not session.batch_in_flight and idle
+        return session.send.at_end and not session.batch_in_flight and not session.in_use and idle
 
     def evict(self) -> list[str]:
         """Drop evictable sessions not in use; a dropped one is rebuilt from

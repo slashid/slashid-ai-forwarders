@@ -77,6 +77,13 @@ def test_script_without_cwd_omits_workdir() -> None:
     assert json.loads(call.arguments) == {"command": "ls"}
 
 
+def test_script_workdir_wins_over_cwd() -> None:
+    script = 'text(await tools.exec_command({cmd:"ls", workdir:"/srv"}));'
+    call = map_custom_call(_exec(script), cwd="/home/user/work")
+    assert call is not None
+    assert json.loads(call.arguments) == {"command": "ls", "workdir": "/srv"}
+
+
 def test_other_tools_keep_their_arguments() -> None:
     call = map_custom_call(
         _exec('text(await tools.mcp__payroll__read({employee_id: "e-1", "full": true}));'),

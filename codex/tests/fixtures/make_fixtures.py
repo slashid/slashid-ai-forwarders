@@ -13,7 +13,9 @@ Run from ``codex/`` on the machine that captured them::
 
 Every line keeps its type, ids, timestamps, order and usage. Instructions,
 developer and user text, assistant text, tool output, images and encrypted
-content become fixed placeholders; tool reads become ``READ_CONTENT``. The
+content become fixed placeholders; tool reads become ``READ_CONTENT``.
+``session_meta`` and ``turn_context`` keep only allow-listed keys. Command
+text is kept verbatim: captures must not hold sensitive command arguments. The
 home directory becomes ``/home/user``, then each ``--rename OLD=NEW`` applies
 to every string (and its percent-encoded form), longest first. The fork's
 ``history_base.end_byte_offset`` is recomputed against the sanitised parent.
@@ -42,6 +44,25 @@ PNG_DATA_URL = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
 _OUTPUT_MARKER = "\nOutput:\n"
+_SESSION_META_KEYS = (
+    "id",
+    "session_id",
+    "timestamp",
+    "cwd",
+    "runtime_workspace_roots",
+    "originator",
+    "cli_version",
+    "source",
+    "thread_source",
+    "model_provider",
+    "base_instructions",
+    "history_mode",
+    "history_base",
+    "forked_from_id",
+    "forked_from_ordinal_exclusive",
+    "multi_agent_version",
+    "context_window",
+)
 _TURN_CONTEXT_KEYS = (
     "turn_id",
     "root_turn_id",
@@ -116,7 +137,7 @@ class _Sanitiser:
         return {**line, "payload": payload}
 
     def _session_meta(self, payload: Obj) -> Obj:
-        out = {k: v for k, v in payload.items() if k != "git"}
+        out = {k: v for k, v in payload.items() if k in _SESSION_META_KEYS}
         match payload.get("base_instructions"):
             case dict() as base:
                 out["base_instructions"] = {**base, "text": "<instructions>"}

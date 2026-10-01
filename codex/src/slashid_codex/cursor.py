@@ -4,7 +4,7 @@ to it (spec "Applying lines")."""
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -66,7 +66,8 @@ class RolloutInvocation(BaseModel):
     model: str | None
     usage: CodexUsage
     is_compaction: bool = False
-    # Turns of the user messages in the consumed round.
+    # Turns of the prompts (user messages with a ``UserMessage`` item) in the
+    # consumed round; not the injected ``<turn_aborted>`` message.
     consumed_turn_ids: tuple[str, ...] = ()
     # ``item_completed`` items of the tool calls whose outputs are in the consumed round.
     consumed_items: tuple[CodexItem, ...] = ()
@@ -80,6 +81,8 @@ class _Pending:
     # Model-produced since the last ``token_usage_record``.
     output: bool
     turn_id: str | None
+    # A user message followed by its ``UserMessage`` item.
+    prompt: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,8 @@ def _usage(usage: CodexUsage) -> ResponsesUsage:
 
 
 class RolloutCursor:
+    """Not thread-safe: callers hold the owning ``Session.lock``."""
+
     def __init__(self, log: SessionLog) -> None:
         self._log = log
         self._pos = 0
@@ -143,6 +148,7 @@ class RolloutCursor:
         # Item join: function mode by call id, script mode by the ``exec`` call
         # whose window the item was read in.
         self._function_calls: set[str] = set()
+        self._custom_calls: set[str] = set()
         self._items: dict[str, CodexItem] = {}
         self._script_items: dict[str, list[CodexItem]] = {}
         self._script_call: str | None = None
@@ -282,7 +288,9 @@ class RolloutCursor:
                 self._function_calls.add(item.call_id)
                 item = map_function_call(item)
             case ResponsesCustomToolCall():
+                self._custom_calls.add(item.call_id)
                 if item.name == SCRIPT_TOOL:
+                    # Parallel ``exec`` calls: their items all join the last one.
                     self._script_call = item.call_id
                 if (mapped := map_custom_call(item, self.cwd)) is not None:
                     self._renamed.add(item.call_id)
@@ -294,7 +302,16 @@ class RolloutCursor:
         self.pending.append(_Pending(item, _is_model_output(item), self.turn_id))
 
     def _on_item(self, item: CodexItem) -> None:
-        if isinstance(item, UserMessageItem) or item.id is None:
+        if isinstance(item, UserMessageItem):
+            last = self.pending[-1] if self.pending else None
+            if (
+                last is not None
+                and isinstance(last.item, ResponsesMessage)
+                and last.item.role == "user"
+            ):
+                self.pending[-1] = replace(last, prompt=True)
+            return
+        if item.id is None:
             return
         if isinstance(item, OtherItem) and item.type in _NOT_TOOL_ITEMS:
             return
@@ -307,7 +324,7 @@ class RolloutCursor:
         """The unclosed response is never emitted: its reasoning and text go,
         its calls and their results stay for the next response."""
         self.pending = [
-            _Pending(p.item, False, p.turn_id)
+            replace(p, output=False)
             for p in self.pending
             if not (p.output and isinstance(p.item, ResponsesMessage | ResponsesReasoning))
         ]
@@ -349,13 +366,7 @@ class RolloutCursor:
             usage=held.record.usage,
             is_compaction=is_compaction,
             consumed_turn_ids=tuple(
-                dict.fromkeys(
-                    p.turn_id
-                    for p in consumed
-                    if isinstance(p.item, ResponsesMessage)
-                    and p.item.role == "user"
-                    and p.turn_id is not None
-                )
+                dict.fromkeys(p.turn_id for p in consumed if p.prompt and p.turn_id is not None)
             ),
             consumed_items=self._join(round_items),
             finished_turn_ids=tuple(self._finished),
@@ -379,6 +390,12 @@ class RolloutCursor:
                 joined.append(item)
             joined.extend(self._script_items.pop(call_id, []))
             self._function_calls.discard(call_id)
+            self._custom_calls.discard(call_id)
             if self._script_call == call_id:
                 self._script_call = None
+        # Keep only what calls still awaiting consumption can join.
+        open_calls = self._function_calls | self._custom_calls
+        self._items = {k: v for k, v in self._items.items() if k in open_calls}
+        self._script_items = {k: v for k, v in self._script_items.items() if k in open_calls}
+        self._renamed &= open_calls
         return tuple(joined)

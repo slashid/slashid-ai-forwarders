@@ -57,8 +57,8 @@ def map_function_call(call: ResponsesFunctionCall) -> ResponsesFunctionCall:
 
 def map_custom_call(call: ResponsesCustomToolCall, cwd: str | None) -> ResponsesFunctionCall | None:
     """An ``exec`` script that is a single ``tools.NAME(ARG)`` call → that call;
-    ``None`` for any other script. Script calls carry no ``workdir``: ``cwd``
-    is the turn's."""
+    ``None`` for any other script. ``cwd`` (the turn's) stands in for a
+    missing ``workdir``."""
     if call.name != SCRIPT_TOOL or (parsed := parse_script(call.input)) is None:
         return None
     name, arg = parsed
@@ -67,7 +67,7 @@ def map_custom_call(call: ResponsesCustomToolCall, cwd: str | None) -> Responses
             args = _ExecCommandArgs.model_validate(arg)
         except ValidationError:
             return None
-        return _bash(call.call_id, args.cmd, cwd)
+        return _bash(call.call_id, args.cmd, args.workdir or cwd)
     arguments = arg if isinstance(arg, str) else json.dumps(arg)
     return ResponsesFunctionCall(
         type="function_call", call_id=call.call_id, name=name, arguments=arguments

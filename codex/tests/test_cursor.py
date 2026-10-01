@@ -5,6 +5,7 @@ import shutil
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesCompaction,
     ResponsesFunctionCall,
@@ -152,7 +153,9 @@ def test_interrupted_response_is_dropped_but_its_tool_results_stay(tmp_path: Pat
     )
     aborted = "01a0f392-6406-7d82-8234-af07c8203a7c"
     assert after.finished_turn_ids == (aborted,)
-    assert after.consumed_turn_ids == (aborted, "01a0f43a-57b1-79b3-955a-5a33f4db0efc")
+    # The injected ``<turn_aborted>`` message is tagged with the aborted turn
+    # but is not one of its prompts.
+    assert after.consumed_turn_ids == ("01a0f43a-57b1-79b3-955a-5a33f4db0efc",)
     # Rounds already returned are not changed by the abort.
     assert len(_calls(parallel.response.output)) == 4
 
@@ -275,3 +278,41 @@ def test_view_after_responses_closed(tmp_path: Path) -> None:
     view = cursor.view()
     assert view[-1].role == "assistant"
     assert cursor.pending_call("call_rf24Kdk5IOcyNLeC1kBcXjhi") is not None
+
+
+@pytest.mark.parametrize("name", ["script", "function", "interrupt", "compaction"])
+def test_join_maps_drop_consumed_entries(tmp_path: Path, name: str) -> None:
+    cursor = RolloutCursor(_log(tmp_path, name))
+    cursor.advance_to_end()
+    assert cursor._items == {}
+    assert cursor._script_items == {}
+    assert cursor._renamed == set()
+    assert cursor._function_calls == set()
+
+
+def test_items_for_keeps_unconsumed_calls(tmp_path: Path) -> None:
+    raw = _raw("function")
+    call_id = "call_PaTVhmRLsPDp4UUH9JaOFRUl"
+    index = next(
+        i for i, line in enumerate(raw) if b'"item_completed"' in line and call_id.encode() in line
+    )
+    cursor = RolloutCursor(_log(tmp_path, "function", upto=index + 1))
+    cursor.advance_to_end()
+    [item] = cursor.items_for(call_id)
+    assert isinstance(item, CommandExecution)
+
+
+def test_items_with_no_call_are_dropped_when_a_response_closes(tmp_path: Path) -> None:
+    raw = _raw("function")
+    first = _records("function")[0][0]
+    orphan = (
+        b'{"timestamp":"2026-09-30T21:53:55.000Z","type":"event_msg","payload":'
+        b'{"type":"item_completed","item":{"type":"WebSearch","id":"ws_1"}}}\n'
+    )
+    path = tmp_path / "orphan.jsonl"
+    path.write_bytes(b"".join([*raw[:first], orphan, *raw[first:]]))
+    log = SessionLog.open(path, lambda _: None)
+    log.refresh()
+    cursor = RolloutCursor(log)
+    cursor.advance_to_end()
+    assert cursor._items == {}

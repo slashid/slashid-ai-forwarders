@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import threading
@@ -167,6 +168,20 @@ def test_evict_skips_a_locked_session(tmp_path: Path) -> None:
     assert cache.evict() == [SCRIPT_ID]
 
 
+def test_evict_skips_a_session_in_use(tmp_path: Path) -> None:
+    path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
+    cache, _ = _cache(tmp_path)
+    with cache.session(SCRIPT_ID, path) as session:
+        while session.send.next_closed() is not None:
+            pass
+        # Handed out but not yet locked.
+        assert cache.evict() == []
+        with cache.session(SCRIPT_ID, path) as again:
+            assert again is session
+        assert cache.evict() == []
+    assert cache.evict() == [SCRIPT_ID]
+
+
 def test_touch_and_end_ignore_unknown_sessions(tmp_path: Path) -> None:
     cache, _ = _cache(tmp_path)
     cache.touch_hook("nope")
@@ -178,9 +193,14 @@ EXACT_NAME = f"rollout-2026-09-30T15-20-30-{SUB}.jsonl"
 SUFFIXED_NAME = f"rollout-2026-09-30T15-27-32-{SUB}_01a0f392-636d-76a3-bf28-01724377e2b4.jsonl"
 
 
-def _touch(path: Path, mtime: float) -> Path:
+def _touch(path: Path, mtime: float, *, meta_id: str = SUB) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"")
+    meta = {
+        "timestamp": "2026-09-30T18:27:32.333Z",
+        "type": "session_meta",
+        "payload": {"id": meta_id},
+    }
+    path.write_text(json.dumps(meta) + "\n")
     os.utime(path, (mtime, mtime))
     return path
 
@@ -205,6 +225,8 @@ def test_locate_picks_the_most_recent_of_several(tmp_path: Path) -> None:
     home = tmp_path / ".codex"
     exact = _touch(home / "archived_sessions" / EXACT_NAME, 1_000)
     suffixed = _touch(home / "archived_sessions" / SUFFIXED_NAME, 2_000)
+    # A newer file under a matching name whose ``session_meta`` is another session.
+    _touch(home / "sessions" / f"rollout-x-{SUB}_decoy.jsonl", 9_000, meta_id="other")
     assert locate(SUB, None, home) == suffixed
     os.utime(exact, (3_000, 3_000))
     assert locate(SUB, None, home) == exact
@@ -214,3 +236,16 @@ def test_locate_picks_the_most_recent_of_several(tmp_path: Path) -> None:
 def test_locate_ignores_other_names(tmp_path: Path, name: str) -> None:
     _touch(tmp_path / ".codex" / "sessions" / name, 1)
     assert locate(SUB, None, tmp_path / ".codex") is None
+
+
+def test_locate_skips_unreadable_candidates(tmp_path: Path) -> None:
+    home = tmp_path / ".codex"
+    good = _touch(home / "sessions" / EXACT_NAME, 1)
+    bad = home / "sessions" / SUFFIXED_NAME
+    bad.write_bytes(b"not json\n")
+    os.utime(bad, (2, 2))
+    empty = home / "archived_sessions" / EXACT_NAME
+    empty.parent.mkdir(parents=True)
+    empty.write_bytes(b"")
+    os.utime(empty, (3, 3))
+    assert locate(SUB, None, home) == good

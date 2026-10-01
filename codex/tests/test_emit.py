@@ -25,7 +25,7 @@ ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 SESSIONS = {
     "script": "01a0f397-f16e-7d83-87e7-6701f1b384c7",
     "function": "01a0f44f-53e8-7283-b1e5-b74b1da1b89d",
-    "interrupt": "01a0f392-6406-7d82-8234-af07c8203a7c",
+    "interrupt": "01a0f38b-f3a4-7c70-95e2-420a7fcbcc03",
     "compaction": "01a0f553-7026-70e1-ae0c-d833daddaa9e",
 }
 ENTRY = AIAccessedFile(name="/f", provenance="tool_result")

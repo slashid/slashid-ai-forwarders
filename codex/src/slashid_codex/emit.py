@@ -128,10 +128,10 @@ class Collector:
     async def collect(self, trigger: Trigger) -> None:
         path = locate(trigger.session_id, trigger.transcript_path, self._config.codex_home)
         if path is not None:
-            session = self._cache.get(trigger.session_id, path)
-            with session.lock:
-                session.refresh()
-            await self.process(session)
+            with self._cache.session(trigger.session_id, path) as session:
+                with session.lock:
+                    session.refresh()
+                await self.process(session)
         if trigger.ended:
             self._cache.end(trigger.session_id)
         self._cache.evict()
