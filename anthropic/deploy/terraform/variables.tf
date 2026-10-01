@@ -17,7 +17,7 @@ variable "slashid_endpoint" {
 }
 
 variable "slashid_push_token" {
-  description = "Push token of the SlashID ``anthropic`` connection. Sensitive — stored in Secret Manager. One deployment shares one token by construction; splitting the hook and the readers across deployments loses the join, and splitting them across connections double-counts every invocation both halves saw."
+  description = "Push token of the SlashID ``anthropic`` connection. Sensitive — stored in Secret Manager. One deployment shares one token by construction; splitting the hook and the readers across deployments loses the join, and splitting them across connections double-counts every invocation both halves saw. Read only when the secret version is created or replaced; later values are ignored."
   type        = string
   sensitive   = true
 }
@@ -34,14 +34,14 @@ variable "release_version" {
 # and with neither it refuses to start.
 
 variable "hook_signing_secret" {
-  description = "whsec_… generated when the Inference hooks endpoint is configured. Comma-join any number to accept them all during a rotation. Empty disables the hook. Sensitive."
+  description = "whsec_… generated when the Inference hooks endpoint is configured. Comma-join any number to accept them all during a rotation. Empty disables the hook. Sensitive. Read only when the secret version is created or replaced; later values are ignored."
   type        = string
   default     = ""
   sensitive   = true
 }
 
 variable "compliance_key" {
-  description = "Compliance Access Key (sk-ant-api01-…) with read:compliance_activities and read:compliance_user_data. Empty disables the readers. Sensitive."
+  description = "Compliance Access Key (sk-ant-api01-…) with read:compliance_activities and read:compliance_user_data. Empty disables the readers. Sensitive. Read only when the secret version is created or replaced; later values are ignored."
   type        = string
   default     = ""
   sensitive   = true
@@ -256,7 +256,7 @@ variable "ghcr_username" {
 }
 
 variable "ghcr_token" {
-  description = "GitHub token (classic, scope read:packages) paired with ghcr_username. Sensitive — stored in Secret Manager for the registry's service agent to read."
+  description = "GitHub token (classic, scope read:packages) paired with ghcr_username. Sensitive — stored in Secret Manager for the registry's service agent to read. Read only when the secret version is created or replaced; later values are ignored."
   type        = string
   default     = ""
   sensitive   = true

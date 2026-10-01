@@ -132,6 +132,23 @@ The defaults leave 3480 s of tick interval (7200 − 3600 − 120), so a
 hook-only deployment cannot run an hourly tick without raising
 `tombstone_ttl_seconds`.
 
+## Secrets are write-once
+
+Each secret version is created with the value of its variable and never
+updated by a later apply, so an apply that passes a different value (or
+a placeholder) leaves the stored secret alone. To rotate one, replace its
+version and pass the new value:
+
+| Secret | Version to replace |
+| --- | --- |
+| `slashid_push_token` | `google_secret_manager_secret_version.push_token` |
+| `hook_signing_secret` | `google_secret_manager_secret_version.signing_secret[0]` |
+| `compliance_key` | `google_secret_manager_secret_version.compliance_key[0]` |
+| `ghcr_token` | `google_secret_manager_secret_version.ghcr_token[0]` |
+
+For a signing-secret rotation, comma-join the old and new `whsec_…` in
+`hook_signing_secret` so both are accepted until the old one is retired.
+
 ## Setting up the hook in claude.ai
 
 The signing secret does not exist until the endpoint is configured, and
@@ -144,8 +161,10 @@ applies:
    configure that URL as the Inference hooks endpoint. It must be
    `https://` on port 443, publicly routable, with a valid public CA
    certificate, no redirects and no reverse tunnels.
-3. Take the generated `whsec_…` and re-apply with
-   `hook_signing_secret` set.
+3. Take the generated `whsec_…` and replace the secret version with it
+   (secrets are write-once, see below):
+   `terraform apply -replace='google_secret_manager_secret_version.signing_secret[0]'`
+   with `hook_signing_secret` set.
 4. Use claude.ai's **Test connection** to confirm the receiver answers.
 5. Then claude.ai's own staged rollout: shadow mode, a rollout
    percentage, role exclusions, and finally enforcement with your choice
