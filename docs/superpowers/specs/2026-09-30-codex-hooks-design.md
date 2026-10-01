@@ -199,7 +199,7 @@ There is no in-process fallback. Client deadlines sit inside the hook timeouts: 
 
 - No handle stays open between calls: on Windows it would stop Codex from moving the file to `archived_sessions/`.
 - A file smaller than `offset`, or with another identity (inode / Windows file index), is rebuilt from byte 0.
-- Eviction: a session is dropped once its outbox is sent if it was loaded by the startup sweep or has received `SessionEnd`; any other session touched by a hook stays until 10 minutes after its last hook and its outbox is sent. A dropped session is rebuilt from byte 0 on next use (a resume after `SessionEnd` included).
+- Eviction: a session is dropped when `outbox_empty and (not session_started or now > last_hook_at + 10 min)`. `session_started` becomes true with any hook for the session and false with its `SessionEnd`; sessions loaded by the startup sweep start false. A dropped session is rebuilt from byte 0 on next use (a resume after `SessionEnd` included).
 
 ### Applying lines
 
