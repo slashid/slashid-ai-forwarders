@@ -38,8 +38,6 @@ class _Block(BaseModel):
 
 
 class _Message(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
     role: Literal["user", "assistant", "tool"]
     content: list[_Block]
 
@@ -88,7 +86,7 @@ def project(messages: Sequence[NormalizedMessage]) -> list[_Message]:
         if not blocks:
             continue
         if out and out[-1].role == message.role:
-            out[-1] = _Message(role=message.role, content=[*out[-1].content, *blocks])
+            out[-1].content.extend(blocks)
         else:
             out.append(_Message(role=message.role, content=blocks))
     return out
