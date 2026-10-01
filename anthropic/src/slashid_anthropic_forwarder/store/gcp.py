@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
-from google.cloud.firestore import AsyncClient
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.transforms import ArrayRemove, ArrayUnion
 
@@ -27,7 +27,7 @@ class FirestorePendingStore:
     def __init__(
         self,
         *,
-        client: AsyncClient,
+        client: FirestoreAsyncClient,
         collection: str,
         join_wait: timedelta,
         retry_backoff: timedelta = timedelta(seconds=60),

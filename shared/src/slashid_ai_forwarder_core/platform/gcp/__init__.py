@@ -10,7 +10,7 @@ import asyncio
 import logging
 from functools import cached_property
 
-from google.cloud.firestore import AsyncClient
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 
 from .. import BlobSink, SchedulerAuth
 from ..checkpoint import CheckpointStore
@@ -43,8 +43,8 @@ class GcpPlatform:
         self._firestore_database = firestore_database
 
     @cached_property
-    def firestore(self) -> AsyncClient:
-        return AsyncClient(project=self._project, database=self._firestore_database)
+    def firestore(self) -> FirestoreAsyncClient:
+        return FirestoreAsyncClient(project=self._project, database=self._firestore_database)
 
     def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore:
         return FirestoreCheckpointStore(

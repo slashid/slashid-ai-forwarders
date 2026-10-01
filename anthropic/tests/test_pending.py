@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
-from google.cloud.firestore import AsyncClient
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from pydantic import BaseModel
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
@@ -243,7 +243,7 @@ async def test_the_flush_pushes_what_claim_returned_not_what_due_returned() -> N
             return await super().claim(address, lease, **kwargs)
 
     store = LateCompleter(
-        client=cast(AsyncClient, FakeFirestore()),
+        client=cast(FirestoreAsyncClient, FakeFirestore()),
         collection="anthropic_pending",
         join_wait=JOIN_WAIT,
     )

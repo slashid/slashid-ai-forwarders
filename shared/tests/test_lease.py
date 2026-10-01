@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
-from google.cloud.firestore import AsyncClient
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
@@ -65,7 +65,9 @@ class _Firestore:
 
 def a_lease(db: _Firestore | None = None) -> tuple[FirestoreTickLease, _Firestore]:
     db = db or _Firestore()
-    return FirestoreTickLease(client=cast(AsyncClient, db), collection="c", document="tick"), db
+    return FirestoreTickLease(
+        client=cast(FirestoreAsyncClient, db), collection="c", document="tick"
+    ), db
 
 
 async def test_one_tick_takes_the_lease_and_the_next_is_turned_away() -> None:

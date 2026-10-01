@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from google.cloud.firestore import AsyncClient
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.events import (
     AIInvocationContent,
     AIInvocationObservedV1,
@@ -37,7 +37,7 @@ def a_store(
     client = FakeFirestore()
     return (
         FirestorePendingStore(
-            client=cast(AsyncClient, client),
+            client=cast(FirestoreAsyncClient, client),
             collection="anthropic_pending",
             join_wait=join_wait,
             tombstone_ttl=tombstone_ttl,
@@ -373,7 +373,7 @@ TICK = timedelta(minutes=10)
 def a_lease(client: FakeFirestore | None = None) -> tuple[FirestoreTickLease, FakeFirestore]:
     fake = client or FakeFirestore()
     return FirestoreTickLease(
-        client=cast(AsyncClient, fake), collection="anthropic_pending", document="tick"
+        client=cast(FirestoreAsyncClient, fake), collection="anthropic_pending", document="tick"
     ), fake
 
 

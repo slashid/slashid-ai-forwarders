@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from google.cloud.firestore import AsyncClient
+from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.platform import TickLease
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
@@ -192,7 +192,9 @@ async def test_a_store_failure_never_reaches_the_verdict(sign: Signer) -> None:
             raise RuntimeError("firestore unreachable")
 
     store = Broken(
-        client=cast(AsyncClient, FakeFirestore()), collection="c", join_wait=timedelta(hours=1)
+        client=cast(FirestoreAsyncClient, FakeFirestore()),
+        collection="c",
+        join_wait=timedelta(hours=1),
     )
     body = json.dumps(TOOL_FRAME).encode()
     async with _client(_config(), store=store) as c:
@@ -211,7 +213,9 @@ async def test_the_record_is_written_after_the_response_is_sent(sign: Signer) ->
             return await super().upsert(*args, **kwargs)
 
     store = Noted(
-        client=cast(AsyncClient, FakeFirestore()), collection="c", join_wait=timedelta(hours=1)
+        client=cast(FirestoreAsyncClient, FakeFirestore()),
+        collection="c",
+        join_wait=timedelta(hours=1),
     )
     body = json.dumps(TOOL_FRAME).encode()
     headers = sign(body, "msg_1")
@@ -304,7 +308,7 @@ async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
     lease = FirestoreTickLease(
-        client=cast(AsyncClient, fake(store)), collection="anthropic_pending"
+        client=cast(FirestoreAsyncClient, fake(store)), collection="anthropic_pending"
     )
     assert await lease.take(TICK_LEASE, owner="the-tick-already-running") is True
     sink = Sink()
@@ -318,7 +322,7 @@ async def test_a_tick_releases_the_lease_so_the_next_one_runs() -> None:
     store = a_store(join_wait=timedelta(seconds=-1))
     await seed(store)
     lease = FirestoreTickLease(
-        client=cast(AsyncClient, fake(store)), collection="anthropic_pending"
+        client=cast(FirestoreAsyncClient, fake(store)), collection="anthropic_pending"
     )
     sink = Sink()
     async with _client(_config(), store=store, sink=sink, lease=lease) as c:
