@@ -1,0 +1,10 @@
+{
+  "session_id": "01a0f397-f16e-7d83-87e7-6701f1b384c7",
+  "turn_id": "01a0f397-f1ce-7640-a04b-370d7af13c6f",
+  "transcript_path": "/home/user/.codex/sessions/2026/09/30/rollout-2026-09-30T15-33-36-01a0f397-f16e-7d83-87e7-6701f1b384c7.jsonl",
+  "cwd": "/home/user/work",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-6-astra",
+  "permission_mode": "bypassPermissions",
+  "prompt": "Run 'cat note.txt' in the shell, then reply with its contents."
+}

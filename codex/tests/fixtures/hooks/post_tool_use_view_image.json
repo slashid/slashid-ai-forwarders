@@ -1,0 +1,22 @@
+{
+  "session_id": "01a0f44f-53e8-7283-b1e5-b74b1da1b89d",
+  "turn_id": "01a0f44f-d640-7551-b418-dfe8801990bf",
+  "transcript_path": "/home/user/.codex/sessions/2026/09/30/rollout-2026-09-30T18-53-54-01a0f44f-53e8-7283-b1e5-b74b1da1b89d.jsonl",
+  "cwd": "/home/user/project",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5.5",
+  "permission_mode": "default",
+  "tool_name": "view_image",
+  "tool_input": {
+    "path": "/home/user/Documentos/image 1.png",
+    "detail": "high"
+  },
+  "tool_response": [
+    {
+      "type": "input_image",
+      "image_url": "data:application/octet-stream;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "detail": "high"
+    }
+  ],
+  "tool_use_id": "call_rf24Kdk5IOcyNLeC1kBcXjhi"
+}
