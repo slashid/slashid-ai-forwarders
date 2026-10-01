@@ -22,6 +22,7 @@ from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 from slashid_vertex_forwarder.config import Config
 from slashid_vertex_forwarder.event_source import BqEventSource
 from slashid_vertex_forwarder.main import _sources, create_app
+from tests.test_bq_event_source import _row, _source
 from tests.test_handler import _config, _event
 
 
@@ -133,6 +134,23 @@ async def test_one_source_failing_does_not_stop_the_next() -> None:
     assert response.status_code == 200
     assert healthy.fetch_count == 1 and healthy.commits == [Checkpoint(None, "7")]
     assert broken.commits == []
+
+
+async def test_a_bigquery_failure_through_tick_commits_nothing_and_the_next_source_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bq, client, store = _source(rows=[_row()])
+
+    def _explode(query: str, job_config: Any) -> Any:
+        raise RuntimeError("bigquery is down")
+
+    monkeypatch.setattr(client, "query", _explode)
+    healthy = _FakeSource([_event()])
+    app = create_app(_config(), sources=[bq, healthy], tick_auth=_accept)
+    response = await _post(app)
+    assert response.status_code == 200
+    assert store.saves == []
+    assert healthy.fetch_count == 1 and healthy.commits == [Checkpoint(None, "7")]
 
 
 # --- source wiring -----------------------------------------------------------

@@ -59,7 +59,7 @@ variable "observed_models" {
 
     Under the hood the module enables Vertex request-response logging
     (setPublisherModelConfig) on each model and routes the logs into a
-    per-model BigQuery table the polling function reads from. The
+    per-model BigQuery table the polling service reads from. The
     "observed" framing keeps the caller decoupled from that plumbing —
     a future push-based delivery could swap in without renaming.
 

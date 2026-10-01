@@ -50,7 +50,7 @@ locals {
     for r in var.regions : r => r == "global" ? "aiplatform.googleapis.com" : "${r}-aiplatform.googleapis.com"
   }
 
-  # BQ dataset IDs can't contain ``-``; the CF applies the same
+  # BQ dataset IDs can't contain ``-``; the service applies the same
   # transform when deriving dataset names from ``config.gcp_regions``.
   region_slugs = { for r in var.regions : r => replace(r, "-", "_") }
 
