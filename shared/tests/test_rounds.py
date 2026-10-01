@@ -14,8 +14,8 @@ from slashid_ai_forwarder_core.normalize.normalized.types import (
 )
 from slashid_ai_forwarder_core.rounds import (
     CONVERSATION_START,
+    Round,
     project,
-    round_hash,
     round_links,
 )
 
@@ -118,8 +118,8 @@ def test_project_coalesces_attachments_to_a_bare_marker() -> None:
 
 
 def test_round_hash_is_stable_and_ignores_system_and_reasoning() -> None:
-    plain = round_hash([_user("a")], [_assistant("b")])
-    noisy = round_hash(
+    plain = Round([_user("a")], [_assistant("b")]).digest()
+    noisy = Round(
         [_text("system", "s"), _user("a")],
         [
             NormalizedMessage(
@@ -130,15 +130,15 @@ def test_round_hash_is_stable_and_ignores_system_and_reasoning() -> None:
                 ],
             )
         ],
-    )
+    ).digest()
     assert plain is not None
     assert plain == noisy
-    assert plain != round_hash([_user("a")], [_assistant("c")])
+    assert plain != Round([_user("a")], [_assistant("c")]).digest()
 
 
 def test_round_hash_needs_an_answer() -> None:
-    assert round_hash([_user("a")], []) is None
-    assert round_hash([_user("a")], [NormalizedMessage(role="assistant", content=[])]) is None
+    assert Round([_user("a")], []).digest() is None
+    assert Round([_user("a")], [NormalizedMessage(role="assistant", content=[])]).digest() is None
 
 
 def _history(rounds: int) -> list[NormalizedMessage]:
@@ -150,7 +150,7 @@ def _history(rounds: int) -> list[NormalizedMessage]:
 
 def test_first_event_lists_its_own_round_and_the_guard() -> None:
     own, recent = round_links([_user("u0")], _assistant("a0"), depth=10)
-    assert own == round_hash([_user("u0")], [_assistant("a0")])
+    assert own == Round([_user("u0")], [_assistant("a0")]).digest()
     assert recent == [own, CONVERSATION_START]
 
 
@@ -158,8 +158,8 @@ def test_links_are_newest_first_and_end_at_the_guard_when_short() -> None:
     own, recent = round_links([*_history(2), _user("u2")], _assistant("a2"), depth=10)
     assert recent[0] == own
     assert recent[1:] == [
-        round_hash([_user("u1")], [_assistant("a1")]),
-        round_hash([_user("u0")], [_assistant("a0")]),
+        Round([_user("u1")], [_assistant("a1")]).digest(),
+        Round([_user("u0")], [_assistant("a0")]).digest(),
         CONVERSATION_START,
     ]
 
@@ -181,8 +181,8 @@ def test_no_answer_lists_the_complete_rounds_and_no_own_hash() -> None:
     own, recent = round_links([*_history(2), _user("u2")], None, depth=10)
     assert own is None
     assert recent == [
-        round_hash([_user("u1")], [_assistant("a1")]),
-        round_hash([_user("u0")], [_assistant("a0")]),
+        Round([_user("u1")], [_assistant("a1")]).digest(),
+        Round([_user("u0")], [_assistant("a0")]).digest(),
         CONVERSATION_START,
     ]
 
@@ -215,8 +215,9 @@ def test_a_response_run_hashes_alike_merged_or_split() -> None:
             NormalizedContent(kind="text", text="y"),
         ],
     )
-    assert round_hash([_user("a")], [one]) == round_hash(
-        [_user("a")], [_assistant("x"), _assistant("y")]
+    assert (
+        Round([_user("a")], [one]).digest()
+        == Round([_user("a")], [_assistant("x"), _assistant("y")]).digest()
     )
 
 
@@ -282,7 +283,7 @@ def test_depth_bounds_the_list() -> None:
 def test_a_history_ending_on_an_assistant_message_merges_with_the_answer() -> None:
     own, recent = round_links([_user("a"), _assistant("b")], _assistant("c"), depth=10)
     assert recent == [own, CONVERSATION_START]
-    assert own == round_hash([_user("a")], [_assistant("b"), _assistant("c")])
+    assert own == Round([_user("a")], [_assistant("b"), _assistant("c")]).digest()
 
 
 def test_a_response_run_split_across_history_and_answer_hashes_like_one_message() -> None:

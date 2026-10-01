@@ -47,6 +47,17 @@ class Round:
     consumed: list[NormalizedMessage]
     answer: list[NormalizedMessage]
 
+    def digest(self) -> str | None:
+        """sha256 of the projected round; ``None`` when there is no answer to hash."""
+        projected_answer = project(self.answer)
+        if not projected_answer:
+            return None
+        # An answer is assistant-only and ``consumed`` never is, so nothing merges across them.
+        projected = [*project(self.consumed), *projected_answer]
+        body = [m.model_dump(mode="json", exclude_none=True) for m in projected]
+        serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(serialized).hexdigest()
+
 
 def _project_block(block: NormalizedContent) -> _Block | None:
     match block.kind:
@@ -105,22 +116,6 @@ def _closed_rounds(messages: Sequence[NormalizedMessage], end: int) -> Iterator[
         yield Round(list(messages[end:consumed_end]), list(messages[consumed_end:answer_end]))
 
 
-def round_hash(
-    consumed: Sequence[NormalizedMessage], answer: Sequence[NormalizedMessage]
-) -> str | None:
-    """sha256 of the projected round; ``None`` when there is no answer to hash."""
-    projected_answer = project(answer)
-    if not projected_answer:
-        return None
-    # An answer is assistant-only and ``consumed`` never is, so nothing merges across them.
-    body = [
-        m.model_dump(mode="json", exclude_none=True)
-        for m in [*project(consumed), *projected_answer]
-    ]
-    serialized = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(serialized).hexdigest()
-
-
 def round_links(
     history: Sequence[NormalizedMessage],
     answer: NormalizedMessage | None,
@@ -151,7 +146,7 @@ def round_links(
     hashes: list[str] = []
     reaches_start = True
     for r in chain(newest, older):
-        digest = round_hash(r.consumed, r.answer)
+        digest = r.digest()
         if digest is None:
             continue
         if len(hashes) == depth:
