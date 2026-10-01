@@ -14,7 +14,7 @@ MDM, as administrator:
 
 Before an upgrade, stop the daemons (`<tool python> -m slashid_codex daemon` processes under the tool directory; Windows cannot replace a running `.exe`), never hook clients: a killed hook lets its action through. A daemon whose version, config or token differs from the hook's is replaced on the next hook.
 
-Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `daemon.log` is the daemon's rotated log; `daemon.stderr` holds only output that bypasses it, such as an interpreter crash. `--state-dir` and `--codex-home` exist for tests.
+Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `spawn-failed`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `daemon.log` is the daemon's rotated log; `daemon.stderr` holds only output that bypasses it, such as an interpreter crash. `--state-dir` and `--codex-home` exist for tests.
 
 ## Config
 
@@ -31,18 +31,21 @@ Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `cr
 | `codex_home` | `~/.codex` | does not read `CODEX_HOME` |
 | `codex_bin` | | for `codex mcp list`; else `codex` on `PATH`, else the desktop bundle |
 | `daemon_idle_seconds` | 600 | |
+| `request_timeout_seconds` | 10.0 | per SlashID request |
+| `max_retries` | 3 | per push request, on transient failures |
 | `dry_run` | false | dev only, below |
 
 Environment variables are never read.
 
 ## Development only
 
-`dry_run = true`: preflight sleeps 1 s, logs the invocation to `daemon.log` and allows; pushes sleep 1 s, log the events (raw content included when `include_raw_content` is on) and succeed. No SlashID credentials are needed. Not for production.
+`dry_run = true`: preflight sleeps 1 s, logs the invocation to `daemon.log` and allows; pushes sleep 1 s, log the events (raw content included when `include_raw_content` is on) and succeed. No real SlashID token is needed, but `push_token_file` must still name a file of 32+ characters. Not for production.
 
 ## Notes
 
 - Preflight sends file names and hashes (attachments and the file a tool call reads); codex-client sent none. No prompt text, tool arguments, file content or `cwd`.
 - A time-window rule on `invoke_model` also blocks tool calls of a turn already running when the window closes.
+- Collection runs on one worker, and each failed batch is retried, so an unreachable SlashID can hold it for minutes.
 - The `PreToolUse` matcher `.*` costs one preflight round-trip per tool call; narrowing it gives up the read checks.
 
 ## Known limitations

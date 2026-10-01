@@ -141,10 +141,10 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 
 `state_dir = platformdirs.user_data_dir("slashid-ai-forwarder-codex", "slashid")`: `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex`, `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. Per user, never set by the MDM config (a shared path would mix users' daemons and databases); `--state-dir` exists for tests.
 
-- POSIX: directory `0700`, reset on every run; files created `0600` via `os.open(O_CREAT | O_EXCL, 0o600)` and renamed into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
+- POSIX: directory `0700`, reset on every run; files created `0600`, rotated logs included; `daemon.json` and `created_at` are written aside and renamed or linked into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
 - `data.sqlite`: `LocalPlatform`'s database (watermarks), shared with the file records.
 - `created_at`: when the state was first created.
-- `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three files), `daemon.stderr` (the daemon's output: crash tracebacks only).
+- `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three backups), `daemon.stderr` (the daemon's output: crash tracebacks only).
 
 ### Discovery
 
@@ -222,7 +222,7 @@ These rules fold the log into a cursor's state.
 - `response_item`s append to `pending`. Model-produced items written since the previous `token_usage_record` (assistant `message`, `reasoning`, `*_call`) are the current response's output; everything before is its input.
 - **Shell calls are `Bash`.** The hook calls the shell tool `Bash`; the model calls `exec_command` (function mode) or `exec` (script mode). Each call is mapped as it is read, from its own line; outputs follow their call and `call_id`s are kept.
   - `function_call("exec_command", {cmd, workdir, …})` → `Bash` with `{command: cmd, workdir}`. Name, id and command equal the hook's.
-  - `custom_tool_call("exec", <js>)` whose whole script, after an optional `// @exec:` first line, is one tool call, bare or wrapped in `text(await …)` (`text(await tools.exec_command({cmd:"cat note.txt",max_output_tokens:10000}));`): `tools.xyz(args)` is the same tool as function mode's `xyz`, so it is unwrapped into that call: `tools.exec_command({cmd, …})` → `Bash` with `{command: cmd, workdir}`, `tools.view_image({path})` → `view_image`, `tools.mcp__s__t(args)` → `mcp__s__t`. The argument is a string or an object literal, parsed as JSON after quoting bare keys; if that fails, it does not match.
+  - `custom_tool_call("exec", <js>)` whose whole script, after an optional `// @exec:` first line, is one tool call, bare, wrapped in `text(await …)` (`text(await tools.exec_command({cmd:"cat note.txt",max_output_tokens:10000}));`) or in `view_image`'s idiom (`const r = await tools.view_image({path}); image(r.image_url);`): `tools.xyz(args)` is the same tool as function mode's `xyz`, so it is unwrapped into that call: `tools.exec_command({cmd, …})` → `Bash` with `{command: cmd, workdir}`, `tools.view_image({path})` → `view_image`, `tools.mcp__s__t(args)` → `mcp__s__t`. The argument is a string or an object literal, parsed as JSON after quoting bare keys; if that fails, it does not match.
   - Any other script stays `exec` with its JavaScript as input.
   - All `custom_tool_call_output` items with the call's `call_id` belong to it (`notify()` adds extra ones).
   - In script mode the hook's `tool_use_id` (`exec-<uuid>`) is not linked to the call's `call_id`, a documented limitation.
@@ -323,7 +323,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 - The `NormalizedInvocation` carries the whole history; the builder slices `input` (`input_scope`, default `round`) and computes `round_hash` and `recent_round_hashes` (`round_link_depth`, default 10). `used_tools` and `accessed_files` come from the consumed round.
 - The rollout has no tool definitions, so, as the Anthropic hook does, collection fills `tools_declared` and `tool_servers` from the names of every call in the history and in the response's own output (`build_tools_declared((name, None, None) …)`), so a first call to a tool still appears in `requested_tool_uses`; name-only ids equal preflight's `resolve_tool` ids. `available_tools` is the tools used so far.
 - `available_tool_servers` also lists configured MCP servers, best effort: `codex mcp list --json` (5 s timeout, 1 MiB of output, `CODEX_HOME` set to `codex_home`), at most every 10 minutes, each `enabled` server as `AIToolServer(name, kind="mcp")` with `build_tools_declared`'s id recipe. Only `name` and `enabled` are read; `command`, `args`, `env` are never sent. Binary: `config.codex_bin`, else `codex` on `PATH`, else the desktop bundle (`/usr/lib/chatgpt/resources/codex` on Linux; others found in the plan). Any failure omits the list.
-- `include_raw_content` puts `input` (the round, or the history in `session` scope) in `redacted_text`, middle-truncated at `max_content_size`; hashes are always over the untruncated body. File content is never sent.
+- `include_raw_content` puts `input` (the round, or the history in `session` scope) in `redacted_text`, middle-truncated at `max_content_size`; hashes are always over the untruncated body. File content goes only as tool output the model saw, per `include_raw_content`.
 
 ## Shared changes
 
@@ -341,8 +341,8 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 - `OpenAIIdentityDetails(kind="openai", service_account_id, user_id, api_key_id, api_key_hash)`, at least one identifier, in the `IdentityDetails` union; mirrors the server's struct.
 - `EventEnvelope.history_truncated: bool = False`: when set, `round_links` ends `recent_round_hashes` with `"..."` even if the messages it sees form a first round. Codex sets it for a fork whose parent rollout is missing; the other sources never do.
-- `requested_tool_uses: list[AIToolUse] | None`: calls the model asked for in this invocation's output, not yet run, carrying `tool_id` and `tool_use_id`. `build_event_from_normalized` fills it for every source from the output's `tool_use` blocks, joined to `tools_declared` like `_used_tools` (unidentifiable calls skipped); Codex's `PreToolUse` sets it directly. A round's request and its consumption share `tool_use_id` across two events.
-- `AIToolUse.is_error: bool | None = None`: a call that has not run has no outcome. `_used_tools` keeps setting it. The `AIToolUse` docstring ("only emitted once the tool has actually run") is updated for `requested_tool_uses`.
+- `requested_tool_uses: list[AIToolUse] | None`: calls the model asked for in this invocation's output, not yet run, carrying `tool_id` and `tool_use_id`. `build_event_from_normalized` fills it for every source from the output's `tool_use` blocks, joined to `tools_declared` like `used_tools_of` (unidentifiable calls skipped); Codex's `PreToolUse` sets it directly. A round's request and its consumption share `tool_use_id` across two events.
+- `AIToolUse.is_error: bool | None = None`: a call that has not run has no outcome. `used_tools_of` keeps setting it. The `AIToolUse` docstring ("only emitted once the tool has actually run") is updated for `requested_tool_uses`.
 
 **Wire schema** (ng-evangelion `spec/ai-schemas.yaml`, `aievent`, `aiauthorization`), a separate PR that cannot wait for the batched sync:
 
@@ -397,7 +397,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 ## Deployment
 
-**Install.** MDM installs uv and runs `uv tool install <wheel>` as administrator with `UV_TOOL_DIR=/opt/slashid/codex/tools`, `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools`, `…\bin`), so users cannot modify it; it also installs the config and token file. Before an upgrade it stops `slashid-codex daemon` processes under the tool directory (Windows cannot replace a running `.exe`), never hook clients, since a killed hook is a nonblocking failure that lets its action through. The next hook starts the new version.
+**Install.** MDM installs uv and runs `uv tool install <wheel>` as administrator with `UV_TOOL_DIR=/opt/slashid/codex/tools`, `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools`, `…\bin`), so users cannot modify it; it also installs the config and token file. Before an upgrade it stops `<python> -m slashid_codex daemon` processes under the tool directory (Windows cannot replace a running `.exe`), never hook clients, since a killed hook is a nonblocking failure that lets its action through. The next hook starts the new version.
 
 **Managed requirements.**
 
@@ -452,7 +452,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 - **The daemon's port is reachable by every local user and by browsers.** The secret in a user-only file, the `Host` check and the `Origin` rejection stop them driving it; the `/ping` HMAC stops a process squatting a dead daemon's port from receiving the secret or payloads. The daemon holds nothing the user's own hook could not read.
 - Config and token file are MDM-owned and read-only to users; the token never appears in arguments.
 - Deny reasons are untrusted server text, shown verbatim and never interpreted.
-- Events carry file names and hashes always, content per `include_raw_content` (off by default), file content never.
+- Events carry file names and hashes always; content per `include_raw_content` (off by default), file content only as tool output the model saw.
 
 ## Failure handling
 
@@ -470,6 +470,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 | File missing, unreadable or over a cap | Entry without hashes, counted unchecked by the server |
 | Unparseable rollout line | Skipped, counted in `daemon.log`; an unfinished last line waits |
 | Push fails | Watermark kept; daemon retries with backoff, then the next sweep |
+| Response cannot be built | Dropped if another in its batch builds, or after three failed attempts across triggers; until then the batch fails without backoff |
 | Rollout moved or deleted | Found by `session_id` under `sessions/` or `archived_sessions/`; if gone, nothing is sent and the watermark expires after 7 days |
 | Push repeated | Dropped by the server's `request_id` dedup |
 | Fork parent's rollout not found | The fork's own lines are applied alone, with `history_truncated` set |
