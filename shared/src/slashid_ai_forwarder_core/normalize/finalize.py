@@ -34,12 +34,12 @@ def finalize(
     instance (mutation, not clone) for chainable use.
 
     Combines vendor-extracted files with tool-result-derived files and
-    dedupes the union in a single pass (see ``_dedupe_by_name_hash`` for
+    dedupes the union in a single pass (see ``dedupe_by_name_hash`` for
     the multi-algorithm key rule). Vendor entries come first so they
     win ties.
     """
     tool_files = extract_tool_result_files(normalized.input.messages, config=config)
-    normalized.accessed_files = _dedupe_by_name_hash(normalized.accessed_files + tool_files)
+    normalized.accessed_files = dedupe_by_name_hash(normalized.accessed_files + tool_files)
     return normalized
 
 
@@ -57,7 +57,7 @@ def _hash_triples(f: AIAccessedFile) -> set[tuple[str | None, str | None, str | 
     return {(f.name, alg, value) for alg, value in f.content_hashes.items()}
 
 
-def _dedupe_by_name_hash(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
+def dedupe_by_name_hash(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
     """First-seen-wins dedup. Two entries collide iff they share ANY
     ``(name, alg, value)`` triple — an md5-only entry from one
     extractor matches a sha256+md5 entry from another via the shared
