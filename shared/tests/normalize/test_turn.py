@@ -1,7 +1,7 @@
 """Tests for the fresh-turn helper in ``normalize/turn.py``.
 
 Only the boundary rule is exercised here — the three call sites
-(``events._used_tools``, ``tool_results.extract_tool_result_files``,
+(``events.used_tools_of``, ``tool_results.extract_tool_result_files``,
 ``converse.attachments.extract_attachments``) have their own end-to-end
 coverage confirming they still filter correctly after migrating to this
 helper.

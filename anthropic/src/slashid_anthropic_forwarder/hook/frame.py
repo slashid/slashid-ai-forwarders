@@ -85,7 +85,7 @@ class Split:
 def split_transcript(frame: PromptFrame) -> Split:
     """Partition a frame's transcript. The scan is ``after_last_assistant``
     rather than a local copy: the same rule decides attribution inside
-    ``extract_tool_result_files`` and ``events.py::_used_tools``, and a
+    ``extract_tool_result_files`` and ``events.py::used_tools_of``, and a
     second implementation that drifted would re-attribute files."""
     messages = frame.messages
     fresh = list(after_last_assistant(messages))

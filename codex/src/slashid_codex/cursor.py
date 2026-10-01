@@ -210,6 +210,12 @@ class RolloutCursor:
                 return item
         return None
 
+    def items_for(self, call_id: str) -> tuple[CodexItem, ...]:
+        """``item_completed`` items joined to ``call_id`` that no closed
+        response has consumed yet."""
+        own = self._items.get(call_id)
+        return (*(() if own is None else (own,)), *self._script_items.get(call_id, ()))
+
     # ----------------------------------------------------------------------
     # Folding
     # ----------------------------------------------------------------------

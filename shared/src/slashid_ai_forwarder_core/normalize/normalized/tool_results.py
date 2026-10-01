@@ -12,7 +12,7 @@ Skips pairs where ``tool_is_error`` is True — on error paths the
 tool_result content is an error-message body, not file bytes, and
 hashing it would attribute the error string to the file path. The
 tool-failure signal is preserved on the corresponding ``used_tools``
-entry (see ``events.py::_used_tools``).
+entry (see ``events.py::used_tools_of``).
 
 Only fresh-region tool_results count (after the last assistant message);
 earlier tool_results were already reported on prior invocation events.

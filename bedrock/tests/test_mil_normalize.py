@@ -211,7 +211,7 @@ async def test_anthropic_nonstreaming_response_rewritten() -> None:
     """Non-streaming InvokeModel-against-Anthropic response reaches
     canonical NormalizedInvocation shape.
 
-    Regression: before the fix, `_used_tools` (which reads from
+    Regression: before the fix, `used_tools_of` (which reads from
     `output.outputBodyJson.output.message.content[].toolUse`) returned empty
     for these records because the body sat at `outputBodyJson.content[]`
     with an Anthropic-native shape. Post-Chunk-8 we assert on the
