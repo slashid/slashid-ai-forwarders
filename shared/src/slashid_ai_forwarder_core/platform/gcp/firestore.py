@@ -7,12 +7,11 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from google.cloud.firestore import AsyncClient
 
 from ..checkpoint import Checkpoint
-
-if TYPE_CHECKING:
-    from google.cloud.firestore import AsyncClient
 
 log = logging.getLogger(__name__)
 

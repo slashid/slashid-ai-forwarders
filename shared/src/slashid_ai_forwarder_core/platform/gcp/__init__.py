@@ -1,7 +1,7 @@
 """Google Cloud: Firestore, Cloud Storage and Cloud Scheduler's OIDC token.
 
-Needs the ``[gcp]`` extra. Every SDK is imported on first use, so a
-forwarder that never builds a ``GcpPlatform`` never loads them.
+Needs the ``[gcp]`` extra to import. Firestore loads with this module;
+Cloud Storage and the auth libraries load on first use.
 """
 
 from __future__ import annotations
@@ -9,15 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from functools import cached_property
-from typing import TYPE_CHECKING
+
+from google.cloud.firestore import AsyncClient
 
 from .. import BlobSink, SchedulerAuth
 from ..checkpoint import CheckpointStore
 from ..lease import TickLease
 from .firestore import FirestoreCheckpointStore, FirestoreTickLease
-
-if TYPE_CHECKING:
-    from google.cloud.firestore import AsyncClient
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +44,7 @@ class GcpPlatform:
 
     @cached_property
     def firestore(self) -> AsyncClient:
-        from google.cloud import firestore
-
-        return firestore.AsyncClient(project=self._project, database=self._firestore_database)
+        return AsyncClient(project=self._project, database=self._firestore_database)
 
     def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore:
         return FirestoreCheckpointStore(
