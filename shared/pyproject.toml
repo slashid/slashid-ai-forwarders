@@ -30,9 +30,15 @@ gcs = ["gcloud-aio-storage>=8.0"]
 # Scheduler's OIDC token. Pulled in by ``slashid-ai-forwarder-core[gcp]``.
 gcp = ["google-cloud-firestore>=2.16", "google-cloud-storage>=2.18", "google-auth>=2.30"]
 
+# ``platform.local``: checkpoints, a tick lease and blobs in a SQLite file or
+# in memory, for development and tests. Pulled in by
+# ``slashid-ai-forwarder-core[local]``.
+local = ["aiosqlite>=0.20"]
+
 [dependency-groups]
 dev = [
     "pyyaml>=6.0",
+    "aiosqlite>=0.20",
 ]
 
 [build-system]

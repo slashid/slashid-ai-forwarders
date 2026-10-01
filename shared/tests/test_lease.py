@@ -3,68 +3,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import cast
 
 import pytest
-from google.api_core.exceptions import AlreadyExists, FailedPrecondition, NotFound
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 
+from fake_firestore import FakeFirestore
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 NOW = datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
 TICK = timedelta(minutes=10)
 
 
-class _Option:
-    def __init__(self, last_update_time: int) -> None:
-        self.last_update_time = last_update_time
-
-
-class _Doc:
-    """``update`` honours the precondition, which is the whole of the lease."""
-
-    def __init__(self, db: _Firestore, key: str) -> None:
-        self._db, self._key = db, key
-
-    async def get(self) -> Any:
-        held = self._db.docs.get(self._key)
-        data, version = held if held else (None, None)
-        fields = {"exists": held is not None, "update_time": version, "to_dict": lambda _: data}
-        return type("Snap", (), fields)()
-
-    async def create(self, data: dict[str, Any]) -> None:
-        if self._key in self._db.docs:
-            raise AlreadyExists(self._key)
-        self._db.write(self._key, dict(data))
-
-    async def update(self, data: dict[str, Any], option: _Option) -> None:
-        held = self._db.docs.get(self._key)
-        if held is None:
-            raise NotFound(self._key)
-        if option.last_update_time != held[1]:
-            raise FailedPrecondition(self._key)
-        self._db.write(self._key, {**held[0], **data})
-
-
-class _Firestore:
-    def __init__(self) -> None:
-        self.docs: dict[str, tuple[dict[str, Any], int]] = {}
-        self._clock = 0
-
-    def write(self, key: str, data: dict[str, Any]) -> None:
-        self._clock += 1
-        self.docs[key] = (data, self._clock)
-
-    def collection(self, name: str) -> Any:
-        return type("Col", (), {"document": lambda _, doc: _Doc(self, f"{name}/{doc}")})()
-
-    @staticmethod
-    def write_option(*, last_update_time: int) -> _Option:
-        return _Option(last_update_time)
-
-
-def a_lease(db: _Firestore | None = None) -> tuple[FirestoreTickLease, _Firestore]:
-    db = db or _Firestore()
+def a_lease(db: FakeFirestore | None = None) -> tuple[FirestoreTickLease, FakeFirestore]:
+    db = db or FakeFirestore()
     return FirestoreTickLease(
         client=cast(FirestoreAsyncClient, db), collection="c", document="tick"
     ), db

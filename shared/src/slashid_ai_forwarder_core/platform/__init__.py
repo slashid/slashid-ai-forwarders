@@ -61,7 +61,10 @@ class Platform(Protocol):
 # Name -> "module:factory". A factory is an async context manager that yields
 # the platform and releases whatever it holds when the block ends. Imported
 # only when asked for, so resolving one platform never loads another's SDK.
-_PLATFORMS = {"gcp": "slashid_ai_forwarder_core.platform.gcp:create_gcp_platform"}
+_PLATFORMS = {
+    "gcp": "slashid_ai_forwarder_core.platform.gcp:create_gcp_platform",
+    "local": "slashid_ai_forwarder_core.platform.local:create_local_platform",
+}
 
 
 def get(name: str, **options: Any) -> AbstractAsyncContextManager[Platform]:
