@@ -145,7 +145,7 @@ async def open_backends(config: Config) -> AsyncIterator[Backends]:
 def create_app(
     config: Config,
     *,
-    sources: Sequence[EventSource] = (),
+    sources: Sequence[EventSource] | None = None,
     lease: TickLease | None = None,
     tick_auth: SchedulerAuth | None = None,
     backends: Callable[[], contextlib.AbstractAsyncContextManager[Backends]] | None = None,
@@ -153,6 +153,8 @@ def create_app(
     """Every stateful piece is injected, or opened at startup by ``backends``
     (which ``app()`` points at the configured platform) and closed at
     shutdown; tests hand in fakes."""
+    if sources is None and backends is None:
+        raise TypeError("create_app needs sources or backends")
     authorize = tick_auth or _refuse
 
     @contextlib.asynccontextmanager
@@ -175,6 +177,8 @@ def create_app(
         if token is None or not await authorize(token):
             log.warning("tick refused: no acceptable scheduler token")
             return Response(status_code=401)
+        if sources is None:
+            return Response(status_code=503)  # backends given, lifespan not run
         guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
         async with guard as held:
             if not held:

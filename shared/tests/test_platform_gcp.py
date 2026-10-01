@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from fake_firestore import FakeFirestore
+from slashid_ai_forwarder_core import platform as platforms
 from slashid_ai_forwarder_core.platform import Checkpoint
 from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 
@@ -36,25 +39,15 @@ async def test_scheduler_auth_without_a_principal_refuses_every_token() -> None:
 
 
 async def test_get_returns_a_context_manager_yielding_the_platform() -> None:
-    from slashid_ai_forwarder_core import platform
-
-    async with platform.get("gcp", project="p", firestore_database="d") as built:
+    async with platforms.get("gcp", project="p", firestore_database="d") as built:
         assert isinstance(built, GcpPlatform)
 
 
 def test_get_requires_the_options_the_factory_takes() -> None:
-    import pytest
-
-    from slashid_ai_forwarder_core import platform
-
     with pytest.raises(TypeError):
-        platform.get("gcp")
+        platforms.get("gcp")
 
 
 def test_get_names_the_known_platforms_for_an_unknown_one() -> None:
-    import pytest
-
-    from slashid_ai_forwarder_core import platform
-
     with pytest.raises(ValueError, match=r"unknown platform 'azure'; known: \['gcp', 'local'\]"):
-        platform.get("azure")
+        platforms.get("azure")

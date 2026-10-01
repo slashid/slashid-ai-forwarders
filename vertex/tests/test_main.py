@@ -18,10 +18,11 @@ from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_vertex_forwarder import handler
+from slashid_vertex_forwarder import main as vertex_main
 from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 from slashid_vertex_forwarder.config import Config
 from slashid_vertex_forwarder.event_source import BqEventSource
-from slashid_vertex_forwarder.main import Backends, _sources, create_app
+from slashid_vertex_forwarder.main import Backends, _sources, create_app, open_backends
 from tests.test_bq_event_source import _row, _source
 from tests.test_handler import _config, _event
 
@@ -177,6 +178,44 @@ async def test_the_platform_is_opened_at_startup_used_by_the_tick_and_closed_at_
     assert events == ["open", "close"]
 
 
+def test_create_app_needs_sources_or_backends() -> None:
+    with pytest.raises(TypeError, match="sources or backends"):
+        create_app(_config())
+
+
+async def test_a_tick_before_the_backends_are_opened_is_unavailable() -> None:
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        yield Backends(sources=[], lease=None, tick_auth=_accept)
+
+    app = create_app(_config(), backends=opened)  # lifespan not run
+    # the default auth refuses first, which is the safe answer too
+    assert (await _post(app)).status_code in (401, 503)
+
+
+async def test_open_backends_opens_the_configured_platform_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_google(monkeypatch)
+    events: list[Any] = []
+
+    @contextlib.asynccontextmanager
+    async def get(name: str, **options: Any) -> AsyncIterator[Any]:
+        events.append(("open", name, options))
+        yield _StubPlatform()
+        events.append("close")
+
+    monkeypatch.setattr(vertex_main.platforms, "get", get)
+    config = _config_for(["us-central1"], [])
+    async with open_backends(config) as backends:
+        assert events == [
+            ("open", "gcp", {"project": "smoke-project", "firestore_database": "slashid-vertex"})
+        ]
+        assert len(backends.sources) == 1
+        assert backends.tick_auth is _accept
+    assert events[-1] == "close"
+
+
 # --- source wiring -----------------------------------------------------------
 
 
@@ -192,6 +231,12 @@ class _StubPlatform:
     def checkpoint_store(self, *, collection: str, document: str) -> Any:
         self.documents.append((collection, document))
         return object()
+
+    def tick_lease(self, *, collection: str, document: str) -> Any:
+        return _FakeLease()
+
+    def scheduler_auth(self, *, principal: str | None, audience: str | None) -> Any:
+        return _accept
 
 
 def _stub_google(monkeypatch: pytest.MonkeyPatch) -> None:

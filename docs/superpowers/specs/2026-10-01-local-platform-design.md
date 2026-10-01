@@ -53,7 +53,7 @@ async def create_local_platform(path: str | Path) -> AsyncIterator[LocalPlatform
 
 `path` is required: a file path, or `":memory:"`. Where a file belongs (a user data directory, a state directory, a temporary one) is the caller's decision, so nothing here reads the environment or imports a directory library. `open_database(path)`:
 
-- for a file, creates the parent directory (`mkdir(parents=True, exist_ok=True, mode=0o700)`; SQLite cannot create it) and sets `journal_mode=WAL` and a busy timeout (SQLite's default is already five seconds, so set it only to name the value); for `:memory:` it does neither;
+- for a file, creates the parent directory (`mkdir(parents=True, exist_ok=True, mode=0o700)`, where the mode applies only to the last component; SQLite cannot create it) and sets `journal_mode=WAL` and a busy timeout (SQLite's default is already five seconds, so set it only to name the value); for `:memory:` it does neither;
 - connects with `isolation_level=None`, so every statement commits by itself and no implicit transaction is ever left open for a later one to trip over;
 - creates the tables (`CREATE TABLE IF NOT EXISTS`).
 
@@ -74,7 +74,7 @@ Times are stored as integer microseconds since the epoch (UTC), converted back w
 
 ### Opening the platform in the services
 
-`platforms.get` is no longer a plain call, and the services cannot `await` inside the synchronous `app()` factory uvicorn runs. Anthropic's `build_backends(config)` and Vertex's `app()` therefore move the open into the app's lifespan: the lifespan does `async with platforms.get(config.platform, …) as platform:`, builds the stores, sources, lease and scheduler auth from it, makes them available to the routes, and yields. `create_app` keeps taking its pieces as arguments, so tests keep injecting fakes; the production path hands it the pieces once the lifespan has built them (through `app.state`, read by the routes), and a construction that gets them up front still works. The routes, the readers and everything below them are unchanged.
+`platforms.get` is no longer a plain call, and the services cannot `await` inside the synchronous `app()` factory uvicorn runs. Anthropic's `build_backends(config)` and Vertex's `app()` therefore move the open into the app's lifespan: the lifespan does `async with platforms.get(config.platform, …) as platform:`, builds the stores, sources, lease and scheduler auth from it, and makes them available to the routes by rebinding the names the routes already read (`nonlocal` in the lifespan), then yields. `create_app` keeps taking its pieces as arguments, so tests keep injecting fakes, and gains a `backends` argument that the production `app()` points at the configured platform; a construction that gets its pieces up front still works, and giving neither (Vertex) is a `TypeError`. The http client Anthropic builds closes first on the way out, ahead of the platform. The routes, the readers and everything below them are unchanged.
 
 ## Testing
 

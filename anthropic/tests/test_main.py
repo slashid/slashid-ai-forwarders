@@ -14,13 +14,15 @@ import httpx
 import pytest
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.platform import TickLease
+from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
 
 from slashid_anthropic_forwarder import main
+from slashid_anthropic_forwarder import platform as anthropic_platform
 from slashid_anthropic_forwarder.config import Config
 from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
-from slashid_anthropic_forwarder.platform import Backends
+from slashid_anthropic_forwarder.platform import Backends, open_backends
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
@@ -384,6 +386,41 @@ async def test_the_platform_is_opened_at_startup_used_by_the_tick_and_closed_at_
         assert lease.holds == 1
     assert events == ["open", "close"]
     assert sink.request_ids == [ADDRESS]
+
+
+async def test_open_backends_opens_the_configured_platform_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[Any] = []
+
+    @contextlib.asynccontextmanager
+    async def get(name: str, **options: Any) -> AsyncIterator[GcpPlatform]:
+        events.append(("open", name, options))
+        built = GcpPlatform(project="proj", firestore_database="slashid-anthropic")
+        built.__dict__["firestore"] = FakeFirestore()
+        yield built
+        events.append("close")
+
+    monkeypatch.setattr(anthropic_platform.platforms, "get", get)
+    async with open_backends(_config()) as backends:
+        assert events == [
+            ("open", "gcp", {"project": "proj", "firestore_database": "slashid-anthropic"})
+        ]
+        assert isinstance(backends.store, FirestorePendingStore)
+        assert backends.capture is None
+    assert events[-1] == "close"
+
+
+async def test_a_platform_that_fails_to_open_fails_startup() -> None:
+    @contextlib.asynccontextmanager
+    async def broken() -> AsyncIterator[Backends]:
+        raise RuntimeError("cannot open the platform")
+        yield  # pragma: no cover
+
+    app = create_app(_config(), backends=broken, client=Sink().client())
+    with pytest.raises(RuntimeError, match="cannot open the platform"):
+        async with app.router.lifespan_context(app):
+            pass
 
 
 async def test_a_delivery_posted_to_slash_tick_is_still_a_delivery(sign: Signer) -> None:

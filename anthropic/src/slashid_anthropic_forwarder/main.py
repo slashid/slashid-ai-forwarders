@@ -112,6 +112,11 @@ def create_app(
         # The routes read these names when a request arrives, so rebinding
         # them here is all the opened backends need.
         nonlocal capture, store, lease, cursors, authorize
+
+        async def close_client() -> None:
+            if client is None and held["client"] is not None:
+                await held["client"].aclose()
+
         async with contextlib.AsyncExitStack() as stack:
             if backends is not None:
                 opened = await stack.enter_async_context(backends())
@@ -122,9 +127,10 @@ def create_app(
                     opened.cursors,
                 )
                 authorize = opened.tick_auth
+            # Registered last, so it closes first: before the platform, and
+            # even if the platform's exit raises.
+            stack.push_async_callback(close_client)
             yield
-        if client is None and held["client"] is not None:
-            await held["client"].aclose()
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
