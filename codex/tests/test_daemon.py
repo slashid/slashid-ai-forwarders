@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import socket
+import stat
 import sys
 import threading
 import time
@@ -20,6 +22,7 @@ from slashid_codex.config import CodexConfig
 from slashid_codex.daemon import (
     WATCHDOG_STALE_S,
     Lifetime,
+    PrivateRotatingFileHandler,
     Services,
     Stopper,
     Watchdog,
@@ -61,6 +64,7 @@ class Fakes:
         self.preflights: list[tuple[str, bytes]] = []
         self.triggers: list[tuple[str, bytes]] = []
         self.shutdowns = 0
+        self.exited = 0
         self.exits: list[int] = []
         self.verdict = Verdict(decision="block", reason="no")
         self.clock = Clock()
@@ -82,7 +86,11 @@ class Fakes:
             clock=self.clock,
             exit=self.exits.append,
             on_shutdown=self.shutdown,
+            on_exit=self.exit,
         )
+
+    def exit(self) -> None:
+        self.exited += 1
 
 
 @pytest.fixture
@@ -319,6 +327,14 @@ async def test_lifespan_exits_when_idle(config: CodexConfig, fakes: Fakes) -> No
     async with app.router.lifespan_context(app):
         await asyncio.sleep(0.05)
     assert fakes.shutdowns == 1
+    assert fakes.exited == 1
+
+
+async def test_lifespan_end_calls_on_exit(app: FastAPI, fakes: Fakes) -> None:
+    async with app.router.lifespan_context(app):
+        assert fakes.exited == 0
+    assert fakes.exited == 1
+    assert fakes.shutdowns == 0
 
 
 def test_watchdog_exits_on_stale_heartbeat(fakes: Fakes) -> None:
@@ -377,6 +393,27 @@ def test_uncaught_exceptions_logged(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert "thread boom" in text
     assert "ValidationError" in text
     assert "SECRET-PROMPT" not in text
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+def test_log_files_private_after_rollover(tmp_path: Path) -> None:
+    path = tmp_path / "daemon.log"
+    record = logging.LogRecord("t", logging.INFO, __file__, 1, "x" * 80, None, None)
+    umask = os.umask(0o002)
+    try:
+        handler = PrivateRotatingFileHandler(path, maxBytes=100, backupCount=3, encoding="utf-8")
+        try:
+            handler.emit(record)
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            handler.emit(record)
+            handler.emit(record)
+        finally:
+            handler.close()
+    finally:
+        os.umask(umask)
+    assert (tmp_path / "daemon.log.1").exists()
+    for file in tmp_path.glob("daemon.log*"):
+        assert stat.S_IMODE(file.stat().st_mode) == 0o600, file
 
 
 def test_listen_on_loopback() -> None:

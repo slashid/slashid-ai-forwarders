@@ -1,4 +1,4 @@
-"""Codex hook payloads, one model per event the daemon handles."""
+"""Codex hook payloads, one model per measured event."""
 
 from __future__ import annotations
 
@@ -7,10 +7,6 @@ from typing import Literal
 
 from pydantic import JsonValue
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
-
-HookEvent = Literal[
-    "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"
-]
 
 
 class _Hook(_LenientModel):
@@ -47,6 +43,7 @@ class PreToolUseHook(_ToolHook):
     hook_event_name: Literal["PreToolUse"]
 
 
+# Not registered with Codex; kept so every measured payload parses.
 class PostToolUseHook(_ToolHook):
     hook_event_name: Literal["PostToolUse"]
     tool_response: JsonValue = None

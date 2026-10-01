@@ -67,6 +67,8 @@ class Session:
     watermark: Checkpoint | None = None
     # Holders inside ``SessionCache.session``; not evicted while positive.
     in_use: int = 0
+    # Collection's failed builds per ``response_id``; its loop only.
+    build_failures: dict[str, int] = field(default_factory=dict)
 
     def refresh(self) -> int:
         """Read appended lines and move the head to the end. A shrunk or
@@ -107,27 +109,22 @@ class SessionCache:
 
     @contextmanager
     def session(self, session_id: str, path: Path) -> Iterator[Session]:
-        """``get``, kept from eviction until the block exits."""
-        session = self._get(session_id, path, hold=True)
+        """The cached session, else one read from byte 0, kept from eviction
+        until the block exits. Raises ``OSError`` if the rollout is unreadable."""
+        session = self._hold(session_id, path)
         try:
             yield session
         finally:
             with self._lock:
                 session.in_use -= 1
 
-    def get(self, session_id: str, path: Path) -> Session:
-        """The cached session, else one read from byte 0. Raises ``OSError``
-        if the rollout is unreadable. It can be evicted before use; prefer
-        ``session``."""
-        return self._get(session_id, path, hold=False)
-
-    def _get(self, session_id: str, path: Path, *, hold: bool) -> Session:
+    def _hold(self, session_id: str, path: Path) -> Session:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is not None:
                 # Archiving moves the file; its identity is unchanged.
                 session.log.path = path
-                session.in_use += hold
+                session.in_use += 1
                 return session
 
         def open_log(path: Path) -> tuple[SessionLog, RolloutCursor, RolloutCursor]:
@@ -144,7 +141,7 @@ class SessionCache:
                 built.session_started = True
                 built.last_hook_at = touched
             session = self._sessions.setdefault(session_id, built)
-            session.in_use += hold
+            session.in_use += 1
             return session
 
     def touch_hook(self, session_id: str) -> None:
@@ -175,7 +172,7 @@ class SessionCache:
 
     def evict(self) -> list[str]:
         """Drop evictable sessions not in use; a dropped one is rebuilt from
-        byte 0 on its next ``get``."""
+        byte 0 on its next ``session``."""
         evicted: list[str] = []
         stale = self._clock() - HOOK_IDLE
         with self._lock:

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
-from slashid_codex.cache import SessionCache, locate
+from slashid_codex.cache import Session, SessionCache, locate
 from slashid_codex.rollout import TokenUsageRecord, parse_line
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
@@ -46,16 +46,22 @@ def _install(codex_home: Path, name: str, session_id: str) -> Path:
     return path
 
 
+def _get(cache: SessionCache, session_id: str, path: Path) -> Session:
+    """The session, released at once (evictable)."""
+    with cache.session(session_id, path) as session:
+        return session
+
+
 def _cache(tmp_path: Path):
     clock = _Clock()
     return SessionCache(codex_home=tmp_path / ".codex", clock=clock), clock
 
 
-def test_get_builds_and_reuses_a_session(tmp_path: Path) -> None:
+def test_session_built_and_reused(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     first_id = _response_ids("script")[0]
     cache, _ = _cache(tmp_path)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     assert session.watermark is None
     session.rewind_send(Checkpoint(timestamp=None, id=first_id))
     assert isinstance(session.lock, type(threading.Lock()))
@@ -66,13 +72,13 @@ def test_get_builds_and_reuses_a_session(tmp_path: Path) -> None:
     sent = session.send.next_closed()
     assert sent is not None
     assert sent.response_id == _response_ids("script")[1]
-    assert cache.get(SCRIPT_ID, path) is session
+    assert _get(cache, SCRIPT_ID, path) is session
 
 
 def test_log_reset_recreates_log_and_cursors(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, _ = _cache(tmp_path)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     first_id = _response_ids("script")[0]
     session.rewind_send(Checkpoint(timestamp=None, id=first_id))
     assert session.send.next_closed() is not None
@@ -96,7 +102,7 @@ def test_refresh_advances_the_head(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     path.write_bytes(b"".join(raw[:10]))
     cache, _ = _cache(tmp_path)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     with path.open("ab") as f:
         f.write(b"".join(raw[10:]))
     assert session.refresh() > 0
@@ -108,7 +114,7 @@ def test_fork_parent_located_under_codex_home(tmp_path: Path) -> None:
     _install(tmp_path / ".codex", "compaction", PARENT_ID)
     path = _install(tmp_path / ".codex", "fork", FORK_ID)
     cache, _ = _cache(tmp_path)
-    session = cache.get(FORK_ID, path)
+    session = _get(cache, FORK_ID, path)
     assert not session.log.history_truncated
     assert any(line.inherited for line in session.log.lines)
     assert [r.response_id for r in iter(session.send.next_closed, None)] == _response_ids("fork")
@@ -117,7 +123,7 @@ def test_fork_parent_located_under_codex_home(tmp_path: Path) -> None:
 def test_eviction_predicate(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, clock = _cache(tmp_path)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     # Never positioned: nothing held for collection.
     assert cache.evictable(session)
     # Loaded by the sweep: not started, but the send cursor has a backlog.
@@ -150,13 +156,13 @@ def test_eviction_predicate(tmp_path: Path) -> None:
 def test_evict_drops_sessions_and_get_rebuilds(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, _ = _cache(tmp_path)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     session.rewind_send(EMPTY)
     assert cache.evict() == []
     while session.send.next_closed() is not None:
         pass
     assert cache.evict() == [SCRIPT_ID]
-    rebuilt = cache.get(SCRIPT_ID, path)
+    rebuilt = _get(cache, SCRIPT_ID, path)
     assert rebuilt is not session
     assert len(rebuilt.log.lines) == len(session.log.lines)
 
@@ -164,7 +170,7 @@ def test_evict_drops_sessions_and_get_rebuilds(tmp_path: Path) -> None:
 def test_evict_skips_a_locked_session(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, _ = _cache(tmp_path)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     while session.send.next_closed() is not None:
         pass
     with session.lock:
@@ -191,7 +197,7 @@ def test_touch_before_load_applies_on_load(tmp_path: Path) -> None:
     cache, clock = _cache(tmp_path)
     cache.touch_hook(SCRIPT_ID)
     clock.now = T0 + timedelta(minutes=1)
-    session = cache.get(SCRIPT_ID, path)
+    session = _get(cache, SCRIPT_ID, path)
     assert session.session_started
     assert session.last_hook_at == T0
     while session.send.next_closed() is not None:
@@ -205,7 +211,7 @@ def test_end_before_load_forgets_the_touch(tmp_path: Path) -> None:
     cache, _ = _cache(tmp_path)
     cache.touch_hook(SCRIPT_ID)
     cache.end(SCRIPT_ID)
-    assert not cache.get(SCRIPT_ID, path).session_started
+    assert not _get(cache, SCRIPT_ID, path).session_started
 
 
 def test_stale_touches_pruned_by_evict(tmp_path: Path) -> None:
@@ -214,7 +220,7 @@ def test_stale_touches_pruned_by_evict(tmp_path: Path) -> None:
     cache.touch_hook(SCRIPT_ID)
     clock.now = T0 + timedelta(minutes=10, seconds=1)
     cache.evict()
-    assert not cache.get(SCRIPT_ID, path).session_started
+    assert not _get(cache, SCRIPT_ID, path).session_started
 
 
 SUB = "01a0f38b-f3a4-7c70-95e2-420a7fcbcc03"

@@ -133,3 +133,32 @@ def test_non_exec_custom_tool_not_mapped() -> None:
         type="custom_tool_call", call_id="c", name="apply_patch", input="tools.x({})"
     )
     assert map_custom_call(call, cwd="/w") is None
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'const r = await tools.view_image({path:"/abs/img.png"}); image(r.image_url);\n',
+        'let img=await tools.view_image({path:"/abs/img.png"})\nimage( img.image_url );',
+        '// @exec: {"yield_time_ms": 1000}\n'
+        'const r = await tools.view_image({path:"/abs/img.png"});\nimage(r.image_url)\n',
+    ],
+)
+def test_view_image_idiom_maps_to_its_call(script: str) -> None:
+    call = map_custom_call(_exec(script), cwd="/w")
+    assert call is not None
+    assert call.name == "view_image"
+    assert json.loads(call.arguments) == {"path": "/abs/img.png"}
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'const r = await tools.view_image({path:"/a.png"}); image(s.image_url);',
+        'const r = await tools.view_image({path:"/a.png"}); image(r.url);',
+        'var r = await tools.view_image({path:"/a.png"}); image(r.image_url);',
+        'const r = await tools.view_image({path:"/a.png"}); image(r.image_url); text("x");',
+    ],
+)
+def test_image_idiom_variants_do_not_match(script: str) -> None:
+    assert map_custom_call(_exec(script), cwd="/w") is None

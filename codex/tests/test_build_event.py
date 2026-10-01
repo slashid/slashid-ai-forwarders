@@ -21,8 +21,9 @@ READ_CONTENT = "line one\nline two\n"
 BASH = resolve_tool("Bash")
 
 
-def _invocations(name: str) -> tuple[list[RolloutInvocation], RolloutCursor]:
-    log = SessionLog.open(ROLLOUTS / f"{name}.jsonl", lambda _: None)
+def _invocations(name: str | Path) -> tuple[list[RolloutInvocation], RolloutCursor]:
+    path = name if isinstance(name, Path) else ROLLOUTS / f"{name}.jsonl"
+    log = SessionLog.open(path, lambda _: None)
     log.refresh()
     cursor = RolloutCursor(log)
     out = []
@@ -37,7 +38,7 @@ class Builder:
         self.records = SqliteFileRecordStore(lambda: connect(tmp_path / "state"))
 
     async def events(
-        self, name: str, session_id: str = "sess", **context: object
+        self, name: str | Path, session_id: str = "sess", **context: object
     ) -> list[AIInvocationObservedV1]:
         invocations, cursor = _invocations(name)
         ctx = SessionContext(
@@ -109,6 +110,27 @@ async def test_function_mode(builder: Builder, tmp_path: Path) -> None:
     # The whole-file read's tool-result entry dedupes against its record.
     assert events[2].accessed_files == [record]
     assert events[1].accessed_files is None
+
+
+async def test_home_relative_read_dedupes_against_its_record(
+    builder: Builder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rollout = tmp_path / "home.jsonl"
+    text = (ROLLOUTS / "function.jsonl").read_text()
+    rollout.write_text(
+        text.replace("sed -n '1,240p' /home/user/Recipes/notes.md", "cat ~/Recipes/notes.md")
+    )
+    monkeypatch.setenv("HOME", "/home/user")
+    invocations, _ = _invocations(rollout)
+    [sed_item] = invocations[2].consumed_items
+    assert sed_item.id is not None
+    # Preflight names it with ``~`` expanded.
+    record = _file(tmp_path, "/home/user/Recipes/notes.md", READ_CONTENT)
+    builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, record)
+
+    events = await builder.events(rollout)
+
+    assert events[2].accessed_files == [record]
 
 
 async def test_failed_command_is_error(builder: Builder) -> None:

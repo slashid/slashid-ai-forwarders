@@ -17,7 +17,7 @@ from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 from slashid_ai_forwarder_core.platform.local import LocalPlatform, create_local_platform
 
 from slashid_codex import emit
-from slashid_codex.cache import SessionCache
+from slashid_codex.cache import Session, SessionCache
 from slashid_codex.config import CodexConfig
 from slashid_codex.cursor import RolloutCursor, RolloutInvocation
 from slashid_codex.emit import COLLECTION, Collector, Trigger, Worker
@@ -117,8 +117,9 @@ class Env:
             os.utime(path, (stamp, stamp))
         return path
 
-    def session(self, name: str):
-        return self.cache.get(SESSIONS[name], self.rollout(name))
+    def session(self, name: str) -> Session:
+        with self.cache.session(SESSIONS[name], self.rollout(name)) as session:
+            return session
 
 
 @asynccontextmanager
@@ -317,12 +318,54 @@ async def test_batch_of_unbuildable_responses_fails(
         assert not await env.collector.process(session)
 
     assert env.sink.calls == []
-    assert env.sleeps == list(emit.RETRY_DELAYS_S)
+    # Building again would fail again: no backoff.
+    assert env.sleeps == []
     assert "secret prompt text" not in caplog.text
     assert await env.store(SESSIONS["script"]).load() == Checkpoint(None, None)
     nxt = session.send.next_closed()
     assert nxt is not None
     assert nxt.response_id == _invocations("script")[0].response_id
+
+
+async def test_unbuildable_response_dropped_after_three_attempts(
+    env: Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(emit, "BATCH_SIZE", 1)
+    invocations = _invocations("function")
+    bad = invocations[0].response_id
+    real = emit.build_event
+
+    async def build(invocation: RolloutInvocation, *args: object, **kwargs: object):
+        if invocation.response_id == bad:
+            raise ValueError("secret prompt text")
+        return await real(invocation, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(emit, "build_event", build)
+    session = env.session("function")
+    with caplog.at_level(logging.DEBUG):
+        assert not await env.collector.process(session)
+        assert not await env.collector.process(session)
+        assert env.sink.calls == []
+        assert await env.collector.process(session)
+
+    assert _flat(env.sink.pushed) == [i.response_id for i in invocations[1:]]
+    assert env.sleeps == []
+    assert session.build_failures == {}
+    last = invocations[-1]
+    assert await env.store(SESSIONS["function"]).load() == Checkpoint(
+        last.timestamp, last.response_id
+    )
+    assert "secret prompt text" not in caplog.text
+    [dropped] = [r for r in caplog.records if "dropped" in r.getMessage()]
+    assert bad in dropped.getMessage()
+    assert "ValueError" in dropped.getMessage()
+
+
+async def test_push_failure_still_backs_off(env: Env) -> None:
+    env.sink.fail = lambda _: True
+    assert not await env.collector.process(env.session("script"))
+    assert env.sleeps == list(emit.RETRY_DELAYS_S)
+    assert len(env.sink.calls) == 4
 
 
 # --------------------------------------------------------------------------
@@ -516,7 +559,7 @@ def test_worker_setup_failure_exits(caplog: pytest.LogCaptureFixture) -> None:
 
     worker = Worker(open_collector, on_fatal=exited.set)
     with caplog.at_level(logging.ERROR):
-        worker.start()
-        assert exited.wait(5)
+        assert worker.start(timeout=5) is False
+        assert exited.is_set()
         worker.stop()
     assert any(r.levelno == logging.ERROR and r.name == emit.__name__ for r in caplog.records)

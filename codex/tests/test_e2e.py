@@ -181,6 +181,12 @@ def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
     _wait_pushed(stub, len(expected))
     assert [e["request_id"] for e in stub.pushed] == expected
     assert {e["parsed_as"] for e in stub.pushed} == {"codex-rollout"}
+    # The response that consumed the script-mode call carries its read, joined
+    # by the hook's ``exec-<uuid>``.
+    reads = [
+        [f for f in e.get("accessed_files") or [] if f["name"] == str(note)] for e in stub.pushed
+    ]
+    assert reads == [[], [read]]
     assert stub.auth == {f"Bearer {TOKEN}"}
     # Same daemon throughout.
     assert daemons.info() == info

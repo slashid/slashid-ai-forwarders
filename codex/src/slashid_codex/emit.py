@@ -36,6 +36,8 @@ log = logging.getLogger(__name__)
 COLLECTION = "codex-rollouts"
 BATCH_SIZE = 20
 RETRY_DELAYS_S = (1.0, 5.0, 15.0)
+# Failed builds, across triggers, before a response is dropped.
+MAX_BUILD_ATTEMPTS = 3
 RETENTION = timedelta(days=7)
 _ROOTS = ("sessions", "archived_sessions")
 # Queue priorities: a hook's session goes before the sweep's.
@@ -183,10 +185,13 @@ class Collector:
         for delay in (*RETRY_DELAYS_S, None):
             try:
                 if events is None:
-                    events = await self._build(context, batch)
+                    events = await self._build(session, context, batch)
                 if events:
                     await self._sink.push(events)
                 break
+            except Unbuildable as exc:
+                log.warning("batch for %s failed: %s", context.session_id, exc)
+                return False
             except Exception as exc:
                 log.warning(
                     "batch for %s failed: %s: %s",
@@ -203,12 +208,14 @@ class Collector:
         return True
 
     async def _build(
-        self, context: SessionContext, batch: list[RolloutInvocation]
+        self, session: Session, context: SessionContext, batch: list[RolloutInvocation]
     ) -> list[AIInvocationObservedV1]:
-        """A response that cannot be built is dropped; a database error, or
-        none built, fails the batch. Logs carry no exception text: a
-        validation error quotes its input."""
+        """A response that cannot be built is dropped if another one in the
+        batch builds, or once it has failed ``MAX_BUILD_ATTEMPTS`` times;
+        otherwise ``Unbuildable`` fails the batch. A database error fails it
+        too. Logs carry no exception text: a validation error quotes its input."""
         events: list[AIInvocationObservedV1] = []
+        failed: list[tuple[str, Exception]] = []
         for invocation in batch:
             try:
                 events.append(
@@ -219,9 +226,22 @@ class Collector:
             except (sqlite3.Error, RecordStoreBusy):
                 raise
             except Exception as exc:
-                log.warning("dropped response %s: %s", invocation.response_id, type(exc).__name__)
+                failed.append((invocation.response_id, exc))
         if not events:
-            raise Unbuildable(f"none of {len(batch)} responses could be built")
+            failures = session.build_failures
+            for response_id, _ in failed:
+                failures[response_id] = failures.get(response_id, 0) + 1
+            if any(failures[response_id] < MAX_BUILD_ATTEMPTS for response_id, _ in failed):
+                for response_id, exc in failed:
+                    log.warning(
+                        "response %s not built (attempt %d): %s",
+                        response_id,
+                        failures[response_id],
+                        type(exc).__name__,
+                    )
+                raise Unbuildable(f"none of {len(batch)} responses could be built")
+        for response_id, exc in failed:
+            log.warning("dropped response %s: %s", response_id, type(exc).__name__)
         return events
 
     async def _commit(self, session: Session, batch: list[RolloutInvocation]) -> None:
@@ -254,6 +274,8 @@ class Collector:
                 self._records.delete_turn(session_id, turn_id)
         except (RecordStoreBusy, sqlite3.Error) as exc:
             log.warning("file records for %s not deleted: %s", session_id, exc)
+        for invocation in batch:
+            session.build_failures.pop(invocation.response_id, None)
 
     # ----------------------------------------------------------------------
     # Startup sweep
@@ -337,9 +359,9 @@ class Worker:
         self._thread = threading.Thread(target=self._main, name="codex-collector", daemon=True)
 
     def start(self, timeout: float | None = None) -> bool:
-        """Whether the collector was set up (or failed) within ``timeout``."""
+        """Whether the collector was set up within ``timeout``."""
         self._thread.start()
-        return self._ready.wait(timeout)
+        return self._ready.wait(timeout) and self._collector is not None
 
     def submit(self, trigger: Trigger) -> None:
         """From any thread."""

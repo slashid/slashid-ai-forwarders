@@ -182,8 +182,13 @@ def config_digest(config_path: Path) -> str:
 def record_spawn_failure(directory: Path, key: str, *, now: float | None = None) -> None:
     """``key`` names the version and config that failed; another one is not
     held back."""
-    with contextlib.suppress(OSError):
-        (directory / SPAWN_FAILED_FILE).write_text(f"{time.time() if now is None else now} {key}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(directory / SPAWN_FAILED_FILE, flags, 0o600)
+    except OSError:
+        return
+    with contextlib.suppress(OSError), os.fdopen(fd, "wb") as f:
+        f.write(f"{time.time() if now is None else now} {key}".encode())
 
 
 def clear_spawn_failure(directory: Path) -> None:
@@ -201,8 +206,9 @@ def in_backoff(directory: Path, key: str, *, now: float | None = None) -> bool:
     return failed_key == key and 0 <= elapsed < SPAWN_BACKOFF_S
 
 
-def spawn_key(config_path: Path) -> str:
-    return f"{package_version()}:{config_digest(config_path)}"
+def spawn_key(digest: str) -> str:
+    """The backoff's key: this version and the config's digest."""
+    return f"{package_version()}:{digest}"
 
 
 # --------------------------------------------------------------------------

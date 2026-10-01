@@ -146,10 +146,20 @@ def test_spawn_backoff(tmp_path: Path) -> None:
     assert not in_backoff(tmp_path, "k", now=1000.0)
 
 
-def test_spawn_key(tmp_path: Path) -> None:
-    config = tmp_path / "config.toml"
-    config.write_text("")
-    assert spawn_key(config) == f"{package_version()}:{config_digest(config)}"
+def test_spawn_key() -> None:
+    assert spawn_key("d") == f"{package_version()}:d"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+def test_spawn_failed_private(tmp_path: Path) -> None:
+    umask = os.umask(0o002)
+    try:
+        record_spawn_failure(tmp_path, "k", now=1000.0)
+    finally:
+        os.umask(umask)
+    assert (tmp_path / "spawn-failed").stat().st_mode & 0o777 == 0o600
+    record_spawn_failure(tmp_path, "k2", now=1001.0)
+    assert in_backoff(tmp_path, "k2", now=1001.0)
 
 
 def _hold(path: str, ready: multiprocessing.synchronize.Event, release: float) -> None:

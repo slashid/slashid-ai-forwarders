@@ -34,6 +34,7 @@ from .discovery import (
     read_daemon_json,
     record_spawn_failure,
     spawn_daemon,
+    spawn_key,
     state_dir,
 )
 
@@ -128,8 +129,7 @@ class Client:
         self._sleep = sleep
         self._version = package_version()
         self._digest = config_digest(self._config_path)
-        # The spawn backoff's key.
-        self._key = f"{self._version}:{self._digest}"
+        self._key = spawn_key(self._digest)
 
     def run(self, event: str, stdin: BinaryIO, *, deadline: float) -> str:
         preflight = event in PREFLIGHT_EVENTS

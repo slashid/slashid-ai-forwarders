@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -35,6 +36,7 @@ from slashid_codex.discovery import (
     config_digest,
     hmac_response,
     in_backoff,
+    lock_held,
     package_version,
     record_spawn_failure,
     spawn_daemon,
@@ -238,7 +240,7 @@ def test_daemon_cannot_start(daemons: Daemons, mode: str) -> None:
     daemons.write_config(push_token_file=str(daemons.root / "missing"), verdict_fail_mode=mode)
     first = _out(daemons.hook("UserPromptSubmit", UPS))
     assert first == (BLOCK_UNAVAILABLE if mode == "deny" else {})
-    assert in_backoff(daemons.state, spawn_key(daemons.config))
+    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
     assert daemons.log().count("starting") == 1
     spawned: list[list[str]] = []
 
@@ -252,9 +254,35 @@ def test_daemon_cannot_start(daemons: Daemons, mode: str) -> None:
     assert spawned == []
 
 
+def test_collector_setup_failure_is_a_spawn_failure(daemons: Daemons) -> None:
+    daemons.state.mkdir(parents=True)
+
+    def spawn(argv: list[str], cwd: Path, stderr_path: Path) -> subprocess.Popen[bytes]:
+        argv = [argv[0], "-m", "tests.failing_daemon", *argv[3:]]
+        return spawn_daemon(argv, cwd=Path(__file__).parents[1], stderr_path=stderr_path)
+
+    client = Client(daemons.config, daemons.state, daemons.codex_home, spawn=spawn)
+    start = time.monotonic()
+    assert client.connect(time.monotonic() + 9, wait=True) is None
+    assert time.monotonic() - start < cli.SPAWN_WAIT_S
+    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
+    assert "collector setup failed" in daemons.log()
+    assert not (daemons.state / "daemon.json").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_signal_removes_daemon_json(daemons: Daemons, sig: signal.Signals) -> None:
+    info = daemons.start()
+    os.kill(info.pid, sig)
+    assert wait_dead(info.pid)
+    assert not (daemons.state / "daemon.json").exists()
+    assert not lock_held(daemons.state / "daemon.lock")
+
+
 def test_daemon_started_during_backoff_used(daemons: Daemons) -> None:
     daemons.state.mkdir(parents=True)
-    record_spawn_failure(daemons.state, spawn_key(daemons.config))
+    record_spawn_failure(daemons.state, spawn_key(config_digest(daemons.config)))
     info = daemons.start()
     assert not (daemons.state / "spawn-failed").exists()
     assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
@@ -633,7 +661,7 @@ def test_spawn_polled_for_5_s(daemons: Daemons) -> None:
     )
     assert client.connect(9.0, wait=True) is None
     assert 5.0 <= clock.now < 5.0 + 2 * cli.POLL_S
-    assert in_backoff(daemons.state, spawn_key(daemons.config))
+    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
 
 
 def test_spawn_wait_inside_the_preflight_deadline() -> None:
@@ -659,7 +687,7 @@ def test_spawn_holding_the_lock_is_not_a_failure(daemons: Daemons) -> None:
         assert client.connect(9.0, wait=True) is None
     finally:
         lock.release()
-    assert not in_backoff(daemons.state, spawn_key(daemons.config))
+    assert not in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
 
 
 def test_spawn_exit_error_is_a_failure(daemons: Daemons) -> None:
@@ -668,7 +696,7 @@ def test_spawn_exit_error_is_a_failure(daemons: Daemons) -> None:
     start = time.monotonic()
     assert client.connect(time.monotonic() + 9, wait=True) is None
     assert time.monotonic() - start < 0.5
-    assert in_backoff(daemons.state, spawn_key(daemons.config))
+    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
 
 
 # --------------------------------------------------------------------------
@@ -707,6 +735,8 @@ def test_spawn_flags_posix(tmp_path: Path) -> None:
     _common(kwargs, tmp_path / "daemon.stderr")
     assert kwargs["start_new_session"] is True
     assert "creationflags" not in kwargs
+    if sys.platform != "win32":
+        assert (tmp_path / "daemon.stderr").stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize("fail_breakaway", [False, True])

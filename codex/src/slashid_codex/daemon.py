@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import io
 import logging
 import logging.handlers
 import os
@@ -78,6 +79,9 @@ class Services:
     exit: Callable[[int], None] = os._exit
     # Delete ``daemon.json``, release the lock, stop serving.
     on_shutdown: Callable[[], None] = lambda: None
+    # The same, as the server stops for any reason: uvicorn re-raises SIGTERM
+    # once ``serve`` returns, so nothing after it runs.
+    on_exit: Callable[[], None] = lambda: None
 
 
 class Lifetime:
@@ -164,6 +168,7 @@ def create_app(config: CodexConfig, secret: str, port: int, services: Services) 
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+            services.on_exit()
 
     app = FastAPI(lifespan=lifespan, openapi_url=None, docs_url=None, redoc_url=None)
     app.state.lifetime = lifetime
@@ -246,9 +251,17 @@ class Stopper:
             self.server.should_exit = True
 
 
+class PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Creates its files ``0600``; rollover renames keep the mode."""
+
+    def _open(self) -> io.TextIOWrapper:
+        fd = os.open(self.baseFilename, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        return open(fd, "a", encoding=self.encoding, errors=self.errors)
+
+
 def setup_logging(path: Path) -> None:
     """Uncaught exceptions go to the log too, not to ``daemon.stderr``."""
-    handler = logging.handlers.RotatingFileHandler(
+    handler = PrivateRotatingFileHandler(
         path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8"
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -303,7 +316,7 @@ def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = 
 
 
 def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) -> bool:
-    """``False`` if the collector was not ready in time."""
+    """``False`` if the collector failed or was not ready in time."""
     sock = listen()
     port: int = sock.getsockname()[1]
     secret = secrets.token_hex(32)
@@ -321,7 +334,10 @@ def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) 
 
     handler = Handler(config, preflight, cache, submit)
     services = Services(
-        preflight=handler.preflight, enqueue_trigger=handler.trigger, on_shutdown=stopper
+        preflight=handler.preflight,
+        enqueue_trigger=handler.trigger,
+        on_shutdown=stopper,
+        on_exit=stopper,
     )
     app = create_app(config, secret, port, services)
     lifetime = lifetime_of(app)
@@ -355,7 +371,7 @@ def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) 
     try:
         # Hooks wait in the listen backlog until the server runs.
         if not worker.start(timeout=WORKER_READY_S):
-            log.error("collector not ready after %.0f s; exiting", WORKER_READY_S)
+            log.error("collector not set up within %.0f s; exiting", WORKER_READY_S)
             sock.close()
             return False
         asyncio.run(_run_server(server, sock, client))
