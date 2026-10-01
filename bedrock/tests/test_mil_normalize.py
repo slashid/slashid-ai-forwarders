@@ -875,3 +875,23 @@ async def test_openai_responses_stream_overwrites_tokens() -> None:
     assert record["input"]["inputTokenCount"] == 56
     assert record["output"]["outputTokenCount"] == 19
     assert record["output"]["reasoningTokenCount"] == 0
+
+
+async def test_openai_responses_cached_tokens_split() -> None:
+    record = _fixture("openai_responses_mil.json")
+    record["output"]["outputBodyJson"]["usage"]["input_tokens_details"]["cached_tokens"] = 5
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 7
+    assert record["input"]["cacheReadInputTokenCount"] == 5
+
+
+@pytest.mark.parametrize("stream", [[{"type": "chunk"}], []])
+async def test_non_openai_stream_with_input_request_is_not_responses(
+    stream: list[dict[str, Any]],
+) -> None:
+    record = {
+        "input": {"inputBodyJson": _MIN_RESPONSES_REQUEST},
+        "output": {"outputBodyJson": stream},
+    }
+    await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] != "openai-responses-stream"

@@ -54,6 +54,7 @@ from slashid_ai_forwarder_core.normalize.openai.responses.normalize import (
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     Response,
     ResponsesRequest,
+    ResponseStream,
     ResponseStreamEvent,
     ResponsesUsage,
     final_response,
@@ -165,7 +166,7 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
     _Format(
         name="openai-responses-stream",
         request_adapter=TypeAdapter(ResponsesRequest),
-        response_adapter=TypeAdapter(list[ResponseStreamEvent]),
+        response_adapter=TypeAdapter(ResponseStream),
         to_invocation=responses_stream_to_normalized_invocation,
         on_parse=_on_openai_stream_parse,
     ),
