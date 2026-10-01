@@ -199,7 +199,7 @@ There is no in-process fallback. Client deadlines sit inside the hook timeouts: 
 
 - No handle stays open between calls: on Windows it would stop Codex from moving the file to `archived_sessions/`.
 - A file smaller than `offset`, or with another identity (inode / Windows file index), is rebuilt from byte 0.
-- Eviction: sessions loaded by the startup sweep are dropped once their outbox is sent; sessions touched by a hook stay until 10 minutes after their last hook and their outbox is sent. A dropped session is rebuilt from byte 0 on next use.
+- Eviction: a session is dropped once its outbox is sent if it was loaded by the startup sweep or has received `SessionEnd`; any other session touched by a hook stays until 10 minutes after its last hook and its outbox is sent. A dropped session is rebuilt from byte 0 on next use (a resume after `SessionEnd` included).
 
 ### Applying lines
 
@@ -445,7 +445,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 - **codex:**
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
-  - Session cache: appends extend history; partial last line held back; shrunk or replaced file rebuilt; snapshots unchanged by later appends and `turn_aborted`; preflight sees the in-flight call; preflight and worker reading one session at once; no handle left open (Windows archive move succeeds); eviction of sweep and hook sessions.
+  - Session cache: appends extend history; partial last line held back; shrunk or replaced file rebuilt; snapshots unchanged by later appends and `turn_aborted`; preflight sees the in-flight call; preflight and worker reading one session at once; no handle left open (Windows archive move succeeds); eviction of sweep sessions and of `SessionEnd`ed sessions once sent, of other hook sessions after 10 minutes; a resume after `SessionEnd` rebuilding the session.
   - Rollout in both modes: `Bash` rename with the hook's id and command; readiness waiting for `item_completed` and outputs; four parallel `exec_command` calls; attachments on the first response of their turn; reads after their output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; an interrupted response dropped without losing its tool results.
   - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
