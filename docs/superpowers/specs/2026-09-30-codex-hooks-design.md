@@ -51,15 +51,16 @@ Every payload carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`,
 
 | Event | Extra fields |
 |---|---|
-| `SessionStart` | `source`: `startup` (measured), `resume`, `clear`, `compact` (documented) |
+| `SessionStart` | `source`: `startup`, `resume`, `fork`, `compact` (measured), `clear` (documented) |
 | `UserPromptSubmit` | `turn_id`, `prompt` |
 | `PreToolUse` | `turn_id`, `tool_name`, `tool_input`, `tool_use_id` |
 | `PostToolUse` | as `PreToolUse`, plus `tool_response` |
 | `Stop` | `turn_id`, `stop_hook_active`, `last_assistant_message` |
-| `SessionEnd` | `reason` |
+| `SessionEnd` | `reason`; `transcript_path` may be `null` (a session that never wrote a rollout) |
 
 - `UserPromptSubmit` fires about 15 ms before the prompt is written to the rollout. `PreToolUse` fires after the call is written.
 - The desktop app sends `SessionEnd` (`reason: "other"`) for the previous session when a new one starts, not when a thread closes.
+- `PreCompact` and `PostCompact` (`trigger: "manual"`) bracket a compaction; `SessionStart(compact)` follows only with the next prompt.
 - Codex clamps `SessionEnd` and `Interrupt` timeouts to 3 s.
 - Non-managed hooks need the user's approval, recorded in `~/.codex/config.toml` as `[hooks.state."<file>:<event>:<group>:<index>"]`; managed hooks do not.
 
@@ -105,6 +106,9 @@ Images are sent to the model inline. Every other attachment reaches the model on
 - Unmodelled lines: `world_state`, `thread_settings_applied`, others to come.
 - An interrupted response gets no `token_usage_record`; its tool outputs and `reasoning` are still written, then an injected user `message` starting `<turn_aborted>` and the `turn_aborted` record.
 - The rollout records no tool definitions.
+- **Compaction** keeps the session and the file. It is a model call with its own `token_usage_record`, followed by a `compacted` record: `compaction_response_id` (that record's `response_id`), `window_id`, `previous_window_id`, `window_number`, and `replacement_history`: the user messages so far plus one `compaction` item whose content is encrypted. Assistant messages are not retained. The next response's input is the replacement history plus what follows.
+- **Resume** keeps the session and appends to the same file.
+- **Fork** starts a new session and file that copies nothing. Its `session_meta` carries `forked_from_id` and `history_base: {thread_id, end_ordinal_exclusive, end_byte_offset}`: the fork's history is the parent's rollout up to `end_byte_offset`, then its own lines (measured: the fork's first response consumed the parent's history).
 
 How files appear:
 
@@ -190,11 +194,11 @@ Client budgets, inside the hook timeouts: `UserPromptSubmit`/`PreToolUse` 9 s (1
 - `committed`: append-only `list[NormalizedMessage]`, history up to the last ready response.
 - `pending`: everything read after it: the in-flight response's output and unconsumed tool results.
 - `offset`: bytes read so far; an unfinished last line waits for its newline.
-- Context: `base_instructions`, current `model` and `turn_id`, `originator`, `cli_version`, and the tool-call index (`call_id` → `item_completed` item(s)).
+- Context: `base_instructions`, current `model` and `turn_id`, `originator`, `cli_version`, `window_number`, and the tool-call index (`call_id` → `item_completed` item(s)).
 - `outbox`: built events waiting to be sent, in order.
 - A `threading.Lock`.
 
-`get_conversation_so_far(session_id) -> tuple[NormalizedMessage, ...]`, under the lock: open the rollout, seek to `offset`, read to the end, close; apply the new lines; return `tuple(committed + pending)`. The tuple is a snapshot: later appends never appear in it. Messages are shared, not copied; `NormalizedMessage` and `NormalizedContent` are frozen. On `turn_aborted` only `pending` is replaced, so handed-out snapshots never change.
+`get_conversation_so_far(session_id) -> tuple[NormalizedMessage, ...]`, under the lock: open the rollout, seek to `offset`, read to the end, close; apply the new lines; return `tuple(committed + pending)`. The tuple is a snapshot: later appends never appear in it. Messages are shared, not copied; `NormalizedMessage` and `NormalizedContent` are frozen. `turn_aborted` replaces `pending` and `compacted` starts a new `committed` list; neither mutates a list a snapshot was taken from.
 
 - No handle stays open between calls: on Windows it would stop Codex from moving the file to `archived_sessions/`.
 - A file smaller than `offset`, or with another identity (inode / Windows file index), is rebuilt from byte 0.
@@ -208,7 +212,8 @@ Client budgets, inside the hook timeouts: `UserPromptSubmit`/`PreToolUse` 9 s (1
 - A closed response is **ready** once the outputs of all its tool calls are read, or the next response starts, whichever is first. The script-mode rename and the response's files come from lines after its `token_usage_record`. A ready response has its calls renamed and moves to `committed`, so a call carries the same name and id in its own response, in every later history and in preflight.
 - **Rename.** The index maps a call to its logical item(s): in function mode the item whose `id` equals the `call_id`; in script mode the tool items between the `custom_tool_call` and its output. A call with exactly one `CommandExecution` becomes `function_call{name: "Bash", call_id: <item id>, arguments: {command: <script>}}`, its output the matching `function_call_output`. `<script>` equals the hook's `tool_input.command`: the last argv element for `[<shell>, "-lc" | "-c", <script>]`, else `shlex.join(argv)`. Function-mode `exec_command` is renamed the same way. Anything else (no item, several items from one script, overlapping parallel calls, uncaptured item types) keeps its raw name and `call_id`, and still counts as a declared and used tool.
 - **Interrupts.** A response without a `token_usage_record` is never emitted. On `turn_aborted` its model-produced items (`reasoning`, assistant text) are dropped from `pending`; its tool results stay, for the next response to consume. The `<turn_aborted>` user message stays.
-- **Compaction** resets the history to the compacted replacement (**unverified**: shape to be captured).
+- **Compaction.** The compaction call's `token_usage_record` closes a response like any other: input is the history before it, output an opaque compaction marker (the summary is encrypted). Then `compacted` starts a new `committed` list from `replacement_history` (user messages, and the `compaction` item as an opaque block), sets `window_number`, and the history no longer reaches round one.
+- **Fork base.** A `session_meta` with `history_base` first loads the parent's rollout (found by `thread_id` under `sessions/` or `archived_sessions/`, recursively if the parent is a fork) up to `end_byte_offset`, applying the same rules, then continues with the fork's own lines. The parent's responses are context only; they are never emitted for the fork, which sends only responses from its own file. The fork inherits the parent's `window_number`.
 - Unmodelled line types are skipped silently. Invalid JSON, or a modelled type that fails validation, is skipped and counted in `daemon.log`.
 
 ### Files on a response
@@ -263,7 +268,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 `Stop`, `SessionStart` and `SessionEnd` mark their session as having new data. The worker then:
 
-1. Locates the rollout: `transcript_path`, else `*-<session_id>*.jsonl` under `sessions/` and `archived_sessions/`, else stops.
+1. Locates the rollout: `transcript_path`, else `*-<session_id>*.jsonl` under `sessions/` and `archived_sessions/`, else stops. A trigger with a `null` `transcript_path` and no file is ignored.
 2. Calls `get_conversation_so_far` and takes the responses that became ready since, skipping those at or before the watermark.
 3. Builds each event and appends it to the outbox.
 4. Sends the outbox in order through `push_invocations`, saving the watermark after each successful batch. A failed batch is retried with backoff and later events wait behind it, so the watermark never skips a response.
@@ -287,6 +292,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `user_agent` | `f"{originator}/{cli_version}"` |
 | `conversation_id` | `session_id` |
 | `accessed_files` | the files on the response (above), replacing the builder's own |
+| `history_truncated` | `window_number > 0`: the history no longer reaches round one, so `recent_round_hashes` ends in `"..."` |
 
 - The `NormalizedInvocation` carries the whole history; the builder slices `input` (`input_scope`, default `round`) and computes `round_hash` and `recent_round_hashes` (`round_link_depth`, default 10). `used_tools` and `accessed_files` come from the consumed round.
 - The rollout has no tool definitions, so, as the Anthropic hook does, collection fills `tools_declared` and `tool_servers` from the names of every call in the history (`build_tools_declared((name, None, None) …)`); name-only ids equal preflight's `resolve_tool` ids. `available_tools` is the tools used so far.
@@ -305,6 +311,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 **`shared/events.py`**
 
 - `OpenAIIdentityDetails(kind="openai", service_account_id, user_id, api_key_id, api_key_hash)`, at least one identifier, in the `IdentityDetails` union; mirrors the server's struct.
+- `EventEnvelope.history_truncated: bool = False`: when set, `round_links` ends `recent_round_hashes` with `"..."` even if the messages it sees form a first round. Codex sets it after a compaction; the other sources never do.
 - `requested_tool_uses: list[AIToolUse] | None`: calls the model asked for in this invocation's output, not yet run, carrying `tool_id` and `tool_use_id`. `build_event_from_normalized` fills it for every source from the output's `tool_use` blocks, joined to `tools_declared` like `_used_tools` (unidentifiable calls skipped); Codex's `PreToolUse` sets it directly. A round's request and its consumption share `tool_use_id` across two events.
 - `AIToolUse.is_error: bool | None = None`: a call that has not run has no outcome. `_used_tools` keeps setting it.
 
@@ -430,6 +437,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 | Push fails | Watermark kept; daemon retries with backoff, then the next sweep |
 | Rollout moved or deleted | Found by `session_id` under `sessions/` or `archived_sessions/`; if gone, nothing is sent and the watermark expires after 7 days |
 | Push repeated | Dropped by the server's `request_id` dedup |
+| Fork parent's rollout not found | The fork's own lines are applied alone, with `history_truncated` set |
 
 ## Testing
 
@@ -442,6 +450,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `fail_mode` mapping.
   - Session cache: appends extend history; partial last line held back; shrunk or replaced file rebuilt; snapshots unchanged by later appends and `turn_aborted`; preflight sees the in-flight call; preflight and worker reading one session at once; no handle left open (Windows archive move succeeds); eviction of sweep and hook sessions.
   - Rollout in both modes: `Bash` rename with the hook's id and command; readiness waiting for `item_completed` and outputs; four parallel `exec_command` calls; attachments on the first response of their turn; reads after their output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; an interrupted response dropped without losing its tool results.
+  - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
   - MCP listing from a captured `codex mcp list --json`, `env` never copied, every failure leaving events otherwise unchanged.
   - Daemon: racing starts (one daemon, both served); stale `daemon.json`; squatted port receiving nothing; restarts on version, config and token change without backoff or fallback; daemon started during backoff used; missing secret, wrong `Host`, `Origin` refused; watchdog; crash mid-request; request during idle exit; idle exit with a failing push; spawn backoff; spawn holding none of the hook's pipes; fallback within each budget; `state_dir` from `platformdirs`.
@@ -453,7 +462,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 
 1. **Identity id space.** Does the configured `user-…` (ChatGPT workspace user) match the OpenAI connection's synced `IdentifierFromSource`? If not, every preflight under a policy denies as `identity_absent`.
 2. **Other tools.** Capture MCP calls, `apply_patch`, web search, a failing command, parallel calls and a script-mode `exec` running several commands: whether `PreToolUse` fires, its `tool_name` (`mcp__<server>__<tool>` is documented, not seen) and `item_completed` type. Include a turn with reasoning to check the token math.
-3. **Compaction, resume and fork.** Capture their rollouts. A fork that copies `token_usage_record`s would be re-sent under its new, empty watermark; skip copied records by `response_id` or the fork's creation time. A compacted or partially copied history does not reach round one, yet `round_links` would end in `"start"`; the builder then needs a way to force `"..."` (e.g. an `EventEnvelope` flag). `SessionStart.source` (`resume`, `compact`) may announce these cases.
+3. **Compaction as an event.** The compaction call is emitted as an invocation so its tokens are counted (input: the history before it; output: an opaque marker). To confirm: whether consumers should see it under its own `parsed_as` or `stop_reason`.
 4. **Subagents.** Whether their tool hooks fire, and under which `session_id` and rollout.
 5. **Mode per surface.** Desktop used function mode, `codex exec` script mode; whether the CLI, IDE extension and later versions switch is unknown, hence both.
 6. **Daemon lifetime on macOS and Windows.** Linux is measured. Open: macOS; Windows kill-on-close jobs and whether breakaway is allowed; endpoint-security tools. If the daemon dies with the app, the next sweep covers the gap.
