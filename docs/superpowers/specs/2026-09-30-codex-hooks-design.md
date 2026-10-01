@@ -51,7 +51,7 @@ Every payload carries `session_id`, `transcript_path`, `cwd`, `hook_event_name`,
 
 | Event | Extra fields |
 |---|---|
-| `SessionStart` | `source` |
+| `SessionStart` | `source`: `startup` (measured), `resume`, `clear`, `compact` (documented) |
 | `UserPromptSubmit` | `turn_id`, `prompt` |
 | `PreToolUse` | `turn_id`, `tool_name`, `tool_input`, `tool_use_id` |
 | `PostToolUse` | as `PreToolUse`, plus `tool_response` |
@@ -453,7 +453,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 
 1. **Identity id space.** Does the configured `user-…` (ChatGPT workspace user) match the OpenAI connection's synced `IdentifierFromSource`? If not, every preflight under a policy denies as `identity_absent`.
 2. **Other tools.** Capture MCP calls, `apply_patch`, web search, a failing command, parallel calls and a script-mode `exec` running several commands: whether `PreToolUse` fires, its `tool_name` (`mcp__<server>__<tool>` is documented, not seen) and `item_completed` type. Include a turn with reasoning to check the token math.
-3. **Compaction, resume and fork.** Capture their rollouts. A fork that copies `token_usage_record`s would be re-sent under its new, empty watermark; skip copied records by `response_id` or the fork's creation time. A compacted or partially copied history does not reach round one, yet `round_links` would end in `"start"`; the builder then needs a way to force `"..."` (e.g. an `EventEnvelope` flag).
+3. **Compaction, resume and fork.** Capture their rollouts. A fork that copies `token_usage_record`s would be re-sent under its new, empty watermark; skip copied records by `response_id` or the fork's creation time. A compacted or partially copied history does not reach round one, yet `round_links` would end in `"start"`; the builder then needs a way to force `"..."` (e.g. an `EventEnvelope` flag). `SessionStart.source` (`resume`, `compact`) may announce these cases.
 4. **Subagents.** Whether their tool hooks fire, and under which `session_id` and rollout.
 5. **Mode per surface.** Desktop used function mode, `codex exec` script mode; whether the CLI, IDE extension and later versions switch is unknown, hence both.
 6. **Daemon lifetime on macOS and Windows.** Linux is measured. Open: macOS; Windows kill-on-close jobs and whether breakaway is allowed; endpoint-security tools. If the daemon dies with the app, the next sweep covers the gap.
