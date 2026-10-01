@@ -240,14 +240,14 @@ An event's files come from two sources, neither of which reads a file at emit ti
 
 **File records**, written by the preflight hooks, which hash files on disk when the model is about to see them; collection never reads a file.
 
-**File records** (`FileRecordStore`, in `state.sqlite3`), one per hook, with the time it was written:
+**File records** (`FileRecordStore`, in `state.sqlite3`), one per hook, with the hook's `turn_id` and the time it was written:
 
 - `UserPromptSubmit` stores the prompt's attachments under its `turn_id` (`provenance: "attachment"`).
 - `PreToolUse` stores the file its call reads under its `tool_use_id` (`provenance: "tool_result"`). That id is also the `item_completed` item id for the call: `call_…` in function mode, `exec-<uuid>` in script mode, so the record joins in both modes.
 
 An event's `accessed_files` lists every file new in the input of the round it consumed: the tool-result entries, plus the records for the `turn_id` of the user message in that round and for the `item_completed` tool items whose outputs are in it, deduplicated by `(name, sha256)`. A whole-file read gives the same hash from both sources and appears once; a ranged read appears twice, as the file that was checked and as the part the model saw. Image attachments are also in the rollout (`input_image`), and are hashed from it like other sources' inline attachments; other attachments come only from records, so a turn that ran while the daemon was unavailable has none.
 
-When the watermark is saved, every record written before that `token_usage_record`'s `timestamp` is deleted; this also clears records of calls that never produced output (e.g. denied). The sweep deletes records older than 7 days as a backstop.
+A record lives until its round is sent, however long the tool runs: when the watermark is saved past a response, the records that response consumed are deleted. Records nothing will consume (a denied call, a call whose turn was interrupted before its output) are deleted when the watermark passes the last response of their `turn_id` and that turn's end (`task_complete` or `turn_aborted`) is in the log. The sweep deletes records older than 7 days as a backstop.
 
 ## Enforcement
 
@@ -296,7 +296,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 1. Locates the rollout: `transcript_path`, else `*-<session_id>*.jsonl` under `sessions/` and `archived_sessions/`, else stops. A trigger with a `null` `transcript_path` and no file is ignored.
 2. Refreshes the log. A new send cursor starts with `skip_to(watermark)`.
 3. Pulls up to a batch of closed responses from the send cursor with `next_closed()` and builds their events.
-4. Sends the batch through `push_invocations`, saves the watermark at its last `token_usage_record` and deletes the file records written before it, then repeats from 3 until `next_closed()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
+4. Sends the batch through `push_invocations`, saves the watermark at its last `token_usage_record` and deletes the file records the batch consumed and those of turns it finished, then repeats from 3 until `next_closed()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
 
 **Watermark.** `Checkpoint(timestamp, id)` in `checkpoint_store("codex-rollouts", session_id)`: the line `timestamp` and `response_id` of the last sent `token_usage_record`. A response is past it if it follows the record with that `response_id`, or, when that record is gone, if its line `timestamp` is later. Empty means everything. Saves only move forward.
 
@@ -392,7 +392,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: only when the text starts with the section, up to `## My request:`; each `## ` line split at the last `": "` before an absolute path (`/` or `X:\`). |
 | `preflight.py` | The preflight invocation, `sink.preflight_invocation`, the verdict. |
 | `emit.py` | Triggers, batches pulled from the send cursor, ordered sending, watermark, startup sweep. |
-| `state.py` | `FileRecordStore` protocol and its SQLite implementation: entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its write time; deletion before a timestamp and by age. |
+| `state.py` | `FileRecordStore` protocol and its SQLite implementation: entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
 | `deploy/requirements.toml` | The managed block below. |
 
 ## Deployment
@@ -484,7 +484,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
   - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted` or `compacted`; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
   - Rollout in both modes: `exec_command` and `exec` mapped to `Bash` from their own lines (function mode: the hook's id and command; script mode: a single `tools.exec_command` or `tools.view_image` call unwrapped, any other script kept as `exec`); each response emitted at its `token_usage_record`; four parallel `exec_command` calls; an interrupted response dropped without losing its tool results.
-  - Files on events: tool-result hashes for `Bash` reads (header stripped in both modes) and `view_image`; whole-file reads deduplicated against their record, ranged reads reported twice; attachment records on the first response of their turn; read records joined by `item_completed` id in both modes (`call_…`, `exec-<uuid>`); a file changed or deleted after its preflight reported with its preflight hash; no record, no file; records deleted when the watermark passes them, including those of denied calls.
+  - Files on events: tool-result hashes for `Bash` reads (header stripped in both modes) and `view_image`; whole-file reads deduplicated against their record, ranged reads reported twice; attachment records on the first response of their turn; read records joined by `item_completed` id in both modes (`call_…`, `exec-<uuid>`); a file changed or deleted after its preflight reported with its preflight hash; no record, no file; a record kept while its tool runs long after its issuing response was sent, and deleted once the consuming response is sent; records of denied and interrupted calls deleted when their turn is finished and sent.
   - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
   - MCP listing from a captured `codex mcp list --json`, `env` never copied, every failure leaving events otherwise unchanged.
