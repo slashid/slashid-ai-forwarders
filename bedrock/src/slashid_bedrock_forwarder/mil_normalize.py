@@ -8,7 +8,7 @@ honestly reflect whether we understood the record.
 ``on_parse`` callbacks fire after both parses succeed and receive
 ``(record, request, response)`` — extended from Phase 1.1's
 ``(record, response)`` so callbacks can read request-side data. Today
-only the token backfill uses it; ``request`` is present for future
+only token accounting uses it; ``request`` is present for future
 extensions.
 
 ``normalize_record(record, *, config)`` returns the canonical shape (or
@@ -47,6 +47,18 @@ from slashid_ai_forwarder_core.normalize.converse.schema import (
     ConverseResponse,
 )
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
+from slashid_ai_forwarder_core.normalize.openai.responses.normalize import (
+    responses_stream_to_normalized_invocation,
+    responses_to_normalized_invocation,
+)
+from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
+    Response,
+    ResponsesRequest,
+    ResponseStreamEvent,
+    ResponsesUsage,
+    final_response,
+)
+from slashid_ai_forwarder_core.normalize.openai.usage import responses_usage_to_tokens
 
 log = logging.getLogger(__name__)
 
@@ -103,6 +115,25 @@ def _on_anthropic_stream_parse(
     _backfill_tokens_from_usage(rec, extract_stream_usage(events))
 
 
+def _on_openai_response_parse(
+    rec: dict[str, Any],
+    request: ResponsesRequest,
+    response: Response,
+) -> None:
+    del request
+    _overwrite_tokens_from_responses_usage(rec, response.usage)
+
+
+def _on_openai_stream_parse(
+    rec: dict[str, Any],
+    request: ResponsesRequest,
+    events: list[ResponseStreamEvent],
+) -> None:
+    del request
+    response = final_response(events)
+    _overwrite_tokens_from_responses_usage(rec, response.usage if response else None)
+
+
 _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOut] pairs
     _Format(
         name="anthropic-message",
@@ -123,6 +154,20 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
         request_adapter=TypeAdapter(ConverseRequestBody),
         response_adapter=TypeAdapter(ConverseResponse),
         to_invocation=converse_to_normalized_invocation,
+    ),
+    _Format(
+        name="openai-responses",
+        request_adapter=TypeAdapter(ResponsesRequest),
+        response_adapter=TypeAdapter(Response),
+        to_invocation=responses_to_normalized_invocation,
+        on_parse=_on_openai_response_parse,
+    ),
+    _Format(
+        name="openai-responses-stream",
+        request_adapter=TypeAdapter(ResponsesRequest),
+        response_adapter=TypeAdapter(list[ResponseStreamEvent]),
+        to_invocation=responses_stream_to_normalized_invocation,
+        on_parse=_on_openai_stream_parse,
     ),
 ]
 
@@ -187,6 +232,24 @@ def _backfill_tokens_from_usage(
     _set_if_absent(out, "outputTokenCount", usage.output_tokens)
     _set_if_absent(inp, "cacheReadInputTokenCount", usage.cache_read_input_tokens)
     _set_if_absent(inp, "cacheWriteInputTokenCount", usage.cache_creation_input_tokens)
+
+
+def _overwrite_tokens_from_responses_usage(
+    record: dict[str, Any],
+    usage: ResponsesUsage | None,
+) -> None:
+    """Replace MIL token counts with the additive split from body.usage."""
+    if usage is None:
+        return
+    # MIL copies OpenAI's inclusive totals; the wire model wants them disjoint.
+    tokens = responses_usage_to_tokens(usage)
+    inp = record.setdefault("input", {})
+    out = record.setdefault("output", {})
+    inp["inputTokenCount"] = tokens.input
+    inp["cacheReadInputTokenCount"] = tokens.cache_read
+    inp["cacheWriteInputTokenCount"] = tokens.cache_write
+    out["outputTokenCount"] = tokens.output
+    out["reasoningTokenCount"] = tokens.reasoning
 
 
 def _set_if_absent(container: dict[str, Any], key: str, value: int | None) -> None:

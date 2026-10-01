@@ -66,13 +66,13 @@ async def responses_to_normalized_invocation(
 
 
 async def responses_stream_to_normalized_invocation(
-    request: ResponsesRequest, events: list[ResponseStreamEvent], *, config: BaseConfig
+    request: ResponsesRequest, response: list[ResponseStreamEvent], *, config: BaseConfig
 ) -> NormalizedInvocation:
     del config
-    response = final_response(events)
-    if response is None:
+    final = final_response(response)
+    if final is None:
         return NormalizedInvocation(input=_request_to_input(request))
-    return to_normalized(request, response)
+    return to_normalized(request, final)
 
 
 def _request_to_input(request: ResponsesRequest) -> NormalizedInvocationInput:

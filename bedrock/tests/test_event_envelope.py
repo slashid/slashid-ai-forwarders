@@ -8,6 +8,8 @@ that consumes the envelope is tested in shared/tests/test_events.py.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +20,7 @@ from slashid_ai_forwarder_core.normalize.converse.normalize import (
 )
 
 from slashid_bedrock_forwarder.event_envelope import bedrock_envelope
+from slashid_bedrock_forwarder.mil_normalize import normalize_record
 
 
 def _config(*, include_raw_content: bool = False, max_content_size: int = 100_000) -> BaseConfig:
@@ -190,6 +193,23 @@ def test_bedrock_envelope_extracts_tokens_from_top_level_fields() -> None:
     assert env.tokens.cache_read == 3
     assert env.tokens.cache_write == 7
     assert env.tokens.reasoning == 0
+
+
+def test_bedrock_envelope_reads_reasoning_token_count() -> None:
+    record = _mil_record(output={"outputTokenCount": 11, "reasoningTokenCount": 12})
+    env = bedrock_envelope(record)
+    assert env is not None
+    assert env.tokens.reasoning == 12
+
+
+async def test_bedrock_envelope_openai_responses_tokens() -> None:
+    path = Path(__file__).parent / "fixtures" / "openai_responses_mil.json"
+    record: dict[str, Any] = json.loads(path.read_text())
+    await normalize_record(record, config=_config())
+    env = bedrock_envelope(record)
+    assert env is not None
+    assert env.parsed_as == "openai-responses"
+    assert (env.tokens.input, env.tokens.output, env.tokens.reasoning) == (12, 11, 12)
 
 
 def test_bedrock_envelope_defaults_tokens_to_zero_when_absent() -> None:
