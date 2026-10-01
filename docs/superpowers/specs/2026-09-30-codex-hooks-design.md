@@ -273,7 +273,9 @@ The server derives `invoke_model`, one `use_attachment` per file and, for `PreTo
 - `accessed_files`: the prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`) and the file records of the round's tool calls (`provenance: "tool_result"`).
 - `used_tools`: the round's tool results, named as collection names them, `is_error` from the item's `exit_code`/`status`.
 
-The round's tool results are usually empty: they exist only when the user interrupted a response before it consumed them.
+Every tool result is consumed by a later round, but within its own turn: after a tool returns, Codex calls the model again without a prompt, and no hook fires for that round. By the next prompt the turn's last response has consumed every result, so `UserPromptSubmit`'s round normally holds only the prompt and its attachments; it holds tool results only when the user interrupted a response before it consumed them.
+
+This is a coverage gap compared with Anthropic, whose inference hook fires on every model call, tool-result rounds included. In Codex a tool's result reaches the model unchecked; the only check is `PreToolUse`, on the file before the read. Collection still reports those rounds after the fact.
 
 **`PreToolUse`** checks only the file its own call reads. `get_file_read_by_tool(tool_name, tool_input, workdir)` returns it: `view_image` → `path`; `Bash` → the single path of a plain `cat`, `head`, `tail`, `nl` or `sed -n '<range>p'`, split with `shlex`; a pipe, `;`, `&&`, redirection, glob or several paths → `None`. Relative paths resolve against the call's own `workdir`, which the hook's `tool_input` drops: it comes from the call in `pending` (function mode), else the payload's `cwd`.
 
