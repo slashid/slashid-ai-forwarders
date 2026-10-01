@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .content_utils import truncate_middle
 from .normalize.normalized.otel import extract_otel
 from .normalize.turn import after_last_assistant
+from .rounds import round_links
 
 if TYPE_CHECKING:
     # events.py already has ``from __future__ import annotations`` so
@@ -347,6 +348,11 @@ class AIInvocationObservedV1(_WireModel):
     # lands.
     user_agent: str | None = None
     conversation_id: str | None = None
+    # Stitching hashes (see ``rounds.py``). ``round_hash`` is absent when the
+    # event has no response. ``recent_round_hashes`` is newest first and ends
+    # with ``"start"`` when it reaches the first round and ``"..."`` when not.
+    round_hash: str | None = None
+    recent_round_hashes: list[str] | None = None
     input: AIInvocationContent | None = None
     output: AIInvocationContent | None = None
     accessed_files: list[AIAccessedFile] | None = None
@@ -595,10 +601,21 @@ async def build_event_from_normalized(
     text. Flip via the SLASHID_INCLUDE_RAW_CONTENT env var (CFN
     parameter same name). ``_build_content`` stays typed on primitives;
     we unpack the config here at the boundary.
+
+    ``input`` hashes the messages alone, limited to the round the model
+    consumed unless ``config.input_scope`` is ``session``. Tool metadata has
+    its own top-level fields.
     """
     servers = normalized.input.tool_servers
     tools = normalized.input.tools_declared
     used = _used_tools(normalized)
+    messages = normalized.input.messages
+    hashed = after_last_assistant(messages) if config.input_scope == "round" else messages
+    answer = normalized.output.message
+    round_hash, recent_round_hashes = round_links(
+        [*messages, answer] if answer is not None else messages,
+        depth=config.round_link_depth,
+    )
 
     return AIInvocationObservedV1(
         request_id=envelope.request_id,
@@ -613,8 +630,10 @@ async def build_event_from_normalized(
         available_tools=tools or None,
         used_tools=used or None,
         stop_reason="error" if envelope.is_error else normalized.output.stop_reason,
+        round_hash=round_hash,
+        recent_round_hashes=recent_round_hashes or None,
         input=_build_content(
-            _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
+            [m.model_dump(mode="json", exclude_none=True) for m in hashed],
             include_text=config.include_raw_content,
             max_content_size=config.max_content_size,
         ),

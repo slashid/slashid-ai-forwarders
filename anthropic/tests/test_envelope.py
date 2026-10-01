@@ -24,6 +24,7 @@ from slashid_anthropic_forwarder.hook.envelope import (
     signed_at_iso,
 )
 from slashid_anthropic_forwarder.hook.frame import PromptFrame
+from slashid_anthropic_forwarder.pending import unanswered_round
 from tests.conftest import SECRET
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -169,15 +170,49 @@ async def test_input_ends_before_the_trailing_run() -> None:
         load("frame_subagent_child"),
         request_id=ADDRESS,
         signed_at=SIGNED_AT,
-        config=config(include_raw_content=True),
+        config=config(include_raw_content=True, input_scope="session"),
     )
     assert event is not None and event.input is not None and event.output is not None
     body = event.input.redacted_text or ""
-    assert "wc -l /home/alice/proj/a.txt" in body  # the round the run consumed
+    assert "wc -l /home/alice/proj/a.txt" in body  # the transcript up to the round it consumed
     assert "toolu_01UbdhcQRwkxR8JFoAGZi2i9" not in body  # the trailing run itself
     assert "alpha line one" not in body  # the fresh round, which is the tail's
     # That run is not missing, it is the answer.
     assert "toolu_01UbdhcQRwkxR8JFoAGZi2i9" in (event.output.redacted_text or "")
+
+
+async def test_round_scope_keeps_only_the_round_the_run_consumed() -> None:
+    event = await partial_event(
+        load("frame_subagent_child"),
+        request_id=ADDRESS,
+        signed_at=SIGNED_AT,
+        config=config(include_raw_content=True),
+    )
+    assert event is not None and event.input is not None
+    body = event.input.redacted_text or ""
+    assert "3 /home/alice/proj/a.txt" in body  # the tool result it consumed
+    assert "wc -l /home/alice/proj/a.txt" not in body  # earlier rounds are not repeated
+    assert "toolu_01UbdhcQRwkxR8JFoAGZi2i9" not in body
+    assert "alpha line one" not in body
+
+
+async def test_a_tail_has_no_round_hash_and_lists_the_rounds_its_neighbour_does() -> None:
+    """The trailing run is two messages here, which the record merges into one
+    answer and the tail sees as two: both must hash the same round."""
+    frame = load("frame_subagent_child")
+    aside = AnthropicRequestMessage.model_validate(
+        {"role": "assistant", "content": [{"type": "text", "text": "checking"}]}
+    )
+    split = frame.model_copy(update={"messages": [*frame.messages[:3], aside, *frame.messages[3:]]})
+    event = await partial_event(split, request_id=ADDRESS, signed_at=SIGNED_AT, config=config())
+    tail = await unanswered_round(split, webhook_id="wh", signed_at=SIGNED_AT, config=config())
+    assert event is not None and tail is not None
+    assert event.round_hash is not None
+    assert tail.round_hash is None and tail.output is None
+    assert tail.recent_round_hashes == event.recent_round_hashes
+    assert event.recent_round_hashes is not None
+    assert event.recent_round_hashes[0] == event.round_hash
+    assert event.recent_round_hashes[-1] == "start"
 
 
 async def test_the_fresh_round_cannot_change_the_record() -> None:

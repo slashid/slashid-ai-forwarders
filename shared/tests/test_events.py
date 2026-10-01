@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -24,7 +24,6 @@ from slashid_ai_forwarder_core.events import (
     AWSIdentityDetails,
     EventEnvelope,
     GCPIdentityDetails,
-    _strip_empty_top,
     build_event_from_normalized,
     build_sparse_event,
     parse_tool_name,
@@ -36,14 +35,30 @@ from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
 from slashid_ai_forwarder_core.normalize.converse.normalize import (
     converse_dict_to_normalized,
 )
+from slashid_ai_forwarder_core.normalize.normalized.tools import build_tools_declared
+from slashid_ai_forwarder_core.normalize.normalized.types import (
+    NormalizedContent,
+    NormalizedInvocation,
+    NormalizedInvocationInput,
+    NormalizedInvocationOutput,
+    NormalizedMessage,
+)
 
 
-def _config(*, include_raw_content: bool = False, max_content_size: int = 100_000) -> BaseConfig:
+def _config(
+    *,
+    include_raw_content: bool = False,
+    max_content_size: int = 100_000,
+    input_scope: Literal["session", "round"] = "round",
+    round_link_depth: int = 10,
+) -> BaseConfig:
     return BaseConfig(
         endpoint="http://test",
         push_token="test",
         include_raw_content=include_raw_content,
         max_content_size=max_content_size,
+        input_scope=input_scope,
+        round_link_depth=round_link_depth,
     )
 
 
@@ -973,10 +988,10 @@ async def test_content_fields_default_to_hash_only() -> None:
     event = await build_event_from_normalized(normalized, _envelope(record), config=_config())
     assert event.input is not None
 
-    # Hash the canonical input serialization — same as build_event_from_normalized does
-    # (empty top-level containers stripped for pre-drive-by hash stability).
+    # Hash the canonical input serialization — same as build_event_from_normalized does:
+    # the messages alone, as a JSON array.
     canonical_input = json.dumps(
-        _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
+        [m.model_dump(mode="json", exclude_none=True) for m in normalized.input.messages],
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
@@ -1004,10 +1019,9 @@ async def test_content_fields_include_raw_when_opted_in() -> None:
     assert event.input is not None
     assert event.input.redacted_text is not None
     # Canonical serialization is deterministic; compare via re-serialization
-    # (matches build_event_from_normalized: empty top-level containers stripped
-    # for hash stability).
+    # (matches build_event_from_normalized: the messages alone, as an array).
     canonical = json.dumps(
-        _strip_empty_top(normalized.input.model_dump(mode="json", exclude_none=True)),
+        [m.model_dump(mode="json", exclude_none=True) for m in normalized.input.messages],
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -1423,3 +1437,141 @@ def test_sparse_event_carries_conversation_id() -> None:
     assert event.conversation_id is None
     env_with = env.model_copy(update={"conversation_id": "sess_1"})
     assert build_sparse_event(env_with, config=_config()).conversation_id == "sess_1"
+
+
+def _msg(role: Literal["system", "user", "assistant"], text: str) -> NormalizedMessage:
+    return NormalizedMessage(role=role, content=[NormalizedContent(kind="text", text=text)])
+
+
+def _invocation(messages: list[NormalizedMessage], answer: str = "ok") -> NormalizedInvocation:
+    return NormalizedInvocation(
+        input=NormalizedInvocationInput(messages=messages),
+        output=NormalizedInvocationOutput(
+            message=_msg("assistant", answer), stop_reason="end_turn"
+        ),
+    )
+
+
+def _plain_envelope() -> EventEnvelope:
+    return EventEnvelope(
+        request_id="r",
+        timestamp="2026-06-01T12:00:00+00:00",
+        identity_details=AWSIdentityDetails(principal_arn="arn:aws:iam::1:user/a"),
+        model=AIModel(id="m"),
+        parsed_as="test",
+    )
+
+
+def _canonical_sha256(body: object) -> str:
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+async def test_round_scope_hashes_only_the_consumed_round() -> None:
+    history = [_msg("user", "a"), _msg("assistant", "b"), _msg("user", "c")]
+    event = await build_event_from_normalized(
+        _invocation(history), _plain_envelope(), config=_config()
+    )
+    assert event.input is not None and event.input.content_hashes is not None
+    assert event.input.content_hashes["sha256"] == _canonical_sha256(
+        [history[2].model_dump(mode="json", exclude_none=True)]
+    )
+
+
+async def test_session_scope_hashes_the_whole_transcript_as_a_message_list() -> None:
+    history = [_msg("user", "a"), _msg("assistant", "b"), _msg("user", "c")]
+    event = await build_event_from_normalized(
+        _invocation(history), _plain_envelope(), config=_config(input_scope="session")
+    )
+    assert event.input is not None and event.input.content_hashes is not None
+    assert event.input.content_hashes["sha256"] == _canonical_sha256(
+        [m.model_dump(mode="json", exclude_none=True) for m in history]
+    )
+
+
+async def test_a_leading_system_message_is_in_round_one_and_not_round_two() -> None:
+    first = await build_event_from_normalized(
+        _invocation([_msg("system", "sys"), _msg("user", "a")]), _plain_envelope(), config=_config()
+    )
+    second = await build_event_from_normalized(
+        _invocation(
+            [_msg("system", "sys"), _msg("user", "a"), _msg("assistant", "b"), _msg("user", "c")]
+        ),
+        _plain_envelope(),
+        config=_config(),
+    )
+    assert first.input is not None and second.input is not None
+    assert first.input.byte_length and second.input.byte_length
+    assert first.input.byte_length > second.input.byte_length
+
+
+async def test_input_does_not_depend_on_declared_tools() -> None:
+    bare = _invocation([_msg("user", "a")])
+    declared = _invocation([_msg("user", "a")])
+    tools, servers = build_tools_declared([("Read", None, None)])
+    declared.input.tools_declared, declared.input.tool_servers = tools, servers
+    one = await build_event_from_normalized(bare, _plain_envelope(), config=_config())
+    two = await build_event_from_normalized(declared, _plain_envelope(), config=_config())
+    assert one.input == two.input
+
+
+async def test_used_tools_still_resolve_against_history_in_round_scope() -> None:
+    # the tool_use is one round back; its result is in the consumed round.
+    history = [
+        _msg("user", "go"),
+        NormalizedMessage(
+            role="assistant",
+            content=[
+                NormalizedContent(
+                    kind="tool_use", tool_use_id="t1", tool_name="Read", tool_input={}
+                )
+            ],
+        ),
+        NormalizedMessage(
+            role="user",
+            content=[NormalizedContent(kind="tool_result", tool_use_id="t1", tool_output="x")],
+        ),
+    ]
+    invocation = _invocation(history)
+    tools, servers = build_tools_declared([("Read", None, None)])
+    invocation.input.tools_declared, invocation.input.tool_servers = tools, servers
+    event = await build_event_from_normalized(invocation, _plain_envelope(), config=_config())
+    assert event.used_tools is not None and len(event.used_tools) == 1
+
+
+async def test_event_carries_round_hash_and_recent_hashes() -> None:
+    event = await build_event_from_normalized(
+        _invocation([_msg("user", "a")]), _plain_envelope(), config=_config()
+    )
+    assert event.round_hash is not None
+    assert event.recent_round_hashes == [event.round_hash, "start"]
+
+
+async def test_round_link_depth_comes_from_config() -> None:
+    history = [m for i in range(5) for m in (_msg("user", f"u{i}"), _msg("assistant", f"a{i}"))]
+    event = await build_event_from_normalized(
+        _invocation([*history, _msg("user", "u5")]),
+        _plain_envelope(),
+        config=_config(round_link_depth=3),
+    )
+    assert event.recent_round_hashes is not None
+    assert len(event.recent_round_hashes) == 4 and event.recent_round_hashes[-1] == "..."
+
+
+async def test_an_event_with_no_transcript_carries_no_links() -> None:
+    event = await build_event_from_normalized(
+        NormalizedInvocation(), _plain_envelope(), config=_config()
+    )
+    assert event.round_hash is None and event.recent_round_hashes is None
+
+
+async def test_an_event_without_an_answer_has_no_round_hash() -> None:
+    invocation = NormalizedInvocation(
+        input=NormalizedInvocationInput(
+            messages=[_msg("user", "a"), _msg("assistant", "b"), _msg("user", "c")]
+        )
+    )
+    event = await build_event_from_normalized(invocation, _plain_envelope(), config=_config())
+    assert event.round_hash is None
+    assert event.recent_round_hashes is not None and event.recent_round_hashes[-1] == "start"

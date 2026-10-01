@@ -9,6 +9,8 @@ All values come from environment variables with the ``SLASHID_`` prefix.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,6 +35,11 @@ class BaseConfig(BaseSettings):
     # the header and the tail of large bodies. Applies to input, output, and
     # accessed file contents when include_raw_content is True.
     max_content_size: int = 100_000
+    # ``round`` hashes only the messages the model consumed; ``session`` the
+    # whole transcript before the response.
+    input_scope: Literal["session", "round"] = "round"
+    # How many rounds ``recent_round_hashes`` lists, own round included.
+    round_link_depth: int = Field(10, ge=1)
     request_timeout_seconds: float = 10.0
     max_retries: int = 3
 

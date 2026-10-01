@@ -1731,7 +1731,7 @@ dev = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "slashid-anthropic-forwarder"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
@@ -1766,7 +1766,7 @@ dev = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "slashid-bedrock-forwarder"
-version = "0.1.4"
+version = "0.1.5"
 source = { editable = "bedrock" }
 dependencies = [
     { name = "slashid-ai-forwarder-core", extra = ["converse"] },
@@ -1777,7 +1777,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-vertex-forwarder"
-version = "0.1.8"
+version = "0.1.9"
 source = { editable = "vertex" }
 dependencies = [
     { name = "functions-framework" },

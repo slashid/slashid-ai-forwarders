@@ -149,6 +149,8 @@ All env vars use the `SLASHID_` prefix:
 | `SLASHID_MAX_ROWS_PER_TICK` | no | `1000` |
 | `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |
 | `SLASHID_MAX_CONTENT_SIZE` | no | `100000` |
+| `SLASHID_INPUT_SCOPE` | no | `round` (the messages since the last response; `session` sends the whole transcript) |
+| `SLASHID_ROUND_LINK_DEPTH` | no | `10` (rounds listed in `recent_round_hashes`) |
 
 ## Release
 

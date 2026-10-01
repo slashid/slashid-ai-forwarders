@@ -319,6 +319,8 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_SOFT_JOIN_WINDOW_SECONDS` | no | `15` |
 | `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |
 | `SLASHID_MAX_CONTENT_SIZE` | no | `100000` |
+| `SLASHID_INPUT_SCOPE` | no | `round` (the messages since the last response; `session` sends the whole transcript) |
+| `SLASHID_ROUND_LINK_DEPTH` | no | `10` (rounds listed in `recent_round_hashes`) |
 | `SLASHID_REQUEST_TIMEOUT_SECONDS` | no | `10.0` — *container-env-only* |
 | `SLASHID_MAX_RETRIES` | no | `3` — *container-env-only* |
 | `SLASHID_CAPTURE_BUCKET` | no | — *container-env-only*, test tenants |
