@@ -165,7 +165,7 @@ Every request needs `Host: 127.0.0.1:<port>` exactly (DNS rebinding) and no `Ori
 
 ### Threads
 
-- Preflight runs on the event loop, its blocking parts (SQLite, hashing, `get_conversation_so_far`) in `asyncio.to_thread`.
+- Preflight runs on the event loop, its blocking parts (SQLite, hashing, refreshing the log and advancing the head cursor) in `asyncio.to_thread`.
 - Collection and the sweep run on one worker thread, so parsing and pushing never delay a verdict.
 - A watchdog thread `os._exit`s the daemon when the loop's 1 s heartbeat is more than 10 s stale, so a hung daemon releases its lock and the next hook replaces it.
 
@@ -184,24 +184,36 @@ There is no in-process fallback. Client deadlines sit inside the hook timeouts: 
 
 ## Session model
 
-### Cache
+### Log and cursors
 
-`sessions: dict[session_id, SessionState]`, each with:
+The daemon keeps, per session, one `SessionLog` and two `RolloutCursor`s, under a `threading.Lock`.
 
-- `committed`: append-only `list[NormalizedMessage]`, history up to the last ready response.
-- `pending`: everything read after it: the in-flight response's output and unconsumed tool results.
-- `offset`: bytes read so far; an unfinished last line waits for its newline.
-- Context: `base_instructions`, current `model` and `turn_id`, `originator`, `cli_version`, `window_number`, and the tool-call index (`call_id` → `item_completed` item(s)).
-- `outbox`: built events waiting to be sent, in order.
-- A `threading.Lock`.
+**`SessionLog`**: what was read, and nothing derived.
 
-`get_conversation_so_far(session_id) -> tuple[NormalizedMessage, ...]`, under the lock: open the rollout, seek to `offset`, read to the end, close; apply the new lines; return `tuple(committed + pending)`. The tuple is a snapshot: later appends never appear in it. Messages are shared, not copied; `NormalizedMessage` and `NormalizedContent` are frozen. `turn_aborted` replaces `pending` and `compacted` starts a new `committed` list; neither mutates a list a snapshot was taken from.
+- The parsed rollout lines (frozen models), the byte `offset`, and an unfinished last line that waits for its newline.
+- `refresh()`: open the rollout, seek to `offset`, read to the end, close, append. Appending is its only mutation.
+- No handle stays open between refreshes: on Windows it would stop Codex from moving the file to `archived_sessions/`.
+- A file smaller than `offset`, or with another identity (inode / Windows file index), is read again from byte 0 into a new log, and the session's cursors are recreated.
+- A fork's log starts with its parent's lines up to `end_byte_offset` (see Fork base below).
 
-- No handle stays open between calls: on Windows it would stop Codex from moving the file to `archived_sessions/`.
-- A file smaller than `offset`, or with another identity (inode / Windows file index), is rebuilt from byte 0.
-- Eviction: a session is dropped when `outbox_empty and (not session_started or now > last_hook_at + 10 min)`. `session_started` becomes true with any hook for the session and false with its `SessionEnd`; sessions loaded by the startup sweep start false. A dropped session is rebuilt from byte 0 on next use (a resume after `SessionEnd` included).
+**`RolloutCursor`**: a position in the log and the state derived up to it by the rules below: `committed` (history up to the last ready response), `pending` (the in-flight response's output and unconsumed tool results), `base_instructions`, `originator`, `cli_version`, current `model` and `turn_id`, `window_number`, `history_truncated`, and the tool-call index (`call_id` → `item_completed` item(s)).
+
+- `next_ready() -> RolloutInvocation | None`: advance until the next response is ready and return it with the history it consumed as an immutable snapshot; `None` when the log has nothing more to give.
+- `skip_to(watermark)`: advance, folding every line, past the response the watermark names (or, if it is gone, past the last response at or before its timestamp), without returning anything.
+- `advance_to_end()`; `view() -> tuple[NormalizedMessage, ...]`: `committed + pending` and the current context.
+
+A round returned by `next_ready()` is self-contained: a later `turn_aborted` or `compacted` changes only the cursor's state, never the log or a round already returned. `NormalizedMessage` and `NormalizedContent` are frozen and shared between rounds and snapshots, never copied.
+
+The two cursors:
+
+- **Head cursor**, for preflight: `refresh()`, `advance_to_end()`, `view()`. Always at the end of the log.
+- **Send cursor**, for collection: created with `skip_to(watermark)`, then pulled a batch at a time with `next_ready()`. A backlog stays in the log, not in memory as built events, and is built only as fast as it is sent.
+
+Eviction: a session (log and cursors) is dropped when `send_cursor_at_end and no batch in flight and (not session_started or now > last_hook_at + 10 min)`. `session_started` becomes true with any hook for the session and false with its `SessionEnd`; sessions loaded by the startup sweep start false. A dropped session is rebuilt from byte 0 on next use (a resume after `SessionEnd` included).
 
 ### Applying lines
+
+These rules fold the log into a cursor's state.
 
 - `session_meta` sets `base_instructions`, `originator`, `cli_version`; `turn_context` sets `model` and `turn_id`.
 - `response_item`s append to `pending`. Model-produced items written since the previous `token_usage_record` (assistant `message`, `reasoning`, `*_call`) are the current response's output; everything before is its input.
@@ -210,7 +222,7 @@ There is no in-process fallback. Client deadlines sit inside the hook timeouts: 
 - **Rename.** The index maps a call to its logical item(s): in function mode the item whose `id` equals the `call_id`; in script mode the tool items between the `custom_tool_call` and its output. A call with exactly one `CommandExecution` becomes `function_call{name: "Bash", call_id: <item id>, arguments: {command: <script>}}`, its output the matching `function_call_output`. `<script>` equals the hook's `tool_input.command`: the last argv element for `[<shell>, "-lc" | "-c", <script>]`, else `shlex.join(argv)`. Function-mode `exec_command` is renamed the same way. Anything else (no item, several items from one script, overlapping parallel calls, uncaptured item types) keeps its raw name and `call_id`, and still counts as a declared and used tool.
 - **Interrupts.** A response without a `token_usage_record` is never emitted. On `turn_aborted` its model-produced items (`reasoning`, assistant text) are dropped from `pending`; its tool results stay, for the next response to consume. The `<turn_aborted>` user message stays.
 - **Compaction.** The compaction call's `token_usage_record` closes a response like any other: input is the history before it, output an opaque compaction marker (the summary is encrypted). Then `compacted` starts a new `committed` list from `replacement_history` (user messages, and the `compaction` item as an opaque block), sets `window_number`, and the history no longer reaches round one.
-- **Fork base.** A `session_meta` with `history_base` first loads the parent's rollout (found by `thread_id` under `sessions/` or `archived_sessions/`, recursively if the parent is a fork) up to `end_byte_offset`, applying the same rules, then continues with the fork's own lines. The parent's responses are context only; they are never emitted for the fork, which sends only responses from its own file. The fork inherits the parent's `window_number`.
+- **Fork base.** A `session_meta` with `history_base` makes the log start with the parent's rollout (found by `thread_id` under `sessions/` or `archived_sessions/`, recursively if the parent is a fork) up to `end_byte_offset`, followed by the fork's own lines. The parent's responses are context only: a fork's send cursor first skips past them, so it sends only responses from its own file. The fork inherits the parent's `window_number`.
 - Unmodelled line types are skipped silently. Invalid JSON, or a modelled type that fails validation, is skipped and counted in `daemon.log`.
 
 ### Files on a response
@@ -240,7 +252,7 @@ An event's `accessed_files` lists every file new in its input since the previous
 
 The server derives `invoke_model`, one `use_attachment` per file and, for `PreToolUse`, `mcp_call{server, "tools/call", tool}` (`mcp__payroll__read` → `{payroll, read}`, `Bash` → `{builtin, Bash}`), and checks the hashes against sensitive files.
 
-**`UserPromptSubmit`** sends everything new in the model's input since its last response, the round rule events use. The round is the part of `get_conversation_so_far` after the last assistant message, plus the prompt (not in the rollout yet):
+**`UserPromptSubmit`** sends everything new in the model's input since its last response, the round rule events use. The round is the part of the head cursor's `view()` after the last assistant message, plus the prompt (not in the rollout yet):
 
 - `accessed_files`: the prompt's attachments (`parse_attachments(prompt)`, `hash_local_file`, `provenance: "attachment"`) and the file records of the round's tool calls (`provenance: "tool_result"`).
 - `used_tools`: the round's tool results, named as collection names them, `is_error` from the item's `exit_code`/`status`.
@@ -266,15 +278,15 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 `Stop`, `SessionStart` and `SessionEnd` mark their session as having new data. The worker then:
 
 1. Locates the rollout: `transcript_path`, else `*-<session_id>*.jsonl` under `sessions/` and `archived_sessions/`, else stops. A trigger with a `null` `transcript_path` and no file is ignored.
-2. Calls `get_conversation_so_far` and takes the responses that became ready since, skipping those at or before the watermark.
-3. Builds each event and appends it to the outbox.
-4. Sends the outbox in order through `push_invocations`, saving the watermark after each successful batch. A failed batch is retried with backoff and later events wait behind it, so the watermark never skips a response.
+2. Refreshes the log. A new send cursor starts with `skip_to(watermark)`.
+3. Pulls up to a batch of ready rounds from the send cursor with `next_ready()` and builds their events.
+4. Sends the batch through `push_invocations` and saves the watermark at its last `token_usage_record`, then repeats from 3 until `next_ready()` returns `None`. A failed batch is kept and retried with backoff; the cursor does not move past it, so the watermark never skips a response.
 
 **Watermark.** `Checkpoint(timestamp, id)` in `checkpoint_store("codex-rollouts", session_id)`: the line `timestamp` and `response_id` of the last sent `token_usage_record`. A response is past it if it follows the record with that `response_id`, or, when that record is gone, if its line `timestamp` is later. Empty means everything. Saves only move forward.
 
 **Repeats.** A push can repeat (a retry after a lost response, a daemon killed between pushing and saving). The server deduplicates on `(org_id, connection_id, request_id)` (`ai_invocations_processor.go`) and `request_id` is the `response_id`, so the copy is dropped.
 
-**Startup sweep.** On start the daemon lists rollouts under `sessions/` and `archived_sessions/` modified in the last 7 days and after the database's `created_at()`, skips those not modified since their watermark's `timestamp`, and processes the rest one session at a time, newest first, finishing each outbox before the next. A session with a hook trigger goes first. The `created_at()` bound keeps a fresh install from backfilling. The sweep also deletes watermarks and file records older than 7 days.
+**Startup sweep.** On start the daemon lists rollouts under `sessions/` and `archived_sessions/` modified in the last 7 days and after the database's `created_at()`, skips those not modified since their watermark's `timestamp`, and processes the rest one session at a time, newest first, each until its send cursor reaches the end of its log. A session with a hook trigger goes first. The `created_at()` bound keeps a fresh install from backfilling. The sweep also deletes watermarks and file records older than 7 days.
 
 **Event.** `responses_to_normalized_invocation(request, response)`, then `build_event_from_normalized` with:
 
@@ -349,12 +361,14 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 | `daemon.py` | Routes, guards, worker thread, watchdog, idle timer. |
 | `handler.py` | `handle(event, payload, config)`. |
 | `hooks.py` | Hook payload models. |
-| `cache.py` | `SessionState` store, `get_conversation_so_far`, file identity, eviction. |
-| `rollout.py` | Rollout line models; `SessionState.apply(lines)` returning newly ready responses. |
+| `log.py` | `SessionLog`: parsed lines, offset, refresh, file identity, fork base. |
+| `cursor.py` | `RolloutCursor`: the fold, `next_ready`, `skip_to`, `advance_to_end`, `view`. |
+| `cache.py` | Per-session log and cursors, locking, eviction. |
+| `rollout.py` | Rollout line models. |
 | `attachments.py` | `parse_attachments(text) -> list[Attachment(name, path, is_image)]`: only when the text starts with the section, up to `## My request:`; each `## ` line split at the last `": "` before an absolute path (`/` or `X:\`). |
 | `reads.py` | `get_file_read_by_tool`. |
 | `preflight.py` | The preflight invocation, `sink.preflight_invocation`, the verdict. |
-| `emit.py` | Triggers, outboxes, ordered sending, watermark, startup sweep. |
+| `emit.py` | Triggers, batches pulled from the send cursor, ordered sending, watermark, startup sweep. |
 | `state.py` | `FileRecordStore` protocol and its SQLite implementation (attachment entries by `turn_id`, pre-read entries by `tool_use_id`). |
 | `deploy/requirements.toml` | The managed block below. |
 
@@ -445,7 +459,7 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 - **codex:**
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
-  - Session cache: appends extend history; partial last line held back; shrunk or replaced file rebuilt; snapshots unchanged by later appends and `turn_aborted`; preflight sees the in-flight call; preflight and worker reading one session at once; no handle left open (Windows archive move succeeds); eviction of sweep sessions and of `SessionEnd`ed sessions once sent, of other hook sessions after 10 minutes; a resume after `SessionEnd` rebuilding the session.
+  - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted` or `compacted`; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
   - Rollout in both modes: `Bash` rename with the hook's id and command; readiness waiting for `item_completed` and outputs; four parallel `exec_command` calls; attachments on the first response of their turn; reads after their output, relative paths resolved against `cwd`; `pdftotext` contributing nothing; an interrupted response dropped without losing its tool results.
   - Compaction, fork, resume (2026-09-30 captures): the compaction call emitted with its usage, `compacted` replacing `committed` without changing earlier snapshots, `history_truncated` afterwards; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
   - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
