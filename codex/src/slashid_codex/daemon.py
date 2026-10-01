@@ -23,11 +23,11 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
+from slashid_ai_forwarder_core.platform.local import create_local_platform
 from starlette.middleware.base import RequestResponseEndpoint
 
 from .cache import SessionCache
 from .config import CodexConfig
-from .dev_platform import DevPlatform
 from .discovery import (
     INFO_FILE,
     LOCK_FILE,
@@ -43,13 +43,14 @@ from .discovery import (
     remove_daemon_json,
     write_daemon_json,
 )
-from .emit import COLLECTION, Collector, Trigger, Worker
+from .emit import Collector, Trigger, Worker
 from .handler import DAEMON_ERROR, PREFLIGHT_EVENTS, TRIGGER_EVENTS, Handler
 from .http import make_client
+from .install import created_at
 from .mcp_servers import McpServers
 from .preflight import Preflight, Verdict, fail_verdict
 from .sink import CodexSink
-from .state import SqliteFileRecordStore
+from .state import SqliteFileRecordStore, connect
 
 log = logging.getLogger(__name__)
 
@@ -280,14 +281,9 @@ def _serve(config: CodexConfig, config_path: Path, state_dir: Path, stopper: Sto
     port: int = sock.getsockname()[1]
     secret = secrets.token_hex(32)
 
-    platform = DevPlatform(state_dir)
-    records = SqliteFileRecordStore(platform.connect)
-    cache = SessionCache(
-        codex_home=config.codex_home,
-        load_watermark=lambda session_id: platform.checkpoint_store(
-            collection=COLLECTION, document=session_id
-        ).load(),
-    )
+    created = created_at(state_dir)
+    records = SqliteFileRecordStore(lambda: connect(state_dir))
+    cache = SessionCache(codex_home=config.codex_home)
     client = make_client(timeout_seconds=config.request_timeout_seconds)
     preflight = Preflight(config, CodexSink(config, client), records, cache)
     worker: Worker | None = None
@@ -305,13 +301,17 @@ def _serve(config: CodexConfig, config_path: Path, state_dir: Path, stopper: Sto
 
     @asynccontextmanager
     async def open_collector() -> AsyncIterator[Collector]:
-        async with make_client(timeout_seconds=config.request_timeout_seconds) as push_client:
+        async with (
+            create_local_platform(state_dir) as platform,
+            make_client(timeout_seconds=config.request_timeout_seconds) as push_client,
+        ):
             yield Collector(
                 config,
                 CodexSink(config, push_client),
                 records,
                 platform,
                 cache,
+                created_at=created,
                 mcp=McpServers(config.codex_bin),
                 on_published=lifetime.touch,
             )

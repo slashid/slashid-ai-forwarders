@@ -55,7 +55,7 @@ class Session:
     log: SessionLog
     # Preflight; always at the end of the log.
     head: RolloutCursor
-    # Collection; past the watermark.
+    # Collection; past ``watermark`` once collection has set it.
     send: RolloutCursor
     _open: Callable[[Path], tuple[SessionLog, RolloutCursor, RolloutCursor]]
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -63,6 +63,8 @@ class Session:
     session_started: bool = False
     last_hook_at: datetime | None = None
     batch_in_flight: bool = False
+    # The last watermark loaded or saved; ``None`` until collection loads it.
+    watermark: Checkpoint | None = None
     # Holders inside ``SessionCache.session``; not evicted while positive.
     in_use: int = 0
 
@@ -73,12 +75,15 @@ class Session:
             added = self.log.refresh()
         except LogReset:
             self.log, self.head, self.send = self._open(self.log.path)
+            if self.watermark is not None:
+                self.send.skip_to(self.watermark)
             return len(self.log.lines)
         self.head.advance_to_end()
         return added
 
     def rewind_send(self, watermark: Checkpoint) -> None:
-        """Back to the watermark, after a batch that could not be sent."""
+        """Past ``watermark``, which becomes the session's."""
+        self.watermark = watermark
         self.send = RolloutCursor(self.log)
         self.send.skip_to(watermark)
 
@@ -88,11 +93,9 @@ class SessionCache:
         self,
         *,
         codex_home: Path,
-        load_watermark: Callable[[str], Checkpoint],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._codex_home = codex_home
-        self._load_watermark = load_watermark
         self._clock = clock
         self._sessions: dict[str, Session] = {}
         # Hooks for sessions not loaded yet, applied when they are.
@@ -113,9 +116,9 @@ class SessionCache:
                 session.in_use -= 1
 
     def get(self, session_id: str, path: Path) -> Session:
-        """The cached session, else one read from byte 0 with its send cursor
-        past the watermark. Raises ``OSError`` if the rollout is unreadable.
-        It can be evicted before use; prefer ``session``."""
+        """The cached session, else one read from byte 0. Raises ``OSError``
+        if the rollout is unreadable. It can be evicted before use; prefer
+        ``session``."""
         return self._get(session_id, path, hold=False)
 
     def _get(self, session_id: str, path: Path, *, hold: bool) -> Session:
@@ -132,9 +135,7 @@ class SessionCache:
             log.refresh()
             head = RolloutCursor(log)
             head.advance_to_end()
-            send = RolloutCursor(log)
-            send.skip_to(self._load_watermark(session_id))
-            return log, head, send
+            return log, head, RolloutCursor(log)
 
         log, head, send = open_log(path)
         built = Session(session_id, log, head, send, open_log)
@@ -168,7 +169,9 @@ class SessionCache:
             or session.last_hook_at is None
             or self._clock() > session.last_hook_at + HOOK_IDLE
         )
-        return session.send.at_end and not session.batch_in_flight and not session.in_use and idle
+        # A send cursor collection never positioned holds nothing.
+        sent = session.watermark is None or session.send.at_end
+        return sent and not session.batch_in_flight and not session.in_use and idle
 
     def evict(self) -> list[str]:
         """Drop evictable sessions not in use; a dropped one is rebuilt from

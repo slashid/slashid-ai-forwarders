@@ -10,16 +10,14 @@ import pytest
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 from slashid_ai_forwarder_core.files import hash_local_file
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
-from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 from slashid_ai_forwarder_core.sink import PreflightError
 
 from slashid_codex import preflight as preflight_module
 from slashid_codex.cache import SessionCache
 from slashid_codex.config import CodexConfig
-from slashid_codex.dev_platform import DevPlatform
 from slashid_codex.hooks import PreToolUseHook, UserPromptSubmitHook
 from slashid_codex.preflight import Preflight, Verdict, fail_verdict
-from slashid_codex.state import RecordStoreBusy, SqliteFileRecordStore
+from slashid_codex.state import RecordStoreBusy, SqliteFileRecordStore, connect
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 INTERRUPT_SESSION = "01a0f38b-f3a4-7c70-95e2-420a7fcbcc03"
@@ -46,10 +44,8 @@ class Env:
         self.tmp_path = tmp_path
         self.config = config
         self.sink = sink
-        self.store = SqliteFileRecordStore(DevPlatform(tmp_path / "state").connect)
-        self.cache = SessionCache(
-            codex_home=config.codex_home, load_watermark=lambda _: Checkpoint(None, None)
-        )
+        self.store = SqliteFileRecordStore(lambda: connect(tmp_path / "state"))
+        self.cache = SessionCache(codex_home=config.codex_home)
         self.preflight = Preflight(config, sink, self.store, self.cache)
 
     @property

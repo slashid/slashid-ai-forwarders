@@ -12,15 +12,15 @@ from pathlib import Path
 import pytest
 from slashid_ai_forwarder_core.events import AIAccessedFile, AIInvocationObservedV1
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
+from slashid_ai_forwarder_core.platform.local import LocalPlatform, create_local_platform
 
 from slashid_codex import emit
 from slashid_codex.cache import SessionCache
 from slashid_codex.config import CodexConfig
 from slashid_codex.cursor import RolloutCursor, RolloutInvocation
-from slashid_codex.dev_platform import DevPlatform
 from slashid_codex.emit import COLLECTION, Collector, Trigger, Worker
 from slashid_codex.log import SessionLog
-from slashid_codex.state import SqliteFileRecordStore
+from slashid_codex.state import SqliteFileRecordStore, connect
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 SESSIONS = {
@@ -67,15 +67,20 @@ class FakeSink:
 
 
 class Env:
-    def __init__(self, tmp_path: Path, config: CodexConfig) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        config: CodexConfig,
+        platform: LocalPlatform,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
         self.config = config
         self.codex_home = config.codex_home
-        self.platform = DevPlatform(tmp_path / "state")
-        self.records = SqliteFileRecordStore(self.platform.connect)
-        self.cache = SessionCache(
-            codex_home=self.codex_home,
-            load_watermark=lambda sid: self.store(sid).load(),
-        )
+        self.state_dir = tmp_path / "state"
+        self.platform = platform
+        self.records = SqliteFileRecordStore(lambda: connect(self.state_dir))
+        self.cache = SessionCache(codex_home=self.codex_home)
         self.sink = FakeSink()
         self.sleeps: list[float] = []
         self.published = 0
@@ -92,6 +97,7 @@ class Env:
             self.records,
             self.platform,
             self.cache,
+            created_at=created_at or datetime.now(UTC) - timedelta(days=30),
             sleep=sleep,
             on_published=published,
         )
@@ -113,9 +119,18 @@ class Env:
         return self.cache.get(SESSIONS[name], self.rollout(name))
 
 
+@asynccontextmanager
+async def open_env(
+    tmp_path: Path, config: CodexConfig, *, created_at: datetime | None = None
+) -> AsyncIterator[Env]:
+    async with create_local_platform(tmp_path / "state") as platform:
+        yield Env(tmp_path, config, platform, created_at=created_at)
+
+
 @pytest.fixture
-def env(tmp_path: Path, make_config: Callable[..., CodexConfig]) -> Env:
-    return Env(tmp_path, make_config())
+async def env(tmp_path: Path, make_config: Callable[..., CodexConfig]) -> AsyncIterator[Env]:
+    async with open_env(tmp_path, make_config()) as env:
+        yield env
 
 
 def _flat(batches: list[list[str]]) -> list[str]:
@@ -143,7 +158,7 @@ async def test_process_sends_and_saves(env: Env) -> None:
 
     assert env.sink.pushed == [[i.response_id for i in invocations]]
     last = invocations[-1]
-    assert env.store(sid).load() == Checkpoint(last.timestamp, last.response_id)
+    assert await env.store(sid).load() == Checkpoint(last.timestamp, last.response_id)
     assert env.records.for_round(sid, [invocations[0].turn_id], []) == []
     assert env.records.for_round(sid, [], [sed.id, "call_denied"]) == []
     assert env.records.for_round(sid, [], ["call_open"]) == [ENTRY]
@@ -154,10 +169,12 @@ async def test_watermark_per_batch(env: Env, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(emit, "BATCH_SIZE", 2)
     invocations = _invocations("function")
     sid = SESSIONS["function"]
-    seen: list[Checkpoint] = []
-    env.sink.on_push = lambda _: seen.append(env.store(sid).load())
+    seen: list[Checkpoint | None] = []
+    # The in-memory watermark, which tracks what was saved.
+    session = env.session("function")
+    env.sink.on_push = lambda _: seen.append(session.watermark)
 
-    await env.collector.process(env.session("function"))
+    await env.collector.process(session)
 
     assert [len(b) for b in env.sink.pushed] == [2, 2, 1]
     assert seen == [
@@ -166,6 +183,8 @@ async def test_watermark_per_batch(env: Env, monkeypatch: pytest.MonkeyPatch) ->
         Checkpoint(invocations[3].timestamp, invocations[3].response_id),
     ]
     assert env.published == 3
+    last = invocations[-1]
+    assert await env.store(sid).load() == Checkpoint(last.timestamp, last.response_id)
 
 
 async def test_failing_batch_retried(env: Env) -> None:
@@ -187,7 +206,7 @@ async def test_failed_batch_blocks_later_ones(env: Env, monkeypatch: pytest.Monk
 
     assert _flat(env.sink.pushed) == [i.response_id for i in invocations[:2]]
     assert env.sleeps == list(emit.RETRY_DELAYS_S)
-    assert env.store(sid).load().id == invocations[1].response_id
+    assert (await env.store(sid).load()).id == invocations[1].response_id
     assert env.published == 1
     # The cursor is back at the watermark: the failed batch comes next.
     nxt = session.send.next_closed()
@@ -201,12 +220,12 @@ async def test_repeat_after_lost_response(env: Env) -> None:
     assert await env.collector.process(env.session("script"))
     ids = [i.response_id for i in _invocations("script")]
     assert env.sink.pushed == [ids, ids]
-    assert env.store(SESSIONS["script"]).load().id == ids[-1]
+    assert (await env.store(SESSIONS["script"]).load()).id == ids[-1]
 
 
 async def test_resume_from_watermark(env: Env) -> None:
     invocations = _invocations("function")
-    env.store(SESSIONS["function"]).save(
+    await env.store(SESSIONS["function"]).save(
         Checkpoint(invocations[2].timestamp, invocations[2].response_id)
     )
     await env.collector.process(env.session("function"))
@@ -239,14 +258,7 @@ async def test_collect_missing_rollout_ignored(env: Env) -> None:
 # --------------------------------------------------------------------------
 
 
-def _created_at(env: Env, when: datetime) -> None:
-    state = env.platform._state_dir
-    state.mkdir(parents=True, exist_ok=True)
-    (state / "created_at").write_text(when.isoformat())
-
-
 async def test_sweep_order_and_bounds(env: Env) -> None:
-    _created_at(env, datetime.now(UTC) - timedelta(days=30))
     env.rollout("script", age=timedelta(hours=1))
     env.rollout("function", root="archived_sessions", age=timedelta(hours=2))
     env.rollout("compaction", age=timedelta(hours=3))
@@ -258,7 +270,7 @@ async def test_sweep_order_and_bounds(env: Env) -> None:
             env.collector.trigger(Trigger(SESSIONS["interrupt"], None))
 
     env.sink.on_push = overtake
-    assert env.collector.startup_sweep() == 3
+    assert await env.collector.startup_sweep() == 3
     await env.collector.drain()
 
     assert list(dict.fromkeys(env.sink.conversations)) == [
@@ -267,40 +279,65 @@ async def test_sweep_order_and_bounds(env: Env) -> None:
         SESSIONS["function"],
         SESSIONS["compaction"],
     ]
-    assert env.store(SESSIONS["script"]).load().id == invocations[-1].response_id
+    assert (await env.store(SESSIONS["script"]).load()).id == invocations[-1].response_id
     # Sweep sessions are not started: evicted once sent.
     assert env.cache._sessions == {}
 
 
-async def test_sweep_skips_before_created_at(env: Env) -> None:
-    _created_at(env, datetime.now(UTC) - timedelta(minutes=30))
-    env.rollout("script", age=timedelta(hours=1))
-    env.rollout("function", age=timedelta(minutes=1))
-    assert env.collector.startup_sweep() == 1
+async def test_sweep_skips_before_created_at(
+    tmp_path: Path, make_config: Callable[..., CodexConfig]
+) -> None:
+    created = datetime.now(UTC) - timedelta(minutes=30)
+    async with open_env(tmp_path, make_config(), created_at=created) as env:
+        env.rollout("script", age=timedelta(hours=1))
+        env.rollout("function", age=timedelta(minutes=1))
+        assert await env.collector.startup_sweep() == 1
 
 
 async def test_sweep_skips_unmodified_since_watermark(env: Env) -> None:
-    _created_at(env, datetime.now(UTC) - timedelta(days=30))
     env.rollout("script", age=timedelta(hours=1))
-    env.store(SESSIONS["script"]).save(Checkpoint(datetime.now(UTC) - timedelta(minutes=59), "x"))
+    await env.store(SESSIONS["script"]).save(
+        Checkpoint(datetime.now(UTC) - timedelta(minutes=59), "x")
+    )
     env.rollout("function", age=timedelta(hours=1))
-    env.store(SESSIONS["function"]).save(Checkpoint(datetime.now(UTC) - timedelta(hours=2), "x"))
-    assert env.collector.startup_sweep() == 1
+    await env.store(SESSIONS["function"]).save(
+        Checkpoint(datetime.now(UTC) - timedelta(hours=2), "x")
+    )
+    assert await env.collector.startup_sweep() == 1
 
 
-async def test_sweep_prunes(tmp_path: Path, make_config: Callable[..., CodexConfig]) -> None:
-    env = Env(tmp_path, make_config())
+async def test_sweep_prunes(env: Env) -> None:
     old = datetime.now(UTC) - timedelta(days=8)
-    SqliteFileRecordStore(env.platform.connect, clock=lambda: old).put_call("s", "t", "c", ENTRY)
+    SqliteFileRecordStore(lambda: connect(env.state_dir), clock=lambda: old).put_call(
+        "s", "t", "c", ENTRY
+    )
     env.records.put_call("s", "t", "fresh", ENTRY)
-    env.store("old").save(Checkpoint(old, "r"))
-    env.store("new").save(Checkpoint(datetime.now(UTC), "r"))
+    await env.store("old").save(Checkpoint(old, "r"))
+    await env.store("new").save(Checkpoint(datetime.now(UTC), "r"))
+    other = env.platform.checkpoint_store(collection="other", document="old")
+    await other.save(Checkpoint(old, "r"))
 
-    env.collector.startup_sweep()
+    await env.collector.startup_sweep()
 
     assert env.records.for_round("s", [], ["c", "fresh"]) == [ENTRY]
-    assert env.store("old").load() == Checkpoint(None, None)
-    assert env.store("new").load().id == "r"
+    assert await env.store("old").load() == Checkpoint(None, None)
+    assert (await env.store("new").load()).id == "r"
+    assert (await other.load()).id == "r"
+
+
+async def test_watermark_never_moves_back(env: Env) -> None:
+    invocations = _invocations("function")
+    sid = SESSIONS["function"]
+    ahead = Checkpoint(invocations[-1].timestamp + timedelta(seconds=1), "later")
+    session = env.session("function")
+    session.rewind_send(Checkpoint(None, None))
+    session.watermark = ahead
+
+    assert await env.collector.process(session)
+
+    assert env.sink.pushed == [[i.response_id for i in invocations]]
+    assert await env.store(sid).load() == Checkpoint(None, None)
+    assert session.watermark == ahead
 
 
 # --------------------------------------------------------------------------
@@ -316,10 +353,10 @@ def test_worker_thread(tmp_path: Path, make_config: Callable[..., CodexConfig]) 
     @asynccontextmanager
     async def open_collector() -> AsyncIterator[Collector]:
         assert threading.current_thread().name == "codex-collector"
-        env = Env(tmp_path, config)
-        env.sink.on_push = lambda _: done.set()
-        holder["env"] = env
-        yield env.collector
+        async with open_env(tmp_path, config) as env:
+            env.sink.on_push = lambda _: done.set()
+            holder["env"] = env
+            yield env.collector
 
     worker = Worker(open_collector, sweep=False)
     worker.start()
@@ -339,15 +376,15 @@ def test_worker_ready_before_sweep(
 
     @asynccontextmanager
     async def open_collector() -> AsyncIterator[Collector]:
-        env = Env(tmp_path, config)
+        async with open_env(tmp_path, config) as env:
 
-        def slow_sweep() -> int:
-            time.sleep(0.5)
-            swept.set()
-            return 0
+            async def slow_sweep() -> int:
+                time.sleep(0.5)
+                swept.set()
+                return 0
 
-        monkeypatch.setattr(env.collector, "startup_sweep", slow_sweep)
-        yield env.collector
+            monkeypatch.setattr(env.collector, "startup_sweep", slow_sweep)
+            yield env.collector
 
     worker = Worker(open_collector)
     start = time.monotonic()

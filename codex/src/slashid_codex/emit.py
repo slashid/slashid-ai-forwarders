@@ -15,10 +15,11 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint, CheckpointStore
+from slashid_ai_forwarder_core.platform.local import LocalPlatform
 
 from .cache import Session, SessionCache, locate
 from .config import CodexConfig
@@ -38,20 +39,11 @@ RETENTION = timedelta(days=7)
 _ROOTS = ("sessions", "archived_sessions")
 # Queue priorities: a hook's session goes before the sweep's.
 LIVE, SWEEP = 0, 1
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class PushSink(Protocol):
     async def push(self, events: list[AIInvocationObservedV1]) -> int: ...
-
-
-class CollectorPlatform(Protocol):
-    def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore: ...
-    def created_at(self) -> datetime: ...
-
-
-@runtime_checkable
-class CheckpointPruner(Protocol):
-    def prune_checkpoints(self, *, collection: str, older_than: datetime) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -71,9 +63,10 @@ class Collector:
         config: CodexConfig,
         sink: PushSink,
         records: FileRecordStore,
-        platform: CollectorPlatform,
+        platform: LocalPlatform,
         cache: SessionCache,
         *,
+        created_at: datetime,
         mcp: McpServers | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -84,6 +77,7 @@ class Collector:
         self._records = records
         self._platform = platform
         self._cache = cache
+        self._created_at = created_at
         self._mcp = mcp
         self._clock = clock
         self._sleep = sleep
@@ -91,8 +85,8 @@ class Collector:
         self._queue: asyncio.PriorityQueue[tuple[int, int, Trigger]] = asyncio.PriorityQueue()
         self._seq = itertools.count()
 
-    def watermark(self, session_id: str) -> Checkpoint:
-        return self._store(session_id).load()
+    async def watermark(self, session_id: str) -> Checkpoint:
+        return await self._store(session_id).load()
 
     def _store(self, session_id: str) -> CheckpointStore:
         return self._platform.checkpoint_store(collection=COLLECTION, document=session_id)
@@ -139,6 +133,11 @@ class Collector:
     async def process(self, session: Session) -> bool:
         """Send batches until the send cursor reaches the end. A batch that
         still fails after its retries rewinds the cursor to the watermark."""
+        if session.watermark is None:
+            mark = await self.watermark(session.session_id)
+            with session.lock:
+                if session.watermark is None:
+                    session.rewind_send(mark)
         while True:
             with session.lock:
                 batch: list[RolloutInvocation] = []
@@ -155,15 +154,20 @@ class Collector:
                 )
                 session.batch_in_flight = True
             try:
-                sent = await self._send(context, batch)
+                sent = await self._send(session, context, batch)
             finally:
                 session.batch_in_flight = False
             if not sent:
-                with session.lock:
-                    session.rewind_send(self.watermark(session.session_id))
+                self._rewind(session)
                 return False
 
-    async def _send(self, context: SessionContext, batch: list[RolloutInvocation]) -> bool:
+    def _rewind(self, session: Session) -> None:
+        with session.lock:
+            session.rewind_send(session.watermark or Checkpoint(None, None))
+
+    async def _send(
+        self, session: Session, context: SessionContext, batch: list[RolloutInvocation]
+    ) -> bool:
         if self._mcp is not None:
             context = replace(context, mcp_servers=tuple(await self._mcp.get()))
         events: list[AIInvocationObservedV1] | None = None
@@ -179,7 +183,7 @@ class Collector:
                 if delay is None:
                     return False
                 await self._sleep(delay)
-        self._commit(context.session_id, batch)
+        await self._commit(session, batch)
         if events:
             self._on_published()
         return True
@@ -202,14 +206,21 @@ class Collector:
                 log.exception("dropped response %s", invocation.response_id)
         return events
 
-    def _commit(self, session_id: str, batch: list[RolloutInvocation]) -> None:
-        """Watermark at the batch's last record, then the records it consumed
-        and those of turns it finished."""
+    async def _commit(self, session: Session, batch: list[RolloutInvocation]) -> None:
+        """Watermark at the batch's last record, never behind the last one
+        saved, then the records it consumed and those of turns it finished."""
+        session_id = session.session_id
         last = batch[-1]
-        try:
-            self._store(session_id).save(Checkpoint(last.timestamp, last.response_id))
-        except sqlite3.Error as exc:
-            log.warning("watermark for %s not saved: %s", session_id, exc)
+        mark = Checkpoint(last.timestamp, last.response_id)
+        held = session.watermark
+        if held is None or held.timestamp is None or held.timestamp <= last.timestamp:
+            try:
+                await self._store(session_id).save(mark)
+            except sqlite3.Error as exc:
+                log.warning("watermark for %s not saved: %s", session_id, exc)
+            else:
+                with session.lock:
+                    session.watermark = mark
         turn_ids: dict[str, None] = {}
         tool_ids: dict[str, None] = {}
         finished: dict[str, None] = {}
@@ -229,14 +240,14 @@ class Collector:
     # Startup sweep
     # ----------------------------------------------------------------------
 
-    def startup_sweep(self) -> int:
+    async def startup_sweep(self) -> int:
         """Queue every rollout modified in the last ``RETENTION`` and after the
         database was created, newest first, unless unmodified since its
         watermark; prune what is older. Returns how many were queued."""
         now = self._clock()
         cutoff = now - RETENTION
-        self._prune(cutoff)
-        bound = max(cutoff, self._platform.created_at())
+        await self._prune(cutoff)
+        bound = max(cutoff, self._created_at)
         newest: dict[str, tuple[datetime, Path]] = {}
         for root in _ROOTS:
             for path in (self._config.codex_home / root).rglob("rollout-*.jsonl"):
@@ -252,18 +263,21 @@ class Collector:
         for session_id, (mtime, path) in sorted(
             newest.items(), key=lambda item: item[1][0], reverse=True
         ):
-            stamp = self.watermark(session_id).timestamp
+            stamp = (await self.watermark(session_id)).timestamp
             if stamp is not None and mtime <= stamp:
                 continue
             self.trigger(Trigger(session_id, path), priority=SWEEP)
             queued += 1
         return queued
 
-    def _prune(self, cutoff: datetime) -> None:
+    async def _prune(self, cutoff: datetime) -> None:
         try:
             self._records.delete_older_than(cutoff)
-            if isinstance(self._platform, CheckpointPruner):
-                self._platform.prune_checkpoints(collection=COLLECTION, older_than=cutoff)
+            # Relies on LocalPlatform's ``checkpoints`` table and its microsecond stamps.
+            await self._platform.sqlite.execute(
+                "DELETE FROM checkpoints WHERE collection = ? AND timestamp_us < ?",
+                (COLLECTION, (cutoff - _EPOCH) // timedelta(microseconds=1)),
+            )
         except (RecordStoreBusy, sqlite3.Error) as exc:
             log.warning("prune failed: %s", exc)
 
@@ -331,7 +345,7 @@ class Worker:
                 self._ready.set()
                 if self._sweep:
                     try:
-                        collector.startup_sweep()
+                        await collector.startup_sweep()
                     except Exception:
                         log.exception("startup sweep failed")
                 await collector.run()

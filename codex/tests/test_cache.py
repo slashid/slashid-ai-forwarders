@@ -46,22 +46,18 @@ def _install(codex_home: Path, name: str, session_id: str) -> Path:
     return path
 
 
-def _cache(tmp_path: Path, watermarks: dict[str, Checkpoint] | None = None):
+def _cache(tmp_path: Path):
     clock = _Clock()
-    marks = watermarks or {}
-    cache = SessionCache(
-        codex_home=tmp_path / ".codex",
-        load_watermark=lambda session_id: marks.get(session_id, EMPTY),
-        clock=clock,
-    )
-    return cache, clock
+    return SessionCache(codex_home=tmp_path / ".codex", clock=clock), clock
 
 
 def test_get_builds_and_reuses_a_session(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     first_id = _response_ids("script")[0]
-    cache, _ = _cache(tmp_path, {SCRIPT_ID: Checkpoint(timestamp=None, id=first_id)})
+    cache, _ = _cache(tmp_path)
     session = cache.get(SCRIPT_ID, path)
+    assert session.watermark is None
+    session.rewind_send(Checkpoint(timestamp=None, id=first_id))
     assert isinstance(session.lock, type(threading.Lock()))
     assert session.head.at_end
     assert not session.session_started
@@ -77,6 +73,8 @@ def test_log_reset_recreates_log_and_cursors(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, _ = _cache(tmp_path)
     session = cache.get(SCRIPT_ID, path)
+    first_id = _response_ids("script")[0]
+    session.rewind_send(Checkpoint(timestamp=None, id=first_id))
     assert session.send.next_closed() is not None
     old = (session.log, session.head, session.send)
     replacement = path.with_suffix(".tmp")
@@ -87,8 +85,10 @@ def test_log_reset_recreates_log_and_cursors(tmp_path: Path) -> None:
     assert session.head is not old[1]
     assert session.send is not old[2]
     assert session.head.at_end
-    # The new send cursor starts again from the watermark (empty here).
-    assert [r.response_id for r in iter(session.send.next_closed, None)] == _response_ids("script")
+    # The new send cursor starts again from the watermark.
+    assert [r.response_id for r in iter(session.send.next_closed, None)] == _response_ids("script")[
+        1:
+    ]
 
 
 def test_refresh_advances_the_head(tmp_path: Path) -> None:
@@ -118,7 +118,10 @@ def test_eviction_predicate(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, clock = _cache(tmp_path)
     session = cache.get(SCRIPT_ID, path)
+    # Never positioned: nothing held for collection.
+    assert cache.evictable(session)
     # Loaded by the sweep: not started, but the send cursor has a backlog.
+    session.rewind_send(EMPTY)
     assert not cache.evictable(session)
     while session.send.next_closed() is not None:
         pass
@@ -148,6 +151,7 @@ def test_evict_drops_sessions_and_get_rebuilds(tmp_path: Path) -> None:
     path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
     cache, _ = _cache(tmp_path)
     session = cache.get(SCRIPT_ID, path)
+    session.rewind_send(EMPTY)
     assert cache.evict() == []
     while session.send.next_closed() is not None:
         pass

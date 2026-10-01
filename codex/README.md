@@ -14,7 +14,7 @@ MDM, as administrator:
 
 Before an upgrade, stop the daemons (`<tool python> -m slashid_codex daemon` processes under the tool directory; Windows cannot replace a running `.exe`), never hook clients: a killed hook lets its action through. A daemon whose version, config or token differs from the hook's is replaced on the next hook.
 
-Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `state.sqlite3`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `--state-dir` and `--codex-home` exist for tests.
+Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `--state-dir` and `--codex-home` exist for tests.
 
 ## Config
 
@@ -38,8 +38,6 @@ Environment variables are never read.
 ## Development only
 
 `dry_run = true`: preflight sleeps 1 s, logs the invocation to `daemon.log` and allows; pushes sleep 1 s, log the events (raw content included when `include_raw_content` is on) and succeed. No SlashID credentials are needed. Not for production.
-
-Until `LocalPlatform` lands, the daemon stores watermarks and file records through `DevPlatform` (`dev_platform.py`), a stand-in on `state.sqlite3`.
 
 ## Notes
 

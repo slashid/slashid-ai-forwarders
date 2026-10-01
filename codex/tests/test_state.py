@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 from slashid_ai_forwarder_core.events import AIAccessedFile
+from slashid_ai_forwarder_core.platform import Checkpoint
+from slashid_ai_forwarder_core.platform.local import create_local_platform
 
-from slashid_codex.dev_platform import DevPlatform
-from slashid_codex.state import RecordStoreBusy, SqliteFileRecordStore
+from slashid_codex.state import RecordStoreBusy, SqliteFileRecordStore, connect
 
 T0 = datetime(2026, 9, 30, 12, tzinfo=UTC)
 
@@ -25,7 +26,7 @@ def _file(name: str, provenance: str = "tool_result") -> AIAccessedFile:
 
 
 def _store(tmp_path: Path, now: datetime = T0) -> SqliteFileRecordStore:
-    return SqliteFileRecordStore(DevPlatform(tmp_path).connect, clock=lambda: now)
+    return SqliteFileRecordStore(lambda: connect(tmp_path), clock=lambda: now)
 
 
 def test_round_lists_attachments_first(tmp_path: Path) -> None:
@@ -89,8 +90,7 @@ def test_delete_older_than(tmp_path: Path) -> None:
 
 
 def test_two_connections_write_concurrently(tmp_path: Path) -> None:
-    platform = DevPlatform(tmp_path)
-    stores = [SqliteFileRecordStore(platform.connect) for _ in range(2)]
+    stores = [SqliteFileRecordStore(lambda: connect(tmp_path)) for _ in range(2)]
     errors: list[BaseException] = []
     start = threading.Barrier(2)
 
@@ -134,11 +134,10 @@ def _hammer(store: SqliteFileRecordStore, threads: int = 2, n: int = 50) -> list
 
 def test_one_store_writes_from_two_threads(tmp_path: Path) -> None:
     opened: list[int] = []
-    platform = DevPlatform(tmp_path)
 
     def _connect() -> sqlite3.Connection:
         opened.append(threading.get_ident())
-        return platform.connect()
+        return connect(tmp_path)
 
     store = SqliteFileRecordStore(_connect)
     assert _hammer(store) == []
@@ -165,7 +164,7 @@ def test_store_on_any_transaction_mode(tmp_path: Path, autocommit: bool | int) -
 def test_failed_write_rolls_back(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.put_turn("s1", "turn-1", [_file("/a/x.pdf", "attachment")])
-    trigger = DevPlatform(tmp_path).connect()
+    trigger = connect(tmp_path)
     with trigger:
         trigger.execute(
             "CREATE TRIGGER no_bad BEFORE INSERT ON codex_file_records"
@@ -180,9 +179,8 @@ def test_failed_write_rolls_back(tmp_path: Path) -> None:
 
 
 def test_busy_write_gives_up_within_a_second(tmp_path: Path) -> None:
-    platform = DevPlatform(tmp_path)
-    store = SqliteFileRecordStore(platform.connect)
-    blocker = platform.connect()
+    store = SqliteFileRecordStore(lambda: connect(tmp_path))
+    blocker = connect(tmp_path)
     blocker.execute("BEGIN IMMEDIATE")
     try:
         started = time.monotonic()
@@ -193,4 +191,25 @@ def test_busy_write_gives_up_within_a_second(tmp_path: Path) -> None:
         blocker.execute("ROLLBACK")
         blocker.close()
     store.put_call("s1", "t", "call_a", _file("/r/a.md"))
+    assert [f.name for f in store.for_round("s1", [], ["call_a"])] == ["/r/a.md"]
+
+
+def test_connect_uses_wal(tmp_path: Path) -> None:
+    conn = connect(tmp_path / "state")
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1000
+    finally:
+        conn.close()
+    assert (tmp_path / "state").stat().st_mode & 0o777 == 0o700
+    assert (tmp_path / "state" / "data.sqlite").stat().st_mode & 0o777 == 0o600
+
+
+async def test_shares_the_local_platform_database(tmp_path: Path) -> None:
+    store = SqliteFileRecordStore(lambda: connect(tmp_path))
+    async with create_local_platform(tmp_path) as platform:
+        checkpoints = platform.checkpoint_store(collection="c", document="s1")
+        await checkpoints.save(Checkpoint(T0, "resp_1"))
+        store.put_call("s1", "t", "call_a", _file("/r/a.md"))
+        assert await checkpoints.load() == Checkpoint(T0, "resp_1")
     assert [f.name for f in store.for_round("s1", [], ["call_a"])] == ["/r/a.md"]

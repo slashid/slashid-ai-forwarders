@@ -6,8 +6,7 @@
 **Replaces:** ng-evangelion `backend/modules/detections/components/aiauthorization/codex-client`, removed there once this ships.
 **Server, on main:** `POST /ip/nhi/events/ai-invocations/preflight` with the sensitive-file check and the AI hook policy ([ng-evangelion#7847](https://github.com/slashid/ng-evangelion/pull/7847)), `NormalizeAIInvocation` (#7846), and the OpenAI adapter's `ResolveAIInvocationIdentity`.
 **Server, needed first:** `requested_tool_uses` (see Shared changes). Until it ships, `PreToolUse` enforces model and file rules but not tool rules.
-**Builds on:** `2026-09-30-input-scope-and-round-hashes-design.md` (#74).
-**Depends on:** the `LocalPlatform` PR, built concurrently against the contract in Shared changes. `codex/` merges independently; a small follow-up wires the daemon to `get("local", state_dir=…)` once `LocalPlatform` merges, and the daemon runs only from then.
+**Builds on:** `2026-09-30-input-scope-and-round-hashes-design.md` (#74), `2026-10-01-local-platform-design.md` (#80).
 
 ## Summary
 
@@ -143,7 +142,8 @@ The daemon exists because a hook doing the work itself pays interpreter start, i
 `state_dir = platformdirs.user_data_dir("slashid-ai-forwarder-codex", "slashid")`: `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex`, `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. Per user, never set by the MDM config (a shared path would mix users' daemons and databases); `--state-dir` exists for tests.
 
 - POSIX: directory `0700`; files created `0600` via `os.open(O_CREAT | O_EXCL, 0o600)` and renamed into place. Windows: `%LOCALAPPDATA%`'s inherited ACL (user, SYSTEM, administrators).
-- `state.sqlite3`: `LocalPlatform`'s database (watermarks, file records).
+- `data.sqlite`: `LocalPlatform`'s database (watermarks), shared with the file records.
+- `created_at`: when the state was first created.
 - `daemon.lock`, `daemon.json`, `spawn-failed`, `daemon.log` (rotated at 1 MB, three files).
 
 ### Discovery
@@ -239,7 +239,7 @@ An event's files come from two sources, neither of which reads a file at emit ti
 
 **Tool results**, as every source does: the shared `extract_tool_result_files` hashes the content the model received for each `_READ_TOOLS` call in the consumed round (see Shared changes for the `Bash` and `view_image` entries). This is in the rollout, so it holds even when no hook ran.
 
-**File records** (`FileRecordStore`, in `state.sqlite3`), written by the preflight hooks, which hash files on disk when the model is about to see them; collection never reads a file. One per hook, with the hook's `turn_id` and the time it was written:
+**File records** (`FileRecordStore`, in `data.sqlite`), written by the preflight hooks, which hash files on disk when the model is about to see them; collection never reads a file. One per hook, with the hook's `turn_id` and the time it was written:
 
 - `UserPromptSubmit` stores the prompt's attachments under its `turn_id` (`provenance: "attachment"`).
 - `PreToolUse` stores the file its call reads under its `tool_use_id` (`provenance: "tool_result"`). That id is also the `item_completed` item id for the call: `call_…` in function mode, `exec-<uuid>` in script mode, so the record joins in both modes: the round's `item_completed` items (which the cursor collects between responses) carry those ids, which is the only link in script mode, where the call's own `call_id` differs.
@@ -303,7 +303,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 **Repeats.** A push can repeat (a retry after a lost response, a daemon killed between pushing and saving). The server deduplicates on `(org_id, connection_id, request_id)` (`ai_invocations_processor.go`) and `request_id` is the `response_id`, so the copy is dropped.
 
-**Startup sweep.** On start the daemon lists rollouts under `sessions/` and `archived_sessions/` modified in the last 7 days and after the database's `created_at()`, skips those not modified since their watermark's `timestamp`, and processes the rest one session at a time, newest first, each until its send cursor reaches the end of its log. A session with a hook trigger goes first. The `created_at()` bound keeps a fresh install from backfilling. The sweep also deletes watermarks and file records older than 7 days.
+**Startup sweep.** On start the daemon lists rollouts under `sessions/` and `archived_sessions/` modified in the last 7 days and after `created_at`, skips those not modified since their watermark's `timestamp`, and processes the rest one session at a time, newest first, each until its send cursor reaches the end of its log. A session with a hook trigger goes first. The `created_at` bound keeps a fresh install from backfilling. The sweep also deletes watermarks and file records older than 7 days.
 
 **Event.** `responses_to_normalized_invocation(request, response)`, then `build_event_from_normalized` with:
 
@@ -365,19 +365,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 **`shared/files.py`**: `hash_local_file(path, *, max_bytes) -> AIAccessedFile`: `name` the path as resolved (absolute), the same naming `extract_tool_result_files` uses for a tool's path argument, so the `(name, alg, hash)` dedup in `finalize` merges a whole-file read's two entries; `sha256`/`sha1`/`md5` (the algorithms the server indexes), `media_type` from the extension, `byte_length`. Over the cap, missing or unreadable → no `content_hashes`.
 
-**Contract with `LocalPlatform`** (built in its own PR, concurrently; both sides code to this):
-
-```python
-class LocalPlatform(Platform):                                  # registered as "local"
-    def __init__(self, state_dir: Path) -> None: ...            # one per-user SQLite database, state_dir/state.sqlite3
-    def checkpoint_store(self, *, collection: str, document: str) -> CheckpointStore: ...
-        # save() only moves forward: it writes only a Checkpoint.timestamp at or after the stored one
-    def created_at(self) -> datetime: ...                       # when state.sqlite3 was created
-    def connect(self) -> sqlite3.Connection: ...                # WAL and busy_timeout set; safe across processes
-    # tick_lease and blob_sink raise; scheduler_auth refuses every token
-```
-
-Adapters keep their own tables in the same database through `connect()` and own their schema (`CREATE TABLE IF NOT EXISTS codex_…`), so `LocalPlatform` knows nothing about Codex.
+**`LocalPlatform`** (#80): the collector opens `create_local_platform(state_dir)` on its own loop and keeps its watermarks forward-only itself, since `save()` is a plain upsert; the sweep prunes them with one `DELETE` on the platform's `checkpoints` table. The file records use their own synchronous connections to the same `data.sqlite` (WAL) and own their schema (`CREATE TABLE IF NOT EXISTS codex_…`), so `LocalPlatform` knows nothing about Codex.
 
 **`bedrock/`**
 
@@ -404,7 +392,7 @@ Adapters keep their own tables in the same database through `connect()` and own 
 | `mcp_servers.py` | `codex mcp list --json`: binary discovery, 10-minute cache, the `enabled` servers as `AIToolServer`s. |
 | `usage.py` | Codex usage (`cached_input_tokens`, `cache_write_input_tokens`, `reasoning_output_tokens`) → `AIInvocationTokens`, with the shared `openai/usage.py` arithmetic. |
 | `emit.py` | Triggers, batches pulled from the send cursor, ordered sending, watermark, startup sweep. |
-| `state.py` | `FileRecordStore` protocol and its SQLite implementation on any `sqlite3.Connection` (`LocalPlatform.connect()` in production, a temporary database in tests): entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
+| `state.py` | `FileRecordStore` protocol and its SQLite implementation on any `sqlite3.Connection` (`data.sqlite` in production): entries by `turn_id` (attachments) and `tool_use_id` (reads), each with its hook's `turn_id` and write time; deletion by key, by finished turn and by age. |
 | `deploy/requirements.toml` | The managed block below. |
 
 ## Deployment
@@ -492,19 +480,19 @@ Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashi
 - **Fixtures** from the 2026-09-30 captures: hook payloads in both modes (the four-attachment prompt, `view_image`), script- and function-mode rollouts, Bedrock MIL records (plain and streamed). Trimmed of `base_instructions`, environment context and personal content; images replaced by a small PNG with a known hash.
 - **shared:** Responses normalizer on both Bedrock records; stop reasons; usage; `resolve_tool`; `hash_local_file` (cap, missing file); `_READ_TOOLS` `Bash` and `view_image` entries and the Codex output cleanup; `project` keeping `compaction` blocks with their digest; `OpenAIIdentityDetails`; `requested_tool_uses` from the Anthropic, Converse, Gemini and Responses fixtures, unresolvable calls skipped; frozen messages.
 - **bedrock:** both Responses formats selected; no cross-matching with existing formats.
-- **codex** (`FileRecordStore` on a temporary SQLite database; an in-memory `CheckpointStore` with forward-only saves and a fixed `created_at()` stand in for `LocalPlatform` until it lands):
+- **codex** (`LocalPlatform` and `FileRecordStore` on a temporary directory):
   - `parse_attachments` (spaces, non-ASCII, image marker, no section); `get_file_read_by_tool` on captured commands and refusals, relative paths against the call's `workdir`.
   - Preflight per event against the server's join rule (every `requested_tool_uses` entry on a named tool and server); `PreToolUse` with only its own file; a prompt after an interrupt carrying the round's `used_tools` and files; a normal prompt carrying neither; verdict and `verdict_fail_mode` mapping.
   - Log and cursors: appends extend the log; partial last line held back; shrunk or replaced file rebuilt with fresh cursors; rounds already returned unchanged by a later `turn_aborted`; `compacted` leaving the cursor's history untouched; the head cursor sees the in-flight call; `skip_to` by id, by timestamp and with an empty watermark, building no events; a backlog pulled batch by batch while the head cursor serves preflight from the same log; a failed batch not passed by the send cursor; no handle left open (Windows archive move succeeds); eviction by the predicate (sweep sessions, `SessionEnd`ed sessions, other hook sessions after 10 minutes); a resume after `SessionEnd` rebuilding the session.
   - Rollout in both modes: `exec_command` and `exec` mapped to `Bash` from their own lines (function mode: the hook's id and command; script mode: a single `tools.*` call unwrapped, with or without `text(await …)` and a `// @exec:` first line, any other script kept as `exec`; extra `notify()` outputs attached to their call); each response emitted at its `token_usage_record`; four parallel `exec_command` calls; an interrupted response dropped without losing its tool results.
   - Files on events: tool-result hashes for `Bash` reads (header stripped in both modes) and `view_image`; whole-file reads deduplicated against their record (both named by the resolved path), ranged reads reported twice; `content_from` for the `input_image` part and the script-mode JSON part; attachment records on the first response of their turn; read records joined by `item_completed` id in both modes (`call_…`, `exec-<uuid>`); a file changed or deleted after its preflight reported with its preflight hash; no record, no file; a record kept while its tool runs long after its issuing response was sent, and deleted once the consuming response is sent; records of denied and interrupted calls deleted when their turn is finished and sent.
   - Compaction, fork, resume (2026-09-30 captures): the compaction call's `token_usage_record` held until its `compacted` line, then emitted as `codex-compaction` with the digest from `replacement_history`; a log ending between the two lines emitting nothing; a `compaction` message after a final answer forming its own round, and later lists containing the previous event's `round_hash`; later events' `recent_round_hashes` running through it into the earlier rounds and ending in `"start"`; two compactions never hashing alike; a fork's history loaded from its parent up to `end_byte_offset`, the parent's responses never emitted for the fork, a missing parent; a resumed session continuing its watermark.
-  - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at()`, mtime), one session at a time, newest first, overtaken by a live trigger.
+  - Collection: watermark resume by id and by timestamp, empty watermark, per-batch saves; a failed batch blocking later events; a repeated push; relocation to `archived_sessions/`; sweep bounds (7 days, `created_at`, mtime), one session at a time, newest first, overtaken by a live trigger.
   - MCP listing from a captured `codex mcp list --json`, `env` never copied, every failure leaving events otherwise unchanged.
   - Daemon: racing starts (one daemon, both served); stale `daemon.json`; squatted port receiving nothing; restarts on version, config and token change without backoff; daemon started during backoff used; missing secret, wrong `Host`, `Origin` refused; watchdog; crash mid-request; request during idle exit; the idle clock reset by hooks and by published batches, not by failing pushes; a push cut off by exit resent and deduplicated; spawn backoff; spawn holding none of the hook's pipes; daemon unavailable answering `verdict_fail_mode` with its reason, both modes, within each deadline; triggers spawning without waiting; `state_dir` from `platformdirs`.
   - Windows: a detached spawn surviving its parent, with and without a job forbidding breakaway.
   - End to end: client and daemon subprocesses against a stub SlashID.
-- **Live**, once wired to `LocalPlatform` and before release: managed block against a dev endpoint and a pilot `user_id`: allow, deny by model rule, by tool rule, by a sensitive attachment and by a sensitive `sed` read; fail-closed with the server down; events landing with their `accessed_files`; preflight latency with a warm daemon; the first hook after login, which starts the daemon.
+- **Live**, before release: managed block against a dev endpoint and a pilot `user_id`: allow, deny by model rule, by tool rule, by a sensitive attachment and by a sensitive `sed` read; fail-closed with the server down; events landing with their `accessed_files`; preflight latency with a warm daemon; the first hook after login, which starts the daemon.
 
 ## Open questions
 

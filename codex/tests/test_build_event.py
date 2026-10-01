@@ -10,11 +10,10 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from slashid_codex.config import CodexConfig
 from slashid_codex.cursor import RolloutCursor, RolloutInvocation
-from slashid_codex.dev_platform import DevPlatform
 from slashid_codex.events import SessionContext, build_event
 from slashid_codex.log import SessionLog
 from slashid_codex.mcp_servers import parse_servers
-from slashid_codex.state import SqliteFileRecordStore
+from slashid_codex.state import SqliteFileRecordStore, connect
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -35,7 +34,7 @@ def _invocations(name: str) -> tuple[list[RolloutInvocation], RolloutCursor]:
 class Builder:
     def __init__(self, tmp_path: Path, config: CodexConfig) -> None:
         self.config = config
-        self.records = SqliteFileRecordStore(DevPlatform(tmp_path / "state").connect)
+        self.records = SqliteFileRecordStore(lambda: connect(tmp_path / "state"))
 
     async def events(
         self, name: str, session_id: str = "sess", **context: object

@@ -9,7 +9,6 @@ from pathlib import Path
 import httpx
 import pytest
 from fastapi import FastAPI
-from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
 from slashid_codex.cache import SessionCache
 from slashid_codex.config import CodexConfig
@@ -337,9 +336,7 @@ class FakePreflight:
 class HandlerEnv:
     def __init__(self, config: CodexConfig) -> None:
         self.preflight = FakePreflight()
-        self.cache = SessionCache(
-            codex_home=config.codex_home, load_watermark=lambda _: Checkpoint(None, None)
-        )
+        self.cache = SessionCache(codex_home=config.codex_home)
         self.submitted: list[Trigger] = []
         self.handler = Handler(config, self.preflight, self.cache, self.submitted.append)
         self.touched: list[str] = []

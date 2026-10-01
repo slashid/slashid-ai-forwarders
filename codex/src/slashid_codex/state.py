@@ -3,14 +3,20 @@ reports the round that consumed them."""
 
 from __future__ import annotations
 
+import contextlib
+import os
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, Protocol
 
 from slashid_ai_forwarder_core.events import AIAccessedFile
+from slashid_ai_forwarder_core.platform.local.database import DATABASE
+
+from .discovery import ensure_state_dir
 
 KeyKind = Literal["turn", "call"]
 
@@ -53,13 +59,26 @@ class FileRecordStore(Protocol):
     def delete_older_than(self, cutoff: datetime) -> None: ...
 
 
+def connect(state_dir: Path) -> sqlite3.Connection:
+    """``LocalPlatform``'s database file, from a synchronous connection; WAL
+    keeps it safe beside the platform's own."""
+    ensure_state_dir(state_dir)
+    path = state_dir / DATABASE
+    with contextlib.suppress(FileExistsError):
+        os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
 def _placeholders(values: Sequence[str]) -> str:
     return ", ".join("?" * len(values))
 
 
 class SqliteFileRecordStore:
-    """One connection per thread from ``connect`` (``LocalPlatform.connect`` in
-    production), each with a ``BUSY_TIMEOUT_MS`` busy wait."""
+    """One connection per thread from ``connect``, each with a
+    ``BUSY_TIMEOUT_MS`` busy wait."""
 
     def __init__(
         self,
