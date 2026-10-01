@@ -144,3 +144,15 @@ def test_constructor_requires_absolute_paths(make_config: Callable[..., CodexCon
         make_config(codex_home="rel/.codex")
     with pytest.raises(ValueError):
         make_config(codex_bin="codex")
+
+
+def test_example_config_loads(tmp_path: Path) -> None:
+    example = Path(__file__).parents[1] / "deploy" / "config.example.toml"
+    token = tmp_path / "token"
+    token.write_text("t" * 32)
+    text = example.read_text().replace("/opt/slashid/codex/token", str(token))
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(text)
+    config = CodexConfig.load(config_path)
+    assert config.verdict_fail_mode == "deny"
+    assert config.push_token == "t" * 32

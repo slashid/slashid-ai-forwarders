@@ -1,0 +1,32 @@
+# slashid-codex configuration, installed by MDM read-only to users
+# (/opt/slashid/codex/config.toml, C:\ProgramData\SlashID\Codex\config.toml).
+# Environment variables are never read.
+
+# SlashID API origin: https://, no path, userinfo, query or fragment.
+endpoint = "https://api.slashid.com"
+# The OpenAI connection's event-streaming token (at least 32 characters);
+# relative paths resolve against this file's directory.
+push_token_file = "/opt/slashid/codex/token"
+# The ChatGPT workspace user (`user-…`) prompts and events are attributed to.
+user_id = "user-XXXXXXXXXXXXXXXXXXXXXXXX"
+
+# Without a verdict: "deny" blocks the prompt or tool call, "allow" lets it through.
+verdict_fail_mode = "deny"
+preflight_timeout_seconds = 4.0
+# Files larger than this go to preflight without hashes.
+max_file_bytes = 52428800
+
+# Events: input hashed over the consumed round ("round") or the whole history ("session").
+input_scope = "round"
+round_link_depth = 10
+# Send the round's text in events (off: hashes only).
+include_raw_content = false
+max_content_size = 100000
+
+# The daemon exits after this long without hooks or published events.
+daemon_idle_seconds = 600
+# `codex` for `codex mcp list`; default: PATH, then the desktop app's bundle.
+# codex_bin = "/usr/local/bin/codex"
+
+# Dev only: log what would be sent instead of sending it. Not for production.
+dry_run = false
