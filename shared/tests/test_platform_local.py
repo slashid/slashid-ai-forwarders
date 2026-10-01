@@ -4,12 +4,14 @@ Firestore platform is in ``test_platform_contract.py``."""
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import aiosqlite
 import pytest
+from platformdirs import user_data_dir
 
 from slashid_ai_forwarder_core import platform as platforms
 from slashid_ai_forwarder_core.platform import Checkpoint
@@ -35,9 +37,35 @@ async def test_get_resolves_the_local_platform() -> None:
         assert isinstance(built, LocalPlatform)
 
 
-def test_the_path_is_required_even_when_it_is_none() -> None:
-    with pytest.raises(TypeError):
+def test_neither_an_app_nor_a_path_is_a_type_error() -> None:
+    with pytest.raises(TypeError, match="app"):
         platforms.get("local")
+    with pytest.raises(TypeError):
+        create_local_platform()  # ty: ignore[missing-argument]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="XDG_DATA_HOME is Linux's")
+async def test_the_registry_defaults_to_the_user_data_directory_for_the_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    expected = Path(user_data_dir("slashid-test-app", "slashid"))
+    assert tmp_path in expected.parents
+    async with platforms.get("local", app="slashid-test-app") as built:
+        assert isinstance(built, LocalPlatform)
+        await built.checkpoint_store(collection="c", document="d").save(Checkpoint(None, "1"))
+        assert built.blobs == expected / "blobs"
+    assert (expected / "data.sqlite").is_file()
+
+
+async def test_an_explicit_path_overrides_the_app_and_none_is_memory(tmp_path: Path) -> None:
+    async with platforms.get("local", app="slashid-test-app", path=tmp_path / "d") as built:
+        assert isinstance(built, LocalPlatform)
+        assert built.blobs == tmp_path / "d" / "blobs"
+    async with platforms.get("local", app="slashid-test-app", path=None) as in_memory:
+        assert isinstance(in_memory, LocalPlatform)
+        await in_memory.blob_sink("b").put("n", b"x", content_type="text/plain")
+        assert not in_memory.blobs.is_relative_to(tmp_path)
 
 
 # --- checkpoints -------------------------------------------------------------

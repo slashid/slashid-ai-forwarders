@@ -12,7 +12,7 @@ The only platform is `gcp`, so nothing that uses the seam can run, or be tested,
 ## Goals
 
 1. `LocalPlatform` implements `Platform` locally: `checkpoint_store`, `tick_lease` and `scheduler_auth` on SQLite, and `blob_sink` as files.
-2. It keeps its state in one directory the caller names, or in memory when none is given. The caller chooses where: nothing here has a default location.
+2. It keeps its state in one directory, or in memory. `create_local_platform` takes the directory and has no default; the registry's `local` entry supplies one for an application that names itself.
 3. It exposes the database as a property, the way `GcpPlatform` exposes `firestore`, so an adapter with state of its own can share the connection.
 4. A platform's lifecycle belongs to the code that opens it, not to the `Platform` protocol: `platforms.get` returns an async context manager, so a platform that holds a resource (a SQLite connection) is closed when the block ends, and one that holds none (`gcp`) simply yields.
 
@@ -29,7 +29,7 @@ The Anthropic `PendingStore` on SQLite (on hold), `platform: "local"` in any ada
 ```python
 _PLATFORMS = {
     "gcp": "slashid_ai_forwarder_core.platform.gcp:create_gcp_platform",
-    "local": "slashid_ai_forwarder_core.platform.local:create_local_platform",
+    "local": "slashid_ai_forwarder_core.platform.local:open_local_platform",
 }
 
 def get(name: str, **options: Any) -> AbstractAsyncContextManager[Platform]: ...
@@ -39,6 +39,8 @@ Use is `async with platforms.get("local", path=state_dir) as platform:`. The `Pl
 
 `create_gcp_platform(*, project, firestore_database)` is an `@asynccontextmanager` that yields `GcpPlatform(...)` and has nothing to clean up: its clients are built lazily and live as long as the process, as they do today. `GcpPlatform`'s constructor and the `firestore` property are unchanged.
 
+`local` resolves to `open_local_platform(*, app=None, path=<unset>)`, which returns `create_local_platform(path)` and is where the default directory is decided. With `path` left out, the directory is `platformdirs.user_data_dir(app, "slashid")` (`~/.local/share/<app>` on Linux, honouring `XDG_DATA_HOME`); an explicit `path` wins over `app`, and `path=None` means in memory. `app` is the adapter's name for itself (for example `slashid_ai_forwarder_vertex`), supplied by the adapter, since the registry is shared and cannot know who is asking. Giving neither is a `TypeError`, so a platform never lands somewhere nobody chose. `create_local_platform` itself stays pure and takes a required `path`.
+
 ### Opening a local platform
 
 ```python
@@ -46,7 +48,7 @@ Use is `async with platforms.get("local", path=state_dir) as platform:`. The `Pl
 async def create_local_platform(path: str | Path | None) -> AsyncIterator[LocalPlatform]: ...
 ```
 
-`path` is required, and is a directory (created if it is missing) or `None`. The database is `<path>/data.sqlite` and blobs go under `<path>/blobs/`, so one directory is the whole state and can be copied, kept or deleted as one. `None` keeps the database in memory and the blobs in a `TemporaryDirectory` removed when the block ends. Where the directory belongs (a user data directory, a state directory, a temporary one) is the caller's decision, so nothing here reads the environment or imports a directory library. `open_database` is given `<path>/data.sqlite`, or SQLite's `:memory:`.
+`path` is required, and is a directory (created if it is missing) or `None`. The database is `<path>/data.sqlite` and blobs go under `<path>/blobs/`, so one directory is the whole state and can be copied, kept or deleted as one. `None` keeps the database in memory and the blobs in a `TemporaryDirectory` removed when the block ends. `create_local_platform` reads no environment and imports no directory library: where the directory belongs is its caller's decision, and the default lives in the registry entry above. `open_database` is given `<path>/data.sqlite`, or SQLite's `:memory:`.
 
 - for a file, creates the directory (`mkdir(parents=True, exist_ok=True, mode=0o700)`, where the mode applies only to the last component; SQLite cannot create it) and sets `journal_mode=WAL` and a busy timeout (SQLite's default is already five seconds, so set it only to name the value); for `:memory:` it does neither;
 - connects with `isolation_level=None`, so every statement commits by itself and no implicit transaction is ever left open for a later one to trip over;
@@ -74,6 +76,7 @@ Times are stored as integer microseconds since the epoch (UTC), converted back w
 ## Testing
 
 - `create_local_platform(None)` for every test that does not need a directory, inside `async with`.
+- The registry's default: with `XDG_DATA_HOME` set to a temporary directory (Linux), `platforms.get("local", app=…)` puts `data.sqlite` and `blobs/` under `user_data_dir(app, "slashid")`; an explicit `path` overrides `app`; `path=None` is in memory; neither is a `TypeError`.
 - **One contract suite for `checkpoint_store` and `tick_lease` run against both backends.** Today `test_checkpoint.py`, `test_lease.py` and `test_platform_gcp.py` each hand-roll an incompatible Firestore fake, and only the lease one has compare-and-set. They are replaced by one async fake in `shared/tests` (modelled on Anthropic's `tests/fake_firestore.py`, which has `create`, `update_time` and `write_option`), and the suite is parametrized over `GcpPlatform` on that fake and `LocalPlatform`. Cases: first load empty, round trip, naive and non-UTC datetimes, separate documents and collections; lease taken, refused while held, taken after expiry (clock passed as `now`), taken after release, released by its owner, not released by a stranger, released on an exception.
 - Blobs: put, replace, get, buckets are separate, binary data as bytes, files under `blobs/` in the directory (nested names, no temporary file left behind), a temporary directory for `None` that is gone when the block ends, and names or buckets that would leave their bucket refused. Scheduler auth: accepted, wrong token, non-ASCII token, unset principal.
 - Concurrency: `asyncio.gather` of `hold` on one lease on one platform admits exactly one; two `LocalPlatform`s on one file contend correctly and the loser reports not held; a statement that waits past the busy timeout raises.
@@ -84,7 +87,7 @@ Times are stored as integer microseconds since the epoch (UTC), converted back w
 
 ## Packaging
 
-`shared/pyproject.toml` gets a `local = ["aiosqlite>=0.20"]` extra, next to `gcp`, `gcs` and `converse`, and `aiosqlite` goes into the dev dependency group so the shared tests can import it without an adapter pulling the extra in. `uv.lock` is regenerated in the same change.
+`shared/pyproject.toml` gets a `local = ["aiosqlite>=0.20", "platformdirs>=4.2"]` extra, next to `gcp`, `gcs` and `converse`, and both go into the dev dependency group so the shared tests can import them without an adapter pulling the extra in. `uv.lock` is regenerated in the same change.
 
 ## Risks
 

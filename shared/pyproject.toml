@@ -33,12 +33,13 @@ gcp = ["google-cloud-firestore>=2.16", "google-cloud-storage>=2.18", "google-aut
 # ``platform.local``: checkpoints, a tick lease and blobs in a SQLite file or
 # in memory, for development and tests. Pulled in by
 # ``slashid-ai-forwarder-core[local]``.
-local = ["aiosqlite>=0.20"]
+local = ["aiosqlite>=0.20", "platformdirs>=4.2"]
 
 [dependency-groups]
 dev = [
     "pyyaml>=6.0",
     "aiosqlite>=0.20",
+    "platformdirs>=4.2",
 ]
 
 [build-system]

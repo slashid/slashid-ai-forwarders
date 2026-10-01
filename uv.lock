@@ -1122,6 +1122,15 @@ wheels = [
 ]
 
 [[package]]
+name = "platformdirs"
+version = "4.12.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/c8/721b3855fe457da514fe249247d404b9b39c5d16532278f70ebaa6acf18b/platformdirs-4.12.2.tar.gz", hash = "sha256:eab5f70271a490ef74618bb314fbb86e3c7e82fa3b9c922c2ea0e0a1a155d329", size = 59353, upload-time = "2026-09-29T18:27:56.009Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/89/446044f33aba0348d35e433f56d12206d010a5281a1df54054d4cfb82388/platformdirs-4.12.2-py3-none-any.whl", hash = "sha256:29dbf06d96c500bc6bdbce75fb0a14d63279c93b1842f97e72a135b33e856983", size = 32457, upload-time = "2026-09-29T18:27:54.43Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1564,11 +1573,13 @@ gcs = [
 ]
 local = [
     { name = "aiosqlite" },
+    { name = "platformdirs" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "aiosqlite" },
+    { name = "platformdirs" },
     { name = "pyyaml" },
 ]
 
@@ -1581,6 +1592,7 @@ requires-dist = [
     { name = "google-cloud-firestore", marker = "extra == 'gcp'", specifier = ">=2.16" },
     { name = "google-cloud-storage", marker = "extra == 'gcp'", specifier = ">=2.18" },
     { name = "httpx", specifier = ">=0.28" },
+    { name = "platformdirs", marker = "extra == 'local'", specifier = ">=4.2" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-extra-types", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.6" },
@@ -1591,6 +1603,7 @@ provides-extras = ["converse", "gcs", "gcp", "local"]
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "platformdirs", specifier = ">=4.2" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 

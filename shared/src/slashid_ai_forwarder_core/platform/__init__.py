@@ -63,14 +63,14 @@ class Platform(Protocol):
 # only when asked for, so resolving one platform never loads another's SDK.
 _PLATFORMS = {
     "gcp": "slashid_ai_forwarder_core.platform.gcp:create_gcp_platform",
-    "local": "slashid_ai_forwarder_core.platform.local:create_local_platform",
+    "local": "slashid_ai_forwarder_core.platform.local:open_local_platform",
 }
 
 
 def get(name: str, **options: Any) -> AbstractAsyncContextManager[Platform]:
     """The platform called ``name``, as an async context manager built with
     ``options``: each takes its own, such as ``project`` and
-    ``firestore_database`` for ``gcp``."""
+    ``firestore_database`` for ``gcp`` and ``app`` or ``path`` for ``local``."""
     try:
         target = _PLATFORMS[name]
     except KeyError:

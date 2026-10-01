@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import tempfile
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+from platformdirs import user_data_dir
 
 from .. import SchedulerAuth
 from .database import DATABASE, MEMORY, open_database
@@ -70,3 +71,24 @@ async def create_local_platform(path: str | Path | None) -> AsyncIterator[LocalP
             blobs = root / "blobs"
         stack.push_async_callback(db.close)
         yield LocalPlatform(db, blobs=blobs)
+
+
+class _Unset:
+    """Tells a ``path`` that was left out from one that is ``None`` (memory)."""
+
+
+_UNSET = _Unset()
+
+
+def open_local_platform(
+    *, app: str | None = None, path: str | Path | None | _Unset = _UNSET
+) -> AbstractAsyncContextManager[LocalPlatform]:
+    """What the registry's ``local`` resolves to. ``path`` is as
+    ``create_local_platform`` takes it; left out, the directory is the user
+    data directory for ``app`` (``~/.local/share/<app>`` on Linux). One of the
+    two is required, so a platform never lands somewhere nobody chose."""
+    if isinstance(path, _Unset):
+        if app is None:
+            raise TypeError("local needs `app`, which names its default directory, or `path`")
+        path = user_data_dir(app, "slashid")
+    return create_local_platform(path)
