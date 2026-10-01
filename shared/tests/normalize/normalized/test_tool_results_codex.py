@@ -133,6 +133,18 @@ def test_bare_stdout_with_output_line_is_hashed_whole() -> None:
     assert _single_sha(_files("Bash", _cat(), out), "/w/notes.md") == _sha(out.encode())
 
 
+def test_home_is_not_expanded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", "/root")
+    files = _files("Bash", {"command": "cat ~/x"}, "hello\n")
+    assert _single_sha(files, "~/x") == _sha(b"hello\n")
+
+
+def test_background_command_is_not_a_read() -> None:
+    tool_input: JsonValue = {"command": "cat /w/notes.md", "run_in_background": True}
+    out = "Command running in background with ID: b1"
+    assert _files("Bash", tool_input, out) == []
+
+
 def test_multi_file_cat_is_not_a_read() -> None:
     assert _files("Bash", _cat("cat a b"), "x") == []
 

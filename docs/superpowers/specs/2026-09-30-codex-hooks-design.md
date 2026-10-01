@@ -335,6 +335,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 - `responses/normalize.py`: `responses_to_normalized_invocation(request, response) -> NormalizedInvocation`. `instructions` → the index-0 `system` message, which absorbs any directly following `developer`/`system` messages; later ones → `system` messages in place; unknown roles → `user`; calls → `tool_use` blocks on the assistant message; outputs → `tool_result` blocks on the following user message; `input_image` → `image` with `media_type` and `byte_length`; `reasoning` → summary text only. `tools` → `build_tools_declared`.
 - `stop_reasons.py`: `completed` with a call → `tool_use`; `completed` → `end_turn`; `incomplete` + `max_output_tokens` → `max_tokens`; `incomplete` + `content_filter` → `content_filtered`; `failed` → `error`; else `unknown`.
 - `usage.py`, additive like Vertex: `cache_read = cached_tokens`, `cache_write = cache_write_tokens`, `input = input_tokens − cache_read − cache_write`, `reasoning = reasoning_tokens`, `output = output_tokens − reasoning` (Bedrock capture: 23 output with 12 reasoning; Codex capture: 15189 − 0 − 15186 = 3 fresh input).
+- Not normalized yet: `input_file` and `refusal` parts, `item_reference`, `local_shell_call` and MCP items. Input images are not reported as attachment `accessed_files`.
 
 **`shared/events.py`**
 

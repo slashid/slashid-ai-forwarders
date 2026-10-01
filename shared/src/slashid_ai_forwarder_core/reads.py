@@ -16,10 +16,15 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 # Characters that make a shell command more than one plain read, or make bash
 # expand a word into a path other than the literal one. ``$`` is checked apart
 # since a single-quoted sed range may use it.
-_SHELL_META = re.compile(r"[|;&<>`*?\[{}\n\r]")
+_SHELL_META = re.compile(r"[|;&<>`*?\[{}()^\n\r]")
 _SED_RANGE = re.compile(r"[0-9$]+(,[0-9$]+)?p")
 # Options that take a value, per reader.
-_VALUE_OPTIONS = {"cat": set(), "nl": set(), "head": {"-n", "-c"}, "tail": {"-n", "-c"}}
+_VALUE_OPTIONS = {
+    "cat": set(),
+    "nl": {"-b", "-d", "-f", "-h", "-i", "-l", "-n", "-s", "-v", "-w"},
+    "head": {"-n", "-c"},
+    "tail": {"-n", "-c", "-s"},
+}
 
 
 class _Bash(BaseModel):
@@ -33,33 +38,36 @@ class _ViewImage(BaseModel):
 
 
 def get_file_read_by_tool(
-    tool_name: str, tool_input: JsonValue, workdir: str | None
+    tool_name: str, tool_input: JsonValue, workdir: str | None, *, expand_home: bool = False
 ) -> Path | None:
     """``view_image`` → its ``path``; ``Bash`` → the one path of a plain
     ``cat``/``head``/``tail``/``nl`` or ``sed -n '<range>p'``. Relative paths
-    resolve against ``workdir``, the call's own working directory."""
+    resolve against ``workdir``, the call's own working directory. A ``~``
+    path is kept as is unless ``expand_home``, which only the user's own
+    machine may set."""
     try:
         if tool_name == "view_image":
             raw = _ViewImage.model_validate(tool_input).path
         elif tool_name == "Bash":
-            return bash_read_path(_Bash.model_validate(tool_input).command, workdir)
+            command = _Bash.model_validate(tool_input).command
+            return bash_read_path(command, workdir, expand_home=expand_home)
         else:
             return None
     except ValidationError:
         return None
-    return _absolute(raw, workdir) if raw else None
+    return _absolute(raw, workdir, expand_home) if raw else None
 
 
-def bash_read_path(command: str, workdir: str | None) -> Path | None:
+def bash_read_path(command: str, workdir: str | None, *, expand_home: bool = False) -> Path | None:
     raw = _bash_target(command)
-    if not raw:
+    if not raw or raw == "-":
         return None
     # Allow only a lone, unquoted leading ``~``, which bash expands as we do.
     if "~" in command and (
         not raw.startswith("~") or command.count("~") != 1 or re.search(r"['\"\\]", command)
     ):
         return None
-    return _absolute(raw, workdir)
+    return _absolute(raw, workdir, expand_home)
 
 
 def _bash_target(command: str) -> str | None:
@@ -69,7 +77,8 @@ def _bash_target(command: str) -> str | None:
         argv = shlex.split(command)
     except ValueError:
         return None
-    if not argv:
+    # zsh expands ``=cmd`` to the command's path.
+    if not argv or any(arg.startswith("=") for arg in argv):
         return None
     program, args = argv[0], argv[1:]
     if program == "sed":
@@ -94,10 +103,16 @@ def _bash_target(command: str) -> str | None:
     return paths[0] if len(paths) == 1 else None
 
 
-def _absolute(raw: str, workdir: str | None) -> Path | None:
+def _absolute(raw: str, workdir: str | None, expand_home: bool) -> Path | None:
+    if raw.startswith("~"):
+        # Only ``~`` and ``~/…``; ``~user`` is never resolved.
+        if raw != "~" and not raw.startswith("~/"):
+            return None
+        if not expand_home:
+            return Path(raw)
     try:
         path = Path(raw).expanduser()
-    except RuntimeError:  # ~unknownuser
+    except RuntimeError:  # no home directory
         return None
     if not path.is_absolute():
         if not workdir:

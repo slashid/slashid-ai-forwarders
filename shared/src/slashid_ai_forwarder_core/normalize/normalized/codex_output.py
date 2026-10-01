@@ -22,6 +22,7 @@ class _ShellInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
     command: str
     workdir: str | None = None
+    run_in_background: bool = False
 
 
 class _InputText(BaseModel):
@@ -48,10 +49,13 @@ _Parts = TypeAdapter(list[JsonValue])
 
 
 def shell_read_path(tool_input: JsonValue) -> str | None:
-    """The file a shell call read, resolved against its ``workdir`` when it has one."""
+    """The file a shell call read, resolved against its ``workdir`` when it
+    has one. A background call returns only its id, so it reads nothing."""
     try:
         shell = _ShellInput.model_validate(tool_input)
     except ValidationError:
+        return None
+    if shell.run_in_background:
         return None
     path = bash_read_path(shell.command, shell.workdir)
     return str(path) if path else None

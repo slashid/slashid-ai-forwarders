@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
+import stat
 from pathlib import Path
 from typing import Literal
 
@@ -31,15 +33,26 @@ def hash_local_file(
 
 
 def _size_and_hashes(path: Path, max_bytes: int) -> tuple[int | None, dict[str, str] | None]:
+    # Nonblocking, so a FIFO swapped in for the file can't hang the open.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
-        if not path.is_file():
-            return None, None
-        size = path.stat().st_size
-        if size > max_bytes:
-            return size, None
-        digests = (hashlib.sha256(), hashlib.sha1(), hashlib.md5())
-        with path.open("rb") as handle:
-            while chunk := handle.read(_CHUNK):
+        fd = os.open(path, flags)
+    except OSError:
+        return None, None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                return None, None
+            if info.st_size > max_bytes:
+                return info.st_size, None
+            digests = (hashlib.sha256(), hashlib.sha1(), hashlib.md5())
+            size = 0
+            # The file may grow after fstat: cap the bytes actually read.
+            while chunk := handle.read(min(_CHUNK, max_bytes + 1 - size)):
+                size += len(chunk)
+                if size > max_bytes:
+                    return max(size, os.fstat(handle.fileno()).st_size), None
                 for digest in digests:
                     digest.update(chunk)
     except OSError:

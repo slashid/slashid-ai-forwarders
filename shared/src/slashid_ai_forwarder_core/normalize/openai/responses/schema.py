@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue
+from pydantic import AfterValidator, Field, JsonValue
 
 from ..._base import _LenientModel
 
@@ -179,6 +179,16 @@ class ResponseStreamEvent(_LenientModel):
     type: str
     response: Response | None = None
 
+
+def _require_response_event(events: list[ResponseStreamEvent]) -> list[ResponseStreamEvent]:
+    if not any(event.type.startswith("response.") for event in events):
+        raise ValueError("no response.* event")
+    return events
+
+
+# A stream with at least one ``response.*`` event, so any list of typed
+# objects isn't taken for one.
+ResponseStream = Annotated[list[ResponseStreamEvent], AfterValidator(_require_response_event)]
 
 _TERMINAL_EVENTS = frozenset({"response.completed", "response.incomplete", "response.failed"})
 
