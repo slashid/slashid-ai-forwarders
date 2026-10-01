@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
-from ...reads import get_file_read_by_tool
+from ...reads import bash_read_path, get_file_read_by_tool
 
 _HEADER_PREFIX = "Chunk ID: "
 _HEADER_END = "\nOutput:\n"
+_EXIT_FAILED = re.compile(r"^Process exited with code (?!0$)", re.MULTILINE)
 
 
 class _ShellInput(BaseModel):
@@ -37,6 +39,7 @@ class _InputImage(BaseModel):
 class _ScriptResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
     chunk_id: str
+    exit_code: int | None = None
     output: str
 
 
@@ -47,10 +50,10 @@ _Parts = TypeAdapter(list[JsonValue])
 def shell_read_path(tool_input: JsonValue) -> str | None:
     """The file a shell call read, resolved against its ``workdir`` when it has one."""
     try:
-        workdir = _ShellInput.model_validate(tool_input).workdir
+        shell = _ShellInput.model_validate(tool_input)
     except ValidationError:
         return None
-    path = get_file_read_by_tool("Bash", tool_input, workdir)
+    path = bash_read_path(shell.command, shell.workdir)
     return str(path) if path else None
 
 
@@ -61,15 +64,19 @@ def view_image_path(tool_input: JsonValue) -> str | None:
 
 def shell_stdout(tool_output: JsonValue) -> JsonValue:
     """The stdout a shell call returned: after Codex's ``Output:`` header, or
-    the JSON ``output`` part in script mode; any other shape unchanged."""
+    the JSON ``output`` part in script mode; ``None`` when Codex reports a
+    non-zero exit; any other shape unchanged."""
     if isinstance(tool_output, str) and tool_output.startswith(_HEADER_PREFIX):
-        _, sep, stdout = tool_output.partition(_HEADER_END)
-        return stdout if sep else tool_output
+        header, sep, stdout = tool_output.partition(_HEADER_END)
+        if not sep:
+            return tool_output
+        return None if _EXIT_FAILED.search(header) else stdout
     try:
-        _, result = _ScriptParts.validate_python(tool_output)
-        return _ScriptResult.model_validate_json(result.text).output
+        _, part = _ScriptParts.validate_python(tool_output)
+        result = _ScriptResult.model_validate_json(part.text)
     except ValidationError:
         return tool_output
+    return result.output if result.exit_code in (0, None) else None
 
 
 def image_output_bytes(tool_output: JsonValue) -> bytes | None:
