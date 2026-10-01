@@ -1,7 +1,7 @@
-"""Cloud Function polling loop — vendor-neutral pipeline composition.
+"""Polling tick — vendor-neutral pipeline composition.
 
-Runs once per Cloud Scheduler tick (Cloud Scheduler → Pub/Sub topic →
-Cloud Function 2nd gen):
+Runs once per Cloud Scheduler tick (``POST /tick`` on the Cloud Run
+service, see ``main.py``):
 
   1. For each configured event source: fetch a bounded batch of new
      ``AIInvocationObservedV1`` events past the source's checkpoint
@@ -16,17 +16,14 @@ Cloud Function 2nd gen):
 Sources run independently with per-source try/except so one source's
 failure does not block the others.
 
-Function concurrency = 1 (Pub/Sub subscription
-``maxConcurrentDispatches=1``) so checkpoint reads and writes race
+The tick lease serializes ticks, so checkpoint reads and writes race
 nothing.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
 from collections.abc import Sequence
 
 import httpx
@@ -39,8 +36,7 @@ from slashid_ai_forwarder_core.sink import push_invocations
 from .config import Config
 from .event_source import EventSource
 
-log = logging.getLogger()
-log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+log = logging.getLogger(__name__)
 
 
 def _log_event(event: AIInvocationObservedV1) -> None:
@@ -74,7 +70,7 @@ async def _push_events(events: Sequence[AIInvocationObservedV1], config: Config)
         )
 
 
-def run_tick(
+async def run_tick(
     *,
     sources: Sequence[EventSource],
     config: Config,
@@ -91,13 +87,12 @@ def run_tick(
     total_events_fetched = 0
     for source in sources:
         try:
-            events, next_checkpoint = source.fetch()
+            events, next_checkpoint = await source.fetch()
             if events:
-                event_count = asyncio.run(_push_events(events, config))
-                total_events += event_count
+                total_events += await _push_events(events, config)
                 total_events_fetched += len(events)
             if next_checkpoint is not None:
-                source.commit(next_checkpoint)
+                await source.commit(next_checkpoint)
         except Exception:
             log.exception("source %s failed this tick", type(source).__name__)
     return {"events_pushed": total_events, "envelopes_seen": total_events_fetched}

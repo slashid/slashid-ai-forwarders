@@ -238,8 +238,18 @@ class EventSource(Protocol):
     is ``None``.
     """
 
-    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]: ...
-    def commit(self, checkpoint: Checkpoint) -> None: ...
+    async def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]: ...
+    async def commit(self, checkpoint: Checkpoint) -> None: ...
+
+
+@dataclass(frozen=True)
+class _Scan:
+    """What one pass over the BigQuery rows found."""
+
+    rows: list[Entry]
+    raw_seen: int
+    max_ts: datetime | None
+    max_id: str | None
 
 
 class BqEventSource:
@@ -275,27 +285,15 @@ class BqEventSource:
         self._region = region
         self._max_rows_per_tick = max_rows_per_tick
         self._audit_buffer_seconds = audit_buffer_seconds
+        self._logging_client: Any = None
 
-    def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
-        """Two-query orchestration: BQ payload → audit-log window →
-        per-row identity stamping → envelope construction → normalize →
-        finalize → build final wire event. Returns
-        (events, next_checkpoint).
-
-        ``next_checkpoint`` reflects the max ``(logging_time, request_id)``
-        across ALL raw BQ rows — including rows that ``_row_to_entry``
-        drops as unparseable — so permanent parse failures do not stall
-        the pipeline. ``None`` on zero raw rows.
-
-        The BigQuery + Cloud Logging half is sync (both APIs block); the
-        Gemini normalize/finalize/build_event half is async and driven
-        via a single ``asyncio.run`` inside fetch. The handler stays
-        sync-oriented and doesn't need to know which sources are async
-        under the hood.
-        """
+    def _read_payload_rows(self, checkpoint: Checkpoint) -> _Scan:
+        """The blocking BigQuery half: run the query and walk every raw row,
+        tracking the max ``(timestamp, id)`` across **all** of them, even the
+        ones ``_row_to_entry`` drops, so a permanent parse failure cannot
+        stall the checkpoint."""
         from google.cloud import bigquery
 
-        checkpoint = self._checkpoint_store.load()
         query, params = self._build_query(checkpoint)
         job_config = bigquery.QueryJobConfig(query_parameters=params)
         job = self._client.query(query, job_config=job_config)
@@ -306,8 +304,6 @@ class BqEventSource:
         raw_seen = 0
         for row in job.result():
             raw_seen += 1
-            # Track max (timestamp, id) across ALL raw rows for
-            # next_checkpoint, even if _row_to_entry drops this one.
             row_ts = row.get("logging_time")
             row_id = row.get("request_id")
             if row_ts is not None and row_id is not None:
@@ -322,34 +318,51 @@ class BqEventSource:
             entry = _row_to_entry(row, region=self._region)
             if entry is not None:
                 payload_rows.append(entry)
+        return _Scan(payload_rows, raw_seen, max_ts, max_id)
 
-        if raw_seen == 0:
+    async def fetch(self) -> tuple[list[AIInvocationObservedV1], Checkpoint | None]:
+        """Two-query orchestration: BQ payload → audit-log window →
+        per-row identity stamping → envelope construction → normalize →
+        finalize → build final wire event. Returns
+        (events, next_checkpoint).
+
+        ``next_checkpoint`` reflects the max ``(logging_time, request_id)``
+        across ALL raw BQ rows — including rows that ``_row_to_entry``
+        drops as unparseable — so permanent parse failures do not stall
+        the pipeline. ``None`` on zero raw rows.
+
+        The BigQuery and Cloud Logging calls block, so they run in a worker
+        thread; the Gemini normalize/finalize/build_event half is async.
+        """
+        checkpoint = await self._checkpoint_store.load()
+        scan = await asyncio.to_thread(self._read_payload_rows, checkpoint)
+        if scan.raw_seen == 0:
             return [], None
 
-        next_checkpoint = Checkpoint(timestamp=max_ts, id=max_id)
+        next_checkpoint = Checkpoint(timestamp=scan.max_ts, id=scan.max_id)
 
-        if not payload_rows:
+        if not scan.rows:
             return [], next_checkpoint
 
         # Predict each row's audit timestamp first (bias-corrected), then
         # take the envelope of each row's own window. Matches the per-row
         # window exactly — everything the filter lets through is a
         # potential candidate for at least one row.
-        spans = [(_predict_audit_ts(r), _correlation(r)[1]) for r in payload_rows]
+        spans = [(_predict_audit_ts(r), _correlation(r)[1]) for r in scan.rows]
         ts_range = (min(p - w for p, w in spans), max(p + w for p, w in spans))
-        audit_entries = self._query_audit(ts_range)
+        audit_entries = await asyncio.to_thread(self._query_audit, ts_range)
 
-        for row in payload_rows:
+        for row in scan.rows:
             row.identity_details = _resolve_identity(row, audit_entries)
             row.user_agent = _resolve_user_agent(row, audit_entries)
 
-        events = asyncio.run(_gemini_pipeline(payload_rows, self._config))
+        events = await _gemini_pipeline(scan.rows, self._config)
         return events, next_checkpoint
 
-    def commit(self, checkpoint: Checkpoint) -> None:
+    async def commit(self, checkpoint: Checkpoint) -> None:
         """Advance the source's checkpoint. Called by the handler after
         successful wire push."""
-        self._checkpoint_store.save(checkpoint)
+        await self._checkpoint_store.save(checkpoint)
 
     def _query_audit(
         self,
@@ -369,9 +382,10 @@ class BqEventSource:
 
         from .audit_source import query_audit_entries
 
-        client = gcp_logging.Client(project=self._project_id, _use_grpc=False)
+        if self._logging_client is None:
+            self._logging_client = gcp_logging.Client(project=self._project_id, _use_grpc=False)
         return query_audit_entries(
-            client=client,
+            client=self._logging_client,
             project_id=self._project_id,
             region=self._region,
             ts_range=ts_range,

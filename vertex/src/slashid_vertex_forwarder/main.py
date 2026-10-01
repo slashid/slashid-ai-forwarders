@@ -1,27 +1,34 @@
-"""Cloud Function 2nd gen entrypoint.
+"""FastAPI entrypoint: the scheduler's tick on POST /tick.
 
-Cloud Scheduler → Pub/Sub topic → this function. The CloudEvent payload
-is ignored; the entire operation is "for each source, poll → push →
-commit its checkpoint". Any distinct payload would be a signal for
-future variants (e.g. targeted replay), not v1.
+Cloud Scheduler posts here with an OIDC token; the tick lease makes an
+overlapping tick a no-op. Run with
+``uvicorn slashid_vertex_forwarder.main:app --factory``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
-from functools import cache
+import os
+import sys
+from collections.abc import Sequence
+from datetime import timedelta
 
-import functions_framework
-from cloudevents.http import CloudEvent
-from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from slashid_ai_forwarder_core import platform as platforms
+from slashid_ai_forwarder_core.platform import Platform, SchedulerAuth, TickLease
 
 from .audit_only_source import AuditOnlyEventSource
-from .config import load_config
+from .config import Config, load_config
 from .event_source import BqEventSource, EventSource
 from .handler import run_tick
 
 log = logging.getLogger(__name__)
+
+# Longer than the service timeout, so a crashed tick's lease lapses on its own.
+TICK_LEASE = timedelta(minutes=10)
 
 # Firestore document names are hardcoded — one per source under the
 # customer-configurable ``checkpoint_collection``. Watermarks
@@ -49,31 +56,19 @@ def _bq_dataset_id(prefix: str, region: str) -> str:
     return f"{prefix}_{slug}"
 
 
-@cache
-def _sources() -> list[EventSource]:
-    """Cached per Cloud Function container — the BigQuery, Firestore,
-    and Cloud Logging clients are heavy to construct (auth, discovery)
-    so we keep them warm across ticks. The Firestore client is shared
-    across every source's checkpoint store; each source gets its own
-    document so watermarks don't collide.
+def _sources(config: Config, platform: Platform) -> list[EventSource]:
+    """One ``BqEventSource`` per region plus, when models are observed via
+    audit logs, a single ``AuditOnlyEventSource`` whose Cloud Logging
+    filter OR's every region (audit logs are globally aggregated, so one
+    query covers all of them).
 
-    Multi-region: one ``BqEventSource`` per region (each with its own
-    regional dataset + checkpoint doc) plus a single
-    ``AuditOnlyEventSource`` whose Cloud Logging filter OR's every
-    ``gcp_regions`` entry — audit logs are globally aggregated so a
-    single query covers all regions.
-
-    Nullary so ``@cache`` doesn't need to hash the ``Config`` (which
-    holds ``list[str]`` fields — pydantic auto-``__hash__`` tries to
-    hash the raw dict and chokes on lists). ``load_config()`` is
-    itself cached, so pulling it inside is free.
+    The BigQuery and Cloud Logging clients are built once and live as long
+    as the process; each source gets its own checkpoint document so
+    watermarks don't collide.
     """
     from google.cloud import bigquery
     from google.cloud import logging as gcp_logging
 
-    config = load_config()
-
-    platform = GcpPlatform(project=config.project_id, firestore_database=config.database)
     bq_client = bigquery.Client(project=config.project_id)
 
     sources: list[EventSource] = [
@@ -113,14 +108,66 @@ def _sources() -> list[EventSource]:
     return sources
 
 
-@functions_framework.cloud_event
-def handler(cloud_event: CloudEvent) -> None:
-    """Cloud Function 2nd gen entrypoint. Ignores the CloudEvent payload.
+async def _refuse(_token: str) -> bool:
+    log.error("no scheduler authentication is configured; refusing every tick")
+    return False
 
-    Returns ``None`` — functions-framework's ``cloud_event`` decorator
-    expects a void function. Tick counters land in CloudFunctions logs
-    for observability rather than the return value.
+
+def _bearer(header: str | None) -> str | None:
+    scheme, _, token = (header or "").partition(" ")
+    return token if scheme.lower() == "bearer" and token else None
+
+
+def create_app(
+    config: Config,
+    *,
+    sources: Sequence[EventSource],
+    lease: TickLease | None = None,
+    tick_auth: SchedulerAuth | None = None,
+) -> FastAPI:
+    """Every stateful piece is injected; ``app()`` builds them for the
+    configured platform, and tests hand in fakes."""
+    authorize = tick_auth or _refuse
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.post("/tick")
+    async def tick(request: Request) -> Response:
+        token = _bearer(request.headers.get("authorization"))
+        if token is None or not await authorize(token):
+            log.warning("tick refused: no acceptable scheduler token")
+            return Response(status_code=401)
+        guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
+        async with guard as held:
+            if not held:
+                # Not an error: the next scheduled tick picks the work up.
+                return JSONResponse({"skipped": True})
+            counters = await run_tick(sources=sources, config=config)
+        log.info("tick complete: %s", json.dumps(counters, separators=(",", ":")))
+        return JSONResponse(counters)
+
+    return app
+
+
+def app() -> FastAPI:
+    """uvicorn factory: ``uvicorn slashid_vertex_forwarder.main:app --factory``.
+
+    uvicorn configures only its own loggers, so without a root handler our
+    INFO lines fall to Python's last-resort handler and are dropped.
     """
-    del cloud_event
-    counters = run_tick(sources=_sources(), config=load_config())
-    log.info("tick complete: %s", json.dumps(counters, separators=(",", ":")))
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+        stream=sys.stderr,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    config = load_config()
+    platform = platforms.get(
+        config.platform, project=config.project_id, firestore_database=config.database
+    )
+    return create_app(
+        config,
+        sources=_sources(config, platform),
+        lease=platform.tick_lease(collection=config.checkpoint_collection, document="tick"),
+        tick_auth=platform.scheduler_auth(
+            principal=config.tick_principal, audience=config.tick_audience
+        ),
+    )

@@ -1,4 +1,4 @@
-"""GCP Cloud Function 2nd gen forwarder for Vertex AI ``generateContent``.
+"""GCP Cloud Run forwarder for Vertex AI ``generateContent``.
 
 Reads request-response logging rows from BigQuery, normalizes each into a
 canonical ``NormalizedInvocation`` via the shared ``normalize.gemini``

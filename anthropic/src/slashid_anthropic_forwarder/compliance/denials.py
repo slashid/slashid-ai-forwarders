@@ -70,7 +70,7 @@ async def read_denials(
     now: datetime,
 ) -> DenialCounters:
     """One pass over the activity feed from the saved watermark."""
-    start = cursors.activities.window_start(now=now)
+    start = await cursors.activities.window_start(now=now)
     counters = DenialCounters()
     newest = start
     last_id: str | None = None
@@ -96,7 +96,7 @@ async def read_denials(
             models=models,
             counters=counters,
         )
-    cursors.activities.advance(timestamp=newest, id=last_id, drained=True)
+    await cursors.activities.advance(timestamp=newest, id=last_id, drained=True)
     counters.newest = newest
     return counters
 

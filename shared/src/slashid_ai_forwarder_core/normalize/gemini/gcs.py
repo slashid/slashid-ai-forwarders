@@ -11,7 +11,7 @@ so ``truncate_middle`` can produce a well-formed elided snippet — no
 hash on partial fetch.
 
 All GCS calls use ``gcloud-aio-storage`` for native async I/O and pick
-up Application Default Credentials from the Cloud Function's runtime
+up Application Default Credentials from the service's runtime
 service account. The dependency is optional: ``gcloud-aio-storage`` is
 only pulled in when the ``[gcs]`` extras group is installed (via
 ``slashid-ai-forwarder-core[gcs]`` — the Vertex forwarder does this).

@@ -68,7 +68,7 @@ def _pending_store(platform: Platform, config: Config) -> PendingStore:
             from .store.gcp import FirestorePendingStore
 
             return FirestorePendingStore(
-                client=platform.firestore_async,
+                client=platform.firestore,
                 collection=config.pending_collection,
                 join_wait=timedelta(seconds=config.join_wait_seconds),
                 tombstone_ttl=timedelta(seconds=config.tombstone_ttl_seconds),

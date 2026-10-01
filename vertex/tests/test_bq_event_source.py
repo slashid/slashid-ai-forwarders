@@ -73,10 +73,10 @@ class _FakeCheckpointStore:
         self._value: Checkpoint = initial or Checkpoint(None, None)
         self.saves: list[Checkpoint] = []
 
-    def load(self) -> Checkpoint:
+    async def load(self) -> Checkpoint:
         return self._value
 
-    def save(self, checkpoint: Checkpoint) -> None:
+    async def save(self, checkpoint: Checkpoint) -> None:
         self._value = checkpoint
         self.saves.append(checkpoint)
 
@@ -164,9 +164,23 @@ def _source(
     return src, client, store
 
 
-def test_fetch_returns_events() -> None:
+async def test_a_failure_in_the_bigquery_helper_propagates_and_commits_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    src, client, store = _source(rows=[_row()])
+
+    def _explode(query: str, job_config: Any) -> Any:
+        raise RuntimeError("bigquery is down")
+
+    monkeypatch.setattr(client, "query", _explode)
+    with pytest.raises(RuntimeError, match="bigquery is down"):
+        await src.fetch()
+    assert store.saves == []
+
+
+async def test_fetch_returns_events() -> None:
     src, _, _ = _source(rows=[_row()])
-    events, _cp = src.fetch()
+    events, _cp = await src.fetch()
     assert len(events) == 1
     ev = events[0]
     assert ev.request_id == "3292372995731278848"
@@ -186,17 +200,17 @@ def test_fetch_returns_events() -> None:
     assert ev.tokens.output == 3
 
 
-def test_fetch_reads_wildcard_table_pattern() -> None:
+async def test_fetch_reads_wildcard_table_pattern() -> None:
     """One wildcard FROM covers every provisioned per-model table."""
     src, client, _ = _source(rows=[])
-    src.fetch()
+    await src.fetch()
     expected = "`vertex-test-507702.slashid_vertex_reqresp_logs.slashid_vertex_reqresp_*`"
     assert expected in client.calls[0].query
 
 
-def test_fetch_no_checkpoint_omits_where_clause() -> None:
+async def test_fetch_no_checkpoint_omits_where_clause() -> None:
     src, client, _ = _source(rows=[])
-    src.fetch()
+    await src.fetch()
     q = client.calls[0].query
     assert "WHERE" not in q
     # limit parameter always emitted.
@@ -204,12 +218,12 @@ def test_fetch_no_checkpoint_omits_where_clause() -> None:
     assert "limit" in param_names
 
 
-def test_fetch_with_checkpoint_binds_where_params() -> None:
+async def test_fetch_with_checkpoint_binds_where_params() -> None:
     src, client, _ = _source(
         rows=[],
         checkpoint=Checkpoint(datetime(2026, 9, 5, tzinfo=UTC), "prev-id"),
     )
-    src.fetch()
+    await src.fetch()
     q = client.calls[0].query
     # Checkpoint clause is now paren-wrapped so it can AND with the
     # optional audit-buffer cutoff.
@@ -218,13 +232,13 @@ def test_fetch_with_checkpoint_binds_where_params() -> None:
     assert param_names == {"limit", "cp_ts", "cp_id"}
 
 
-def test_fetch_ordering_clause() -> None:
+async def test_fetch_ordering_clause() -> None:
     src, client, _ = _source(rows=[])
-    src.fetch()
+    await src.fetch()
     assert "ORDER BY logging_time ASC, CAST(request_id AS STRING) ASC" in client.calls[0].query
 
 
-def test_fetch_accepts_string_json_columns() -> None:
+async def test_fetch_accepts_string_json_columns() -> None:
     """BQ JSON columns may surface as strings from some driver versions —
     handle both dict and string shapes."""
     row = _row(
@@ -232,15 +246,15 @@ def test_fetch_accepts_string_json_columns() -> None:
         response_payload=json.dumps(_POC_RESP),
     )
     src, _, _ = _source(rows=[row])
-    envelopes, _cp = src.fetch()
+    envelopes, _cp = await src.fetch()
     assert len(envelopes) == 1
 
 
-def test_fetch_drops_row_with_invalid_payload(caplog: pytest.LogCaptureFixture) -> None:
+async def test_fetch_drops_row_with_invalid_payload(caplog: pytest.LogCaptureFixture) -> None:
     row = _row(request_payload={"contents": "not-a-list-broken"})
     src, _, _ = _source(rows=[row])
     with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
-        envelopes, _cp = src.fetch()
+        envelopes, _cp = await src.fetch()
     assert envelopes == []
     assert any(
         "schema-invalid payload" in r.getMessage()
@@ -249,12 +263,12 @@ def test_fetch_drops_row_with_invalid_payload(caplog: pytest.LogCaptureFixture) 
     )
 
 
-def test_fetch_drops_row_with_missing_fields(caplog: pytest.LogCaptureFixture) -> None:
+async def test_fetch_drops_row_with_missing_fields(caplog: pytest.LogCaptureFixture) -> None:
     row = _row()
     del row["request_id"]  # simulate a schema mismatch
     src, _, _ = _source(rows=[row])
     with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
-        envelopes, _cp = src.fetch()
+        envelopes, _cp = await src.fetch()
     assert envelopes == []
     assert any(
         "missing required fields" in r.getMessage() and "request_id" in r.getMessage()
@@ -262,14 +276,14 @@ def test_fetch_drops_row_with_missing_fields(caplog: pytest.LogCaptureFixture) -
     )
 
 
-def test_fetch_drops_row_with_non_dict_payload(caplog: pytest.LogCaptureFixture) -> None:
+async def test_fetch_drops_row_with_non_dict_payload(caplog: pytest.LogCaptureFixture) -> None:
     """Non-JSON strings still parse via json.loads but might come out as
     lists/numbers/strings — the shape check downstream drops them and
     logs the observed payload types."""
     row = _row(request_payload="42")  # json.loads → int
     src, _, _ = _source(rows=[row])
     with caplog.at_level("WARNING", logger="slashid_vertex_forwarder.event_source"):
-        envelopes, _cp = src.fetch()
+        envelopes, _cp = await src.fetch()
     assert envelopes == []
     assert any(
         "non-dict payload" in r.getMessage() and "full_request=int" in r.getMessage()
@@ -277,18 +291,18 @@ def test_fetch_drops_row_with_non_dict_payload(caplog: pytest.LogCaptureFixture)
     )
 
 
-def test_fetch_multiple_rows_preserve_order() -> None:
+async def test_fetch_multiple_rows_preserve_order() -> None:
     rows = [
         _row(request_id=1, logging_time=datetime(2026, 9, 5, 1, 0, 0, tzinfo=UTC)),
         _row(request_id=2, logging_time=datetime(2026, 9, 5, 1, 0, 1, tzinfo=UTC)),
         _row(request_id=3, logging_time=datetime(2026, 9, 5, 1, 0, 2, tzinfo=UTC)),
     ]
     src, _, _ = _source(rows=rows)
-    envelopes, _cp = src.fetch()
+    envelopes, _cp = await src.fetch()
     assert [e.request_id for e in envelopes] == ["1", "2", "3"]
 
 
-def test_fetch_advances_next_checkpoint_to_last_row() -> None:
+async def test_fetch_advances_next_checkpoint_to_last_row() -> None:
     """Happy path: next_checkpoint equals max (logging_time, request_id)
     across all raw BQ rows."""
     rows = [
@@ -297,22 +311,22 @@ def test_fetch_advances_next_checkpoint_to_last_row() -> None:
         _row(request_id=3, logging_time=datetime(2026, 9, 5, 1, 0, 2, tzinfo=UTC)),
     ]
     src, _, _ = _source(rows=rows)
-    _envs, cp = src.fetch()
+    _envs, cp = await src.fetch()
     assert cp == Checkpoint(
         timestamp=datetime(2026, 9, 5, 1, 0, 2, tzinfo=UTC),
         id="3",
     )
 
 
-def test_fetch_empty_returns_none_checkpoint() -> None:
+async def test_fetch_empty_returns_none_checkpoint() -> None:
     """Zero raw rows → next_checkpoint is None (handler skips commit)."""
     src, _, _ = _source(rows=[])
-    envs, cp = src.fetch()
+    envs, cp = await src.fetch()
     assert envs == []
     assert cp is None
 
 
-def test_fetch_advances_next_checkpoint_across_parse_drops() -> None:
+async def test_fetch_advances_next_checkpoint_across_parse_drops() -> None:
     """A tick where every BQ row fails _row_to_entry (missing required
     field) still advances next_checkpoint past the last raw row seen —
     otherwise the pipeline would loop on the same broken rows forever.
@@ -341,16 +355,16 @@ def test_fetch_advances_next_checkpoint_across_parse_drops() -> None:
         },
     ]
     src, _, _ = _source(rows=fake_rows)
-    envelopes, cp = src.fetch()
+    envelopes, cp = await src.fetch()
     assert envelopes == []
     assert cp == Checkpoint(timestamp=t0, id="2")
 
 
-def test_commit_saves_checkpoint_to_store() -> None:
+async def test_commit_saves_checkpoint_to_store() -> None:
     """commit(cp) delegates to the checkpoint store's save()."""
     src, _, store = _source(rows=[])
     cp = Checkpoint(datetime(2026, 9, 9, tzinfo=UTC), "42")
-    src.commit(cp)
+    await src.commit(cp)
     assert store.saves == [cp]
 
 
@@ -368,7 +382,7 @@ def test_entry_checkpoint_property_reflects_row() -> None:
     assert cp.timestamp == datetime(2026, 9, 5, 2, 43, 59, tzinfo=UTC)
 
 
-def test_fetch_accepts_stream_generate_content_row() -> None:
+async def test_fetch_accepts_stream_generate_content_row() -> None:
     """BqEventSource treats StreamGenerateContent rows identically to
     GenerateContent — same code path, no api_method filtering. The
     row's ``api_method`` column is projected onto ``Entry.api_method``
@@ -394,7 +408,7 @@ def test_fetch_accepts_stream_generate_content_row() -> None:
         },
     }
     src, _, _ = _source(rows=[_row(request_payload=stream_req, response_payload=stream_resp)])
-    envelopes, _cp = src.fetch()
+    envelopes, _cp = await src.fetch()
     assert len(envelopes) == 1
 
 
@@ -978,7 +992,7 @@ def test_resolve_identity_length_1_mixed_with_length_2_partial_attribution() -> 
     assert result.credential_chain[1].oauth_client_id is None
 
 
-def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
+async def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
     """End-to-end: fetch queries payload, queries audit, stamps identity
     on each returned wire event."""
     from slashid_ai_forwarder_core.events import GCPIdentityDetails
@@ -1005,7 +1019,7 @@ def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    events, _cp = source.fetch()
+    events, _cp = await source.fetch()
     assert len(events) == 1
     identity = events[0].identity_details
     assert isinstance(identity, GCPIdentityDetails)
@@ -1014,7 +1028,7 @@ def test_fetch_stamps_identity_details_on_events(monkeypatch) -> None:
     assert chain[0].principal_email == "alice@example.com"
 
 
-def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> None:
+async def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> None:
     """The audit query's ts_range is the envelope of each row's own
     predicted timestamp ± that row's window — computed per row."""
     from slashid_vertex_forwarder.event_source import _REGIONAL, BqEventSource
@@ -1052,13 +1066,13 @@ def test_fetch_ts_range_uses_predicted_bounds_with_window_slack(monkeypatch) -> 
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    source.fetch()
+    await source.fetch()
     lo, hi = captured[0]
     assert lo == datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC) - bias - window
     assert hi == datetime(2026, 9, 9, 12, 0, 5, tzinfo=UTC) - bias + window
 
 
-def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
+async def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
     """No BQ rows → no audit query fired."""
     from slashid_vertex_forwarder.event_source import BqEventSource
 
@@ -1083,7 +1097,7 @@ def test_fetch_empty_rows_skips_audit_query(monkeypatch) -> None:
         max_rows_per_tick=100,
         audit_buffer_seconds=0,
     )
-    events, cp = source.fetch()
+    events, cp = await source.fetch()
     assert events == []
     assert cp is None
     assert called["n"] == 0

@@ -162,15 +162,15 @@ class _FakeCheckpointStore:
         self._value = initial if initial is not None else Checkpoint(None, None)
         self.saves: list[Checkpoint] = []
 
-    def load(self) -> Checkpoint:
+    async def load(self) -> Checkpoint:
         return self._value
 
-    def save(self, checkpoint: Checkpoint) -> None:
+    async def save(self, checkpoint: Checkpoint) -> None:
         self._value = checkpoint
         self.saves.append(checkpoint)
 
 
-def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
+async def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 
     t1 = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
@@ -198,7 +198,7 @@ def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, next_cp = source.fetch()
+    events, next_cp = await source.fetch()
     assert len(events) == 2
     # Verify shape of the AIInvocationObservedV1 events.
     assert events[0].parsed_as == "vertex-audit"
@@ -227,7 +227,7 @@ def test_fetch_yields_events_and_advances_next_checkpoint() -> None:
     assert next_cp == Checkpoint(timestamp=t2, id="b")
 
 
-def test_fetch_advances_next_checkpoint_across_filter_drops() -> None:
+async def test_fetch_advances_next_checkpoint_across_filter_drops() -> None:
     """Entry has publisher-in-list but model-not-in-list: event
     dropped, next_checkpoint still advances past the raw entry."""
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
@@ -251,12 +251,12 @@ def test_fetch_advances_next_checkpoint_across_filter_drops() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, next_cp = source.fetch()
+    events, next_cp = await source.fetch()
     assert events == []
     assert next_cp == Checkpoint(timestamp=t1, id="a")
 
 
-def test_fetch_advances_next_checkpoint_across_parse_failures() -> None:
+async def test_fetch_advances_next_checkpoint_across_parse_failures() -> None:
     """Entry with malformed resource_name is dropped; checkpoint
     still advances."""
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
@@ -276,12 +276,12 @@ def test_fetch_advances_next_checkpoint_across_parse_failures() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, next_cp = source.fetch()
+    events, next_cp = await source.fetch()
     assert events == []
     assert next_cp == Checkpoint(timestamp=t1, id="a")
 
 
-def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
+async def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 
     source = AuditOnlyEventSource(
@@ -293,12 +293,12 @@ def test_fetch_empty_result_returns_none_next_checkpoint() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, next_cp = source.fetch()
+    events, next_cp = await source.fetch()
     assert events == []
     assert next_cp is None
 
 
-def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
+async def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
     """Server-side filter is ``timestamp >= cp_ts``, so the watermark
     entry echoes back every tick — Python must drop it via the strict
     ``(timestamp, id) > (cp_ts, cp_id)`` filter and NOT re-emit it.
@@ -337,12 +337,12 @@ def test_fetch_reserver_echo_of_watermark_is_filtered_out() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, next_cp = source.fetch()
+    events, next_cp = await source.fetch()
     assert events == [], "watermark echo must not be re-emitted"
     assert next_cp is None, "nothing new past the watermark → don't advance"
 
 
-def test_fetch_captures_errored_google_call_as_audit_event() -> None:
+async def test_fetch_captures_errored_google_call_as_audit_event() -> None:
     """Errored Google calls are dropped by Vertex's response-conditional
     BQ payload logging (verified empirically on strong-hue-507702-k7:
     two 400-erroring Gemini calls at 14:48:24 produced 0 BQ rows). The
@@ -377,7 +377,7 @@ def test_fetch_captures_errored_google_call_as_audit_event() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, next_cp = source.fetch()
+    events, next_cp = await source.fetch()
     assert len(events) == 1
     assert events[0].parsed_as == "vertex-audit"
     assert events[0].stop_reason == "error"
@@ -386,7 +386,7 @@ def test_fetch_captures_errored_google_call_as_audit_event() -> None:
     assert next_cp == Checkpoint(timestamp=t1, id="err-gem-1")
 
 
-def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> None:
+async def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> None:
     """Vertex Anthropic ``rawPredict`` audit entries carry
     ``@YYYYMMDD`` version suffixes on the resource_name:
     ``.../publishers/anthropic/models/claude-sonnet-4-5@20250929``.
@@ -423,7 +423,7 @@ def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, _ = source.fetch()
+    events, _ = await source.fetch()
     assert len(events) == 1
     ev = events[0]
     assert ev.model.provider == "anthropic"
@@ -433,7 +433,7 @@ def test_fetch_matches_versioned_audit_entry_against_bare_allowlist() -> None:
     assert ev.stop_reason == "error"
 
 
-def test_commit_saves_to_checkpoint_store() -> None:
+async def test_commit_saves_to_checkpoint_store() -> None:
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
 
     store = _FakeCheckpointStore()
@@ -447,11 +447,11 @@ def test_commit_saves_to_checkpoint_store() -> None:
         config=_config(),
     )
     cp = Checkpoint(timestamp=datetime(2026, 9, 9, tzinfo=UTC), id="x")
-    source.commit(cp)
+    await source.commit(cp)
     assert store.saves == [cp]
 
 
-def test_fetch_propagates_user_agent_to_wire_event() -> None:
+async def test_fetch_propagates_user_agent_to_wire_event() -> None:
     """Audit-only path reads ``callerSuppliedUserAgent`` straight off the
     entry — no correlation join needed, the audit entry IS the source."""
     from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
@@ -473,6 +473,6 @@ def test_fetch_propagates_user_agent_to_wire_event() -> None:
         max_entries_per_tick=100,
         config=_config(),
     )
-    events, _ = source.fetch()
+    events, _ = await source.fetch()
     assert len(events) == 1
     assert events[0].user_agent == "google-cloud-sdk/1.2.3"
