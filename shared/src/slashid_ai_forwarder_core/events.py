@@ -611,8 +611,11 @@ async def build_event_from_normalized(
     used = _used_tools(normalized)
     messages = normalized.input.messages
     hashed = after_last_assistant(messages) if config.input_scope == "round" else messages
+    answer = normalized.output.message
     round_hash, recent_round_hashes = round_links(
-        messages, normalized.output.message, depth=config.round_link_depth
+        [*messages, answer] if answer is not None else messages,
+        answered=answer is not None,
+        depth=config.round_link_depth,
     )
 
     return AIInvocationObservedV1(

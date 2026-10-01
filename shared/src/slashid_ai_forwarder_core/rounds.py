@@ -11,7 +11,6 @@ import hashlib
 import json
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from itertools import chain
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
@@ -120,36 +119,25 @@ def _closed_rounds(messages: Sequence[NormalizedMessage], end: int) -> Iterator[
 
 
 def round_links(
-    history: Sequence[NormalizedMessage],
-    answer: NormalizedMessage | None,
-    *,
-    depth: int,
+    messages: Sequence[NormalizedMessage], *, answered: bool, depth: int
 ) -> tuple[str | None, list[str]]:
     """``(round_hash, recent_round_hashes)`` for an event.
 
-    ``history`` is the transcript before the response and ``answer`` the
-    response, absent for a record with none. The list is newest first, at
-    most ``depth`` hashes, and ends with the guard when it reaches round one.
-    Only the last ``depth`` rounds are projected.
+    ``messages`` is the transcript including the event's response when it has
+    one (``answered``). The list is newest first, at most ``depth`` hashes, and
+    ends with the guard when it reaches round one. Only the last ``depth``
+    rounds are projected.
     """
-    answered = answer is not None and bool(project([answer]))
-    cut = len(history)
-    while cut and history[cut - 1].role != "assistant":
-        cut -= 1
-    consumed = list(history[cut:])
-    older = _closed_rounds(history, cut)
-    newest: list[Round] = []
-    if answer is not None and answered:
-        if consumed or not history:
-            newest.append(Round(consumed, [answer]))
-        else:
-            # The history ends on an assistant run, which the answer extends.
-            last = next(older)
-            newest.append(Round(last.consumed, [*last.answer, answer]))
+    end = len(messages)
+    while end and messages[end - 1].role != "assistant":
+        end -= 1
+    own: str | None = None
     hashes: list[str] = []
     reaches_start = True
-    for r in chain(newest, older):
-        digest = r.digest()
+    for index, round_ in enumerate(_closed_rounds(messages, end)):
+        digest = round_.digest()
+        if index == 0 and answered:
+            own = digest
         if digest is None:
             continue
         if len(hashes) == depth:
@@ -160,4 +148,4 @@ def round_links(
         return None, []
     if reaches_start:
         hashes.append(CONVERSATION_START)
-    return (hashes[0] if answered else None), hashes
+    return own, hashes
