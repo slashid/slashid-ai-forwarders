@@ -20,7 +20,7 @@ Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `sp
 
 | Field | Default | |
 |---|---|---|
-| `endpoint` | | SlashID API origin, `https://` |
+| `endpoint` | `https://api.slashid.com` | SlashID API origin, `https://` |
 | `push_token_file` | | the OpenAI connection's token, ≥ 32 characters |
 | `user_id` | | the ChatGPT workspace user (`user-…`) |
 | `verdict_fail_mode` | `deny` | without a verdict (SlashID or the daemon unavailable, bad payload): `deny` blocks, `allow` allows |
