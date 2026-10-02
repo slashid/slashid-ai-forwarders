@@ -13,7 +13,7 @@ and forward only the text message, so the middleware also embeds
 ``[trace_id=<32 hex> span_id=<16 hex>]`` as a trailing text marker.
 
 This leaf module holds the extraction; both
-``shared/events.py::_used_tools`` and
+``shared/events.py::used_tools_of`` and
 ``shared/normalize/normalized/tool_results.py::extract_tool_result_files``
 import from here. Leaf-only avoids the ``events.py`` ↔ ``tool_results.py``
 cycle that would arise if OTel lived in either.

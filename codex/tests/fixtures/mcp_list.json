@@ -1,0 +1,73 @@
+[
+  {
+    "name": "codex_app",
+    "enabled": false,
+    "disabled_reason": null,
+    "transport": {
+      "type": "stdio",
+      "command": "/opt/app/resources/node",
+      "args": ["/opt/app/resources/app-tools.js"],
+      "env": {},
+      "env_vars": ["CODEX_APP_TOOLS_PIPE_PATH", "HOME", "PATH"],
+      "cwd": "/opt/app/resources"
+    },
+    "startup_timeout_sec": 10.0,
+    "tool_timeout_sec": 3600.0,
+    "auth_status": "unsupported"
+  },
+  {
+    "name": "node_repl",
+    "enabled": true,
+    "disabled_reason": null,
+    "transport": {
+      "type": "stdio",
+      "command": "/opt/app/resources/node_repl",
+      "args": ["--stdio"],
+      "env": {
+        "CODEX_HOME": "*****",
+        "NODE_REPL_NODE_PATH": "*****",
+        "NODE_REPL_TRUSTED_SERVICES": "*****"
+      },
+      "env_vars": [],
+      "cwd": null
+    },
+    "startup_timeout_sec": 120.0,
+    "tool_timeout_sec": null,
+    "auth_status": "unsupported"
+  },
+  {
+    "name": "cua_repl",
+    "enabled": true,
+    "disabled_reason": null,
+    "transport": {
+      "type": "stdio",
+      "command": "/opt/app/resources/cua_repl",
+      "args": [],
+      "env": {
+        "CODEX_HOME": "*****",
+        "NODE_REPL_NODE_PATH": "*****"
+      },
+      "env_vars": [],
+      "cwd": null
+    },
+    "startup_timeout_sec": 120.0,
+    "tool_timeout_sec": null,
+    "auth_status": "unsupported"
+  },
+  {
+    "name": "docs",
+    "enabled": true,
+    "disabled_reason": null,
+    "transport": {
+      "type": "streamable_http",
+      "url": "https://mcp.example.test/mcp",
+      "bearer_token_env_var": null,
+      "http_headers": null,
+      "env_http_headers": null,
+      "http_headers_helper": null
+    },
+    "startup_timeout_sec": null,
+    "tool_timeout_sec": null,
+    "auth_status": "unknown"
+  }
+]

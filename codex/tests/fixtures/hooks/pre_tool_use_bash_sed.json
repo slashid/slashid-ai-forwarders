@@ -1,0 +1,14 @@
+{
+  "session_id": "01a0f44f-53e8-7283-b1e5-b74b1da1b89d",
+  "turn_id": "01a0f44f-aa7b-7d11-8e31-d803f34b4c61",
+  "transcript_path": "/home/user/.codex/sessions/2026/09/30/rollout-2026-09-30T18-53-54-01a0f44f-53e8-7283-b1e5-b74b1da1b89d.jsonl",
+  "cwd": "/home/user/project",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-5.5",
+  "permission_mode": "default",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "sed -n '1,240p' /home/user/Recipes/notes.md"
+  },
+  "tool_use_id": "call_PaTVhmRLsPDp4UUH9JaOFRUl"
+}

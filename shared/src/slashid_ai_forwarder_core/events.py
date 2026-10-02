@@ -563,7 +563,7 @@ def _requested_tool_uses(normalized: NormalizedInvocation) -> list[AIToolUse]:
     return requested
 
 
-def _used_tools(normalized: NormalizedInvocation) -> list[AIToolUse]:
+def used_tools_of(normalized: NormalizedInvocation) -> list[AIToolUse]:
     """Collect completed tool invocations from the canonical input messages.
 
     Only tool_result blocks after the last assistant message count — that's
@@ -651,7 +651,7 @@ async def build_event_from_normalized(
     """
     servers = normalized.input.tool_servers
     tools = normalized.input.tools_declared
-    used = _used_tools(normalized)
+    used = used_tools_of(normalized)
     requested = _requested_tool_uses(normalized)
     messages = normalized.input.messages
     hashed = after_last_assistant(messages) if config.input_scope == "round" else messages

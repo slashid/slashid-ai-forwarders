@@ -239,7 +239,7 @@ async def partial_event(
     # The frame carries no tool definitions, so synthesize them from the
     # names this record's own transcript and its answer reveal — never
     # from the fresh round. Not cosmetic: without a declared tool whose
-    # (server, name) key matches, ``_used_tools`` cannot map a result to
+    # (server, name) key matches, ``used_tools_of`` cannot map a result to
     # a tool id and drops the entry.
     tools, servers = build_tools_declared(
         (name, None, None) for name in _tool_names([*split.before, *split.assistant_run])

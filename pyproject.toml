@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["shared", "bedrock", "vertex", "anthropic"]
+members = ["shared", "bedrock", "vertex", "anthropic", "codex"]
 
 [dependency-groups]
 dev = [
