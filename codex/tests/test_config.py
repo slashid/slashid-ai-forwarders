@@ -23,6 +23,11 @@ def _write(tmp_path: Path, body: str, token: str | None = TOKEN) -> Path:
 BASE = 'endpoint = "https://api.slashid.com/"\nuser_id = "user-abc"\n'
 
 
+def test_endpoint_defaults_to_the_production_api(tmp_path: Path) -> None:
+    cfg = CodexConfig.load(_write(tmp_path, 'user_id = "user-abc"\n'))
+    assert cfg.endpoint == "https://api.slashid.com"
+
+
 def test_loads_toml(tmp_path: Path) -> None:
     cfg = CodexConfig.load(
         _write(tmp_path, BASE + 'verdict_fail_mode = "allow"\ncodex_home = "/x/.codex"\n')

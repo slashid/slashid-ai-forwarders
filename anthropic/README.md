@@ -287,7 +287,7 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 
 | var | required | default |
 | --- | --- | --- |
-| `SLASHID_ENDPOINT` | yes | — |
+| `SLASHID_ENDPOINT` | no | `https://api.slashid.com` |
 | `SLASHID_PUSH_TOKEN` | yes | — |
 | `SLASHID_PLATFORM` | no | `gcp` (the only one today) |
 | `SLASHID_PROJECT_ID` | yes | — |

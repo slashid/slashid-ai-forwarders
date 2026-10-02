@@ -137,7 +137,7 @@ All env vars use the `SLASHID_` prefix:
 
 | var | required | default |
 | --- | --- | --- |
-| `SLASHID_ENDPOINT` | yes | — |
+| `SLASHID_ENDPOINT` | no | `https://api.slashid.com` |
 | `SLASHID_PUSH_TOKEN` | yes | — |
 | `SLASHID_PROJECT_ID` | yes | — |
 | `SLASHID_GCP_REGIONS` | yes | — (JSON list, e.g. `["us-central1","europe-west1"]`) |

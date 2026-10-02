@@ -36,7 +36,7 @@ The customer provides:
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BedrockLogGroupName`        | The CloudWatch log group MIL writes to                                                                                                                                                                          |
 | `BedrockBodyOffloadS3Bucket` | (optional) Bucket Bedrock writes offloaded prompts to. Granted `s3:GetObject` so the Lambda can inline large prompts. Leave blank to skip — offloaded records still ingest, just without tool-catalog metadata. |
-| `SlashIDEndpoint`            | e.g. `https://api.slashid.com`                                                                                                                                                                                  |
+| `SlashIDEndpoint`            | (optional, default `https://api.slashid.com`) SlashID API endpoint                                                                                                                                              |
 | `SlashIDPushToken`           | Event-streaming bearer token for the connection (NoEcho)                                                                                                                                                        |
 | `IncludeRawContent`          | (optional, default `false`) Opt-in to forwarding raw prompt/response JSON. When off, only content hash + mime type + byte length are sent.                                                                      |
 

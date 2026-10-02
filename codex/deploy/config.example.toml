@@ -3,7 +3,8 @@
 # Environment variables are never read.
 
 # SlashID API origin: https://, no path, userinfo, query or fragment.
-endpoint = "https://api.slashid.com"
+# Defaults to the production API; set it only for another environment.
+# endpoint = "https://api.slashid.com"
 # The OpenAI connection's event-streaming token (at least 32 characters);
 # relative paths resolve against this file's directory.
 push_token_file = "/opt/slashid/codex/token"
