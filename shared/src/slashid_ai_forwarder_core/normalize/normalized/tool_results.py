@@ -3,10 +3,10 @@
 Walks ``NormalizedInvocation.input.messages`` for tool_use/tool_result
 pairs matching the ``_READ_TOOLS`` table (Claude Code Read, OpenCode /
 Amazon Q / Gemini CLI ReadFile / read_file / view_file, Claude
-computer-use text-editor tool). For each match: hashes the returned
-bytes (with per-tool cleanup — e.g. ``strip_cat_n`` for Claude Code's
-line-number prefix), builds an AIAccessedFile keyed by the tool's
-``file_path`` / ``path`` argument.
+computer-use text-editor tool, single-file shell reads, Codex view_image).
+For each match: hashes the returned bytes (with per-tool cleanup — e.g.
+``strip_cat_n`` for Claude Code's line-number prefix), builds an
+AIAccessedFile keyed by the tool's ``file_path`` / ``path`` argument.
 
 Skips pairs where ``tool_is_error`` is True — on error paths the
 tool_result content is an error-message body, not file bytes, and
@@ -29,28 +29,49 @@ from ...config_base import BaseConfig
 from ...content_utils import strip_cat_n, truncate_middle
 from ...events import AIAccessedFile
 from ..turn import after_last_assistant
+from .codex_output import image_output_bytes, shell_read_path, shell_stdout, view_image_path
 from .types import NormalizedMessage
 
 
 class _ToolSpec(BaseModel):
-    """Per-tool declaration: which input field carries the file path, and
-    an optional cleanup function to apply to the returned content before
-    hashing."""
+    """Per-tool declaration: ``path_from`` derives the file path from the
+    tool input, an optional cleanup function to apply to the returned content
+    before hashing (or ``content_from`` to derive the bytes), and whether the
+    content is ``binary`` and so never kept as text."""
 
     model_config = ConfigDict(frozen=True)
-    field_name: str
+    path_from: Callable[[JsonValue], str | None]
+    content_from: Callable[[JsonValue], bytes | None] | None = None
     cleanup: Callable[[str], str] | None = None
+    binary: bool = False
+
+
+def _field(name: str) -> Callable[[JsonValue], str | None]:
+    def path_from(tool_input: JsonValue) -> str | None:
+        if not isinstance(tool_input, dict):
+            return None
+        val = tool_input.get(name)
+        return val if isinstance(val, str) and val else None
+
+    return path_from
 
 
 # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
 _READ_TOOLS: dict[str, _ToolSpec] = {
-    "Read": _ToolSpec(field_name="file_path", cleanup=strip_cat_n),  # Claude Code
-    "ReadFile": _ToolSpec(field_name="path"),  # OpenCode, Amazon Q Developer, Gemini CLI
-    "read_file": _ToolSpec(field_name="path"),  # snake_case variants
-    "view_file": _ToolSpec(field_name="path"),  # some agents
+    "Read": _ToolSpec(path_from=_field("file_path"), cleanup=strip_cat_n),  # Claude Code
+    "ReadFile": _ToolSpec(path_from=_field("path")),  # OpenCode, Amazon Q Developer, Gemini CLI
+    "read_file": _ToolSpec(path_from=_field("path")),  # snake_case variants
+    "view_file": _ToolSpec(path_from=_field("path")),  # some agents
     "str_replace_based_edit_tool": _ToolSpec(
-        field_name="path"
+        path_from=_field("path")
     ),  # Claude computer-use text editor view
+    "Bash": _ToolSpec(
+        path_from=shell_read_path,
+        content_from=lambda output: _bytes_from_tool_output(shell_stdout(output), None),
+    ),  # Claude Code, Codex
+    "view_image": _ToolSpec(
+        path_from=view_image_path, content_from=image_output_bytes, binary=True
+    ),  # Codex
 }
 
 
@@ -103,17 +124,21 @@ def extract_tool_result_files(
             if not spec:
                 continue
 
-            path = _get_path_field(tool_input, spec.field_name)
+            path = spec.path_from(tool_input)
             if not path:
                 continue
 
-            content_bytes = _bytes_from_tool_output(block.tool_output, spec.cleanup)
+            if spec.content_from is not None:
+                content_bytes = spec.content_from(block.tool_output)
+            else:
+                content_bytes = _bytes_from_tool_output(block.tool_output, spec.cleanup)
             file = _build_accessed_file(
                 name=path,
                 media_type=_mime_from_name(path),
                 content_bytes=content_bytes,
                 include_raw_content=config.include_raw_content,
                 max_content_size=config.max_content_size,
+                text_content=not spec.binary,
             )
             key = (path, file.content_hashes.get("sha256") if file.content_hashes else None)
             if key in seen:
@@ -121,13 +146,6 @@ def extract_tool_result_files(
             seen.add(key)
             out.append(file)
     return out
-
-
-def _get_path_field(tool_input: JsonValue, field_name: str) -> str | None:
-    if not isinstance(tool_input, dict):
-        return None
-    val = tool_input.get(field_name)
-    return val if isinstance(val, str) and val else None
 
 
 def _bytes_from_tool_output(
@@ -169,6 +187,7 @@ def _build_accessed_file(
     content_bytes: bytes | None,
     include_raw_content: bool,
     max_content_size: int,
+    text_content: bool = True,
 ) -> AIAccessedFile:
     """Assemble an AIAccessedFile with hashes / byte_length / optional redacted_content."""
     if content_bytes is not None:
@@ -182,7 +201,7 @@ def _build_accessed_file(
         content_hashes = None
         byte_length = None
     redacted = None
-    if include_raw_content and content_bytes is not None:
+    if include_raw_content and text_content and content_bytes is not None:
         redacted = truncate_middle(content_bytes.decode(errors="replace"), max_content_size)
     return AIAccessedFile(
         name=name,

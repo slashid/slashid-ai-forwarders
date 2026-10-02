@@ -120,7 +120,7 @@ def bedrock_envelope(
             output=int(out.get("outputTokenCount") or 0),
             cache_read=int(inp.get("cacheReadInputTokenCount") or 0),
             cache_write=int(inp.get("cacheWriteInputTokenCount") or 0),
-            reasoning=0,
+            reasoning=int(out.get("reasoningTokenCount") or 0),
         ),
         # ``_parsed_as`` is set by the envelope normalizer (bedrock's
         # mil_normalize.normalize_record). Defensive fallback to "unknown"

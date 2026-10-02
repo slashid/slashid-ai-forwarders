@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, JsonValue, NonNegativeInt
+from pydantic import ConfigDict, Field, JsonValue, NonNegativeInt
 from pydantic_extra_types.mime_types import MimeType
 
 from ...events import AIAccessedFile, AIInvocationTokens, AIStopReason, AITool, AIToolServer
@@ -30,9 +30,16 @@ from .._base import _LenientModel
 
 class NormalizedContent(_LenientModel):
     """One content block inside a message — the smallest unit of what the
-    conversation is *about*."""
+    conversation is *about*.
 
-    kind: Literal["text", "image", "audio", "document", "tool_use", "tool_result", "reasoning"]
+    ``compaction``: an opaque compaction summary; ``text`` holds its sha256.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    kind: Literal[
+        "text", "image", "audio", "document", "tool_use", "tool_result", "reasoning", "compaction"
+    ]
     text: str | None = None
     tool_use_id: str | None = None
     tool_name: str | None = None
@@ -54,6 +61,8 @@ class NormalizedMessage(_LenientModel):
     carry tool-execution results (rare — most vendors inline these into
     user-turn ``tool_result`` blocks).
     """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
     role: Literal["system", "user", "assistant", "tool"]
     content: list[NormalizedContent]

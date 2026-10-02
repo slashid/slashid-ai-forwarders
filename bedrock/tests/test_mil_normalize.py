@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,6 +13,7 @@ from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_bedrock_forwarder.mil_normalize import normalize_record
 
 _CONFIG = BaseConfig(endpoint="http://test", push_token="test")
+_FIXTURES = Path(__file__).parent / "fixtures"
 
 # Minimal valid request bodies for each format — both request and response
 # must validate, so every test needs an inputBodyJson that satisfies the
@@ -21,6 +24,7 @@ _MIN_ANTHROPIC_REQUEST: dict[str, Any] = {
 _MIN_CONVERSE_REQUEST: dict[str, Any] = {
     "messages": [{"role": "user", "content": [{"text": "hi"}]}],
 }
+_MIN_RESPONSES_REQUEST: dict[str, Any] = {"input": "hi"}
 
 
 async def test_already_converse_shape_passes_through() -> None:
@@ -636,8 +640,8 @@ async def test_dispatch_backfill_tokens_idempotent_does_not_overwrite() -> None:
 
 
 # --------------------------------------------------------------------------
-# Structural-exclusivity invariant: exactly one format's response_adapter
-# matches each canonical payload. Guards against a future schema loosening
+# Structural-exclusivity invariant: exactly one format's request+response
+# adapters match each canonical record. Guards against a future schema loosening
 # that would let two formats claim the same shape.
 # --------------------------------------------------------------------------
 
@@ -648,10 +652,11 @@ from slashid_bedrock_forwarder.mil_normalize import _FORMATS  # noqa: E402
 
 
 @pytest.mark.parametrize(
-    "expected_name,payload",
+    "expected_name,request_body,payload",
     [
         (
             "anthropic-message",
+            _MIN_ANTHROPIC_REQUEST,
             {
                 "type": "message",
                 "role": "assistant",
@@ -660,6 +665,7 @@ from slashid_bedrock_forwarder.mil_normalize import _FORMATS  # noqa: E402
         ),
         (
             "anthropic-stream",
+            _MIN_ANTHROPIC_REQUEST,
             [
                 {
                     "type": "content_block_start",
@@ -671,23 +677,35 @@ from slashid_bedrock_forwarder.mil_normalize import _FORMATS  # noqa: E402
         ),
         (
             "bedrock-converse",
+            _MIN_CONVERSE_REQUEST,
             {
                 "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
             },
         ),
+        (
+            "openai-responses",
+            _MIN_RESPONSES_REQUEST,
+            {"object": "response", "id": "resp_1", "output": []},
+        ),
+        (
+            "openai-responses-stream",
+            _MIN_RESPONSES_REQUEST,
+            [{"type": "response.created"}, {"type": "response.completed"}],
+        ),
     ],
 )
-def test_format_structural_exclusivity(expected_name: str, payload: Any) -> None:
+def test_format_structural_exclusivity(expected_name: str, request_body: Any, payload: Any) -> None:
     matches = []
     for fmt in _FORMATS:
         try:
+            fmt.request_adapter.validate_python(request_body)
             fmt.response_adapter.validate_python(payload)
         except ValidationError:
             continue
         matches.append(fmt.name)
     assert matches == [expected_name], (
         f"Expected exactly {[expected_name]!r} to match, got {matches!r}. "
-        "Two formats claiming the same shape violates first-match-wins invariance."
+        "Two formats claiming the same record violates first-match-wins invariance."
     )
 
 
@@ -801,3 +819,79 @@ async def test_e2e_converse_response_sets_parsed_as() -> None:
     assert envelope is not None
     event = await build_event_from_normalized(normalized, envelope, config=_CONFIG)
     assert event.parsed_as == "bedrock-converse"
+
+
+# --------------------------------------------------------------------------
+# OpenAI Responses
+# --------------------------------------------------------------------------
+
+
+def _fixture(name: str) -> dict[str, Any]:
+    return json.loads((_FIXTURES / name).read_text())
+
+
+@pytest.mark.parametrize(
+    "fixture,expected",
+    [
+        ("openai_responses_mil.json", "openai-responses"),
+        ("openai_responses_stream_mil.json", "openai-responses-stream"),
+    ],
+)
+async def test_openai_responses_sets_parsed_as(fixture: str, expected: str) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == expected
+    assert normalized.output.message is not None
+
+
+@pytest.mark.parametrize(
+    "fixture", ["openai_responses_mil.json", "openai_responses_stream_mil.json"]
+)
+def test_openai_responses_never_match_earlier_formats(fixture: str) -> None:
+    record = _fixture(fixture)
+    in_body = record["input"]["inputBodyJson"]
+    out_body = record["output"]["outputBodyJson"]
+    for fmt in _FORMATS:
+        if fmt.name.startswith("openai-"):
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(in_body)
+            fmt.response_adapter.validate_python(out_body)
+
+
+async def test_openai_responses_overwrites_tokens_with_additive_split() -> None:
+    record = _fixture("openai_responses_mil.json")
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 12
+    assert record["input"]["cacheReadInputTokenCount"] == 0
+    assert record["input"]["cacheWriteInputTokenCount"] == 0
+    assert record["output"]["outputTokenCount"] == 11
+    assert record["output"]["reasoningTokenCount"] == 12
+
+
+async def test_openai_responses_stream_overwrites_tokens() -> None:
+    record = _fixture("openai_responses_stream_mil.json")
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 56
+    assert record["output"]["outputTokenCount"] == 19
+    assert record["output"]["reasoningTokenCount"] == 0
+
+
+async def test_openai_responses_cached_tokens_split() -> None:
+    record = _fixture("openai_responses_mil.json")
+    record["output"]["outputBodyJson"]["usage"]["input_tokens_details"]["cached_tokens"] = 5
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 7
+    assert record["input"]["cacheReadInputTokenCount"] == 5
+
+
+@pytest.mark.parametrize("stream", [[{"type": "chunk"}], []])
+async def test_non_openai_stream_with_input_request_is_not_responses(
+    stream: list[dict[str, Any]],
+) -> None:
+    record = {
+        "input": {"inputBodyJson": _MIN_RESPONSES_REQUEST},
+        "output": {"outputBodyJson": stream},
+    }
+    await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] != "openai-responses-stream"
