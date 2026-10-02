@@ -25,7 +25,6 @@ from .discovery import (
     DaemonConnection,
     DaemonError,
     DaemonGone,
-    config_digest,
     connect,
     ensure_state_dir,
     in_backoff,
@@ -128,8 +127,7 @@ class Client:
         self._monotonic = monotonic
         self._sleep = sleep
         self._version = package_version()
-        self._digest = config_digest(self._config_path)
-        self._key = spawn_key(self._digest)
+        self._key = spawn_key(self._config_path)
 
     def run(self, event: str, stdin: BinaryIO, *, deadline: float) -> str:
         preflight = event in PREFLIGHT_EVENTS
@@ -191,7 +189,7 @@ class Client:
                     if conn is None:
                         return None
             if conn is not None:
-                if info.version == self._version and info.config_digest == self._digest:
+                if info.version == self._version:
                     return conn
                 # Returns once it has deleted daemon.json and released the lock.
                 restarting = True
@@ -219,7 +217,6 @@ class Client:
                 info is not None
                 and (info.port, info.secret) not in tried
                 and info.version == self._version
-                and info.config_digest == self._digest
             ):
                 tried.add((info.port, info.secret))
                 with contextlib.suppress(TimeoutError):
@@ -263,6 +260,8 @@ def _parser() -> argparse.ArgumentParser:
         # Tests and development only.
         command.add_argument("--state-dir", type=Path)
         command.add_argument("--codex-home", type=Path)
+        if name == "daemon":
+            command.add_argument("--config-check-seconds", type=float)
         if name == "hook":
             command.add_argument(
                 "--event", choices=[*PREFLIGHT_EVENTS, *TRIGGER_EVENTS], required=True
@@ -373,4 +372,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.config.absolute(),
         state_dir=state_dir(args.state_dir).absolute(),
         codex_home=args.codex_home.absolute() if args.codex_home is not None else None,
+        config_check_s=args.config_check_seconds,
     )

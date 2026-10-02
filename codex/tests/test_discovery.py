@@ -22,7 +22,6 @@ from slashid_codex.discovery import (
     DaemonError,
     DaemonInfo,
     acquire_lock,
-    config_digest,
     connect,
     ensure_state_dir,
     hmac_response,
@@ -37,7 +36,7 @@ from slashid_codex.discovery import (
     write_daemon_json,
 )
 
-INFO = DaemonInfo(port=4242, secret="s" * 64, pid=123, version="1.0", config_digest="d" * 64)
+INFO = DaemonInfo(port=4242, secret="s" * 64, pid=123, version="1.0")
 
 
 def test_state_dir_default_and_override(tmp_path: Path) -> None:
@@ -114,22 +113,30 @@ def test_hmac_and_verify() -> None:
     assert not verify_ping("secret", "other", answer)
 
 
-def test_config_digest(tmp_path: Path) -> None:
-    token = tmp_path / "token"
-    token.write_bytes(b"t" * 32)
-    config = tmp_path / "config.toml"
-    config.write_bytes(b'push_token_file = "token"\n')
-    expected = hashlib.sha256(config.read_bytes() + b"\0" + token.read_bytes()).hexdigest()
-    assert config_digest(config) == expected
-    token.write_bytes(b"u" * 32)
-    assert config_digest(config) != expected
+def test_daemon_json_ignores_an_old_digest_field(tmp_path: Path) -> None:
+    (tmp_path / "daemon.json").write_text(json.dumps({**INFO.__dict__, "config_digest": "d" * 64}))
+    assert read_daemon_json(tmp_path) == INFO
 
 
-def test_config_digest_absolute_and_missing(tmp_path: Path) -> None:
+def test_daemon_json_missing_field(tmp_path: Path) -> None:
+    (tmp_path / "daemon.json").write_text(json.dumps({"port": 1, "secret": "s", "pid": 2}))
+    assert read_daemon_json(tmp_path) is None
+
+
+def test_spawn_key_tracks_the_config_file_only(tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
-    config.write_text(f'push_token_file = "{tmp_path / "nope"}"\n')
-    assert config_digest(config) == hashlib.sha256(config.read_bytes() + b"\0").hexdigest()
-    assert config_digest(tmp_path / "absent.toml") == hashlib.sha256(b"\0").hexdigest()
+    missing = spawn_key(config)
+    config.write_text("a = 1\n")
+    first = spawn_key(config)
+    assert first != missing
+    assert spawn_key(config) == first
+    config.write_text("a = 22\n")
+    assert spawn_key(config) != first
+    assert spawn_key(config).startswith(package_version())
+
+
+def test_client_modules_do_not_import_hashlib() -> None:
+    assert "hashlib" not in Path(discovery.__file__).read_text()
 
 
 def test_spawn_backoff(tmp_path: Path) -> None:
@@ -144,10 +151,6 @@ def test_spawn_backoff(tmp_path: Path) -> None:
     assert not in_backoff(tmp_path, "other", now=1000.0)
     (tmp_path / "spawn-failed").write_text("garbage")
     assert not in_backoff(tmp_path, "k", now=1000.0)
-
-
-def test_spawn_key() -> None:
-    assert spawn_key("d") == f"{package_version()}:d"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
@@ -276,9 +279,7 @@ class _ClosingDaemon:
 
 def test_ping_with_connection_close_fails_the_handshake() -> None:
     fake = _ClosingDaemon("a" * 64, posts=0)
-    assert (
-        connect(DaemonInfo(fake.port, "a" * 64, 1, "v", "d"), deadline=time.monotonic() + 3) is None
-    )
+    assert connect(DaemonInfo(fake.port, "a" * 64, 1, "v"), deadline=time.monotonic() + 3) is None
     assert fake.squatting.wait(3)
     assert not fake.accepted.wait(0.5)
     assert fake.received == b""
@@ -286,7 +287,7 @@ def test_ping_with_connection_close_fails_the_handshake() -> None:
 
 def test_verified_connection_never_reopens() -> None:
     fake = _ClosingDaemon("a" * 64, posts=1)
-    conn = connect(DaemonInfo(fake.port, "a" * 64, 1, "v", "d"), deadline=time.monotonic() + 3)
+    conn = connect(DaemonInfo(fake.port, "a" * 64, 1, "v"), deadline=time.monotonic() + 3)
     assert conn is not None
     assert conn.post("/hooks/Stop", b"{}", deadline=time.monotonic() + 3) == (200, b"{}")
     assert fake.squatting.wait(3)

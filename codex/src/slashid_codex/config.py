@@ -6,6 +6,7 @@ which must not redirect events or swap the token.
 
 from __future__ import annotations
 
+import hashlib
 import tomllib
 from pathlib import Path
 from typing import Literal, Self
@@ -16,10 +17,22 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
 
-from .discovery import digest, resolve_path
-
 MIN_TOKEN_CHARS = 32
 _PATH_KEYS = ("push_token_file", "codex_bin", "codex_home")
+
+
+def resolve_path(config_path: Path, value: str) -> Path:
+    """A path in the config, resolved against the config file's directory."""
+    return config_path.parent.absolute() / Path(value).expanduser()
+
+
+def digest(config: bytes, token: bytes) -> str:
+    return hashlib.sha256(config + b"\0" + token).hexdigest()
+
+
+def files_digest(config_path: Path, token_path: Path) -> str:
+    """``digest`` of the two files as they are now; ``OSError`` if one is unreadable."""
+    return digest(config_path.read_bytes(), token_path.read_bytes())
 
 
 class _TokenFileRef(_LenientModel):
@@ -58,7 +71,7 @@ class CodexConfig(BaseConfig):
 
     @classmethod
     def load_with_digest(cls, path: Path) -> tuple[Self, str]:
-        """The config and its ``config_digest``, from one read of each file.
+        """The config and its digest, from one read of each file.
         Relative paths resolve against the file's directory."""
         raw = path.read_bytes()
         data = tomllib.loads(raw.decode("utf-8"))

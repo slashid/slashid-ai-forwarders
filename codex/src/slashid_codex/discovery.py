@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import hashlib
 import hmac
 import http.client
 import importlib.metadata
@@ -16,7 +15,6 @@ import secrets
 import subprocess
 import sys
 import time
-import tomllib
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -77,7 +75,6 @@ class DaemonInfo:
     secret: str
     pid: int
     version: str
-    config_digest: str
 
 
 def write_daemon_json(
@@ -116,14 +113,15 @@ def read_daemon_json(directory: Path) -> DaemonInfo | None:
         return None
     if not isinstance(raw, dict):
         return None
-    fields = {"port": int, "secret": str, "pid": int, "version": str, "config_digest": str}
-    if set(raw) != set(fields):
+    fields = {"port": int, "secret": str, "pid": int, "version": str}
+    # Extra keys are ignored: an older daemon's file (with ``config_digest``)
+    # still reads, so its version mismatch gets it shut down.
+    if not fields.keys() <= raw.keys():
         return None
     for name, kind in fields.items():
-        value = raw[name]
-        if type(value) is not kind:
+        if type(raw[name]) is not kind:
             return None
-    return DaemonInfo(**raw)
+    return DaemonInfo(**{name: raw[name] for name in fields})
 
 
 def remove_daemon_json(directory: Path) -> None:
@@ -132,46 +130,16 @@ def remove_daemon_json(directory: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# Handshake and digest
+# Handshake
 # --------------------------------------------------------------------------
 
 
 def hmac_response(secret: str, nonce: str) -> str:
-    return hmac.new(secret.encode(), nonce.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode(), nonce.encode(), "sha256").hexdigest()
 
 
 def verify_ping(secret: str, nonce: str, answer: str) -> bool:
     return hmac.compare_digest(hmac_response(secret, nonce).encode(), answer.encode())
-
-
-def _read_bytes(path: Path) -> bytes:
-    try:
-        return path.read_bytes()
-    except OSError:
-        return b""
-
-
-def resolve_path(config_path: Path, value: str) -> Path:
-    """A path in the config, resolved against the config file's directory."""
-    return config_path.parent.absolute() / Path(value).expanduser()
-
-
-def digest(config: bytes, token: bytes) -> str:
-    return hashlib.sha256(config + b"\0" + token).hexdigest()
-
-
-def config_digest(config_path: Path) -> str:
-    """SHA-256 over the config file's bytes, then the token file's; a missing
-    file counts as empty."""
-    config = _read_bytes(config_path)
-    token = b""
-    try:
-        value = tomllib.loads(config.decode()).get("push_token_file")
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-        value = None
-    if isinstance(value, str):
-        token = _read_bytes(resolve_path(config_path, value))
-    return digest(config, token)
 
 
 # --------------------------------------------------------------------------
@@ -206,9 +174,14 @@ def in_backoff(directory: Path, key: str, *, now: float | None = None) -> bool:
     return failed_key == key and 0 <= elapsed < SPAWN_BACKOFF_S
 
 
-def spawn_key(digest: str) -> str:
-    """The backoff's key: this version and the config's digest."""
-    return f"{package_version()}:{digest}"
+def spawn_key(config_path: Path) -> str:
+    """The backoff's key: this version and the config file's size and mtime
+    (a ``stat``, no read; a missing file has its own key)."""
+    try:
+        st = config_path.stat()
+    except OSError:
+        return f"{package_version()}:missing"
+    return f"{package_version()}:{st.st_size}:{st.st_mtime_ns}"
 
 
 # --------------------------------------------------------------------------

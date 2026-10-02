@@ -33,7 +33,6 @@ from slashid_codex.discovery import (
     DETACHED_PROCESS,
     DaemonInfo,
     acquire_lock,
-    config_digest,
     hmac_response,
     in_backoff,
     lock_held,
@@ -135,7 +134,7 @@ def test_stale_daemon_json_replaced(daemons: Daemons) -> None:
         closed.bind(("127.0.0.1", 0))
         port = closed.getsockname()[1]
     daemons.state.mkdir(parents=True)
-    stale = DaemonInfo(port, "s" * 64, 2**22 + 12345, package_version(), "x")
+    stale = DaemonInfo(port, "s" * 64, 2**22 + 12345, package_version())
     write_daemon_json(daemons.state, stale)
     assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
     info = daemons.info()
@@ -188,7 +187,6 @@ def test_squatted_port_receives_nothing(daemons: Daemons) -> None:
                 "s" * 64,
                 os.getpid(),
                 package_version(),
-                config_digest(daemons.config),
             ),
         )
         assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
@@ -218,21 +216,94 @@ def test_version_mismatch_restarts(daemons: Daemons) -> None:
     old = daemons.start()
     write_daemon_json(
         daemons.state,
-        DaemonInfo(old.port, old.secret, old.pid, "0.0.0-old", old.config_digest),
+        DaemonInfo(old.port, old.secret, old.pid, "0.0.0-old"),
     )
     _restarted(daemons, old)
 
 
-def test_config_change_restarts(daemons: Daemons) -> None:
+def test_config_and_token_changes_do_not_restart_from_the_client(daemons: Daemons) -> None:
+    # The daemon notices these itself (every 5 s); a hook does not.
     old = daemons.start()
     daemons.write_config(daemon_idle_seconds=601)
-    _restarted(daemons, old)
-
-
-def test_token_change_restarts(daemons: Daemons) -> None:
-    old = daemons.start()
     (daemons.root / "token").write_text("u" * 32)
-    _restarted(daemons, old)
+    assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
+    assert daemons.info() == old
+    assert alive(old.pid)
+
+
+def test_healthy_hook_never_opens_the_token_file(
+    daemons: Daemons, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = daemons.start()
+    token = daemons.root / "token"
+    daemons.write_config(push_token_file=str(daemons.root / "never-read"))
+    opened: list[str] = []
+    real_open, real_read = io.open, Path.read_bytes
+
+    def spy_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        opened.append(str(file))
+        return real_open(file, *args, **kwargs)
+
+    def spy_read(self: Path) -> bytes:
+        opened.append(str(self))
+        return real_read(self)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+    monkeypatch.setattr(Path, "read_bytes", spy_read)
+    out = _hook("UserPromptSubmit", daemons, io.BytesIO(UPS))
+    assert json.loads(out) == {}
+    assert not [name for name in opened if "token" in name or "never-read" in name]
+    assert token.exists()
+    assert daemons.info() == old
+
+
+def _exits_cleanly(daemons: Daemons, info: DaemonInfo) -> None:
+    assert wait_dead(info.pid, 8)
+    assert not (daemons.state / "daemon.json").exists()
+    assert not lock_held(daemons.state / "daemon.lock")
+    assert "config or token changed; exiting" in daemons.log()
+
+
+def test_daemon_exits_when_the_config_changes(daemons: Daemons) -> None:
+    info = daemons.start(check_seconds=0.2)
+    daemons.write_config(daemon_idle_seconds=601)
+    _exits_cleanly(daemons, info)
+
+
+def test_daemon_exits_when_the_token_changes(daemons: Daemons) -> None:
+    info = daemons.start(check_seconds=0.2)
+    (daemons.root / "token").write_text("u" * 32)
+    _exits_cleanly(daemons, info)
+
+
+def test_next_hook_after_a_self_exit_spawns_a_fresh_daemon(daemons: Daemons) -> None:
+    old = daemons.start(check_seconds=0.2)
+    (daemons.root / "token").write_text("u" * 32)
+    assert wait_dead(old.pid, 8)
+    assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
+    assert daemons.wait_info(other_than=old.pid).pid != old.pid
+
+
+def test_daemon_keeps_running_when_nothing_changes(daemons: Daemons) -> None:
+    info = daemons.start(check_seconds=0.1)
+    time.sleep(1.0)
+    assert alive(info.pid)
+    assert daemons.info() == info
+    assert "config or token changed" not in daemons.log()
+
+
+def test_daemon_keeps_running_when_a_file_is_unreadable(daemons: Daemons) -> None:
+    info = daemons.start(check_seconds=0.1)
+    token = daemons.root / "token"
+    token.rename(daemons.root / "token.away")
+    daemons.config.rename(daemons.root / "config.away")
+    time.sleep(0.8)
+    assert alive(info.pid)
+    assert daemons.info() == info
+    (daemons.root / "token.away").rename(token)
+    (daemons.root / "config.away").rename(daemons.config)
+    time.sleep(0.5)
+    assert alive(info.pid)
 
 
 @pytest.mark.parametrize("mode", ["deny", "allow"])
@@ -240,7 +311,7 @@ def test_daemon_cannot_start(daemons: Daemons, mode: str) -> None:
     daemons.write_config(push_token_file=str(daemons.root / "missing"), verdict_fail_mode=mode)
     first = _out(daemons.hook("UserPromptSubmit", UPS))
     assert first == (BLOCK_UNAVAILABLE if mode == "deny" else {})
-    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
+    assert in_backoff(daemons.state, spawn_key(daemons.config))
     assert daemons.log().count("starting") == 1
     spawned: list[list[str]] = []
 
@@ -265,7 +336,7 @@ def test_collector_setup_failure_is_a_spawn_failure(daemons: Daemons) -> None:
     start = time.monotonic()
     assert client.connect(time.monotonic() + 9, wait=True) is None
     assert time.monotonic() - start < cli.SPAWN_WAIT_S
-    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
+    assert in_backoff(daemons.state, spawn_key(daemons.config))
     assert "collector setup failed" in daemons.log()
     assert not (daemons.state / "daemon.json").exists()
 
@@ -282,7 +353,7 @@ def test_signal_removes_daemon_json(daemons: Daemons, sig: signal.Signals) -> No
 
 def test_daemon_started_during_backoff_used(daemons: Daemons) -> None:
     daemons.state.mkdir(parents=True)
-    record_spawn_failure(daemons.state, spawn_key(config_digest(daemons.config)))
+    record_spawn_failure(daemons.state, spawn_key(daemons.config))
     info = daemons.start()
     assert not (daemons.state / "spawn-failed").exists()
     assert _out(daemons.hook("UserPromptSubmit", UPS)) == {}
@@ -442,7 +513,6 @@ class FakeDaemon:
                 self.secret,
                 os.getpid(),
                 package_version(),
-                config_digest(config),
             ),
         )
 
@@ -648,6 +718,31 @@ class FakeClock:
         self.now += seconds
 
 
+def test_changed_config_resets_the_backoff(daemons: Daemons) -> None:
+    daemons.state.mkdir(parents=True)
+    record_spawn_failure(daemons.state, spawn_key(daemons.config))
+    spawned: list[list[str]] = []
+
+    def spawn(argv: list[str], *_: Path) -> FakeProcess:
+        spawned.append(argv)
+        return FakeProcess()
+
+    assert _hook("Stop", daemons, io.BytesIO(STOP), spawn=spawn) == "{}"
+    assert spawned == []
+    daemons.write_config(daemon_idle_seconds=601)
+    assert _hook("Stop", daemons, io.BytesIO(STOP), spawn=spawn) == "{}"
+    assert len(spawned) == 1
+
+
+def test_token_change_keeps_the_backoff(daemons: Daemons) -> None:
+    daemons.state.mkdir(parents=True)
+    record_spawn_failure(daemons.state, spawn_key(daemons.config))
+    (daemons.root / "token").write_text("u" * 32)
+    spawned: list[list[str]] = []
+    _hook("Stop", daemons, io.BytesIO(STOP), spawn=lambda argv, *_: spawned.append(argv))
+    assert spawned == []
+
+
 def test_spawn_polled_for_5_s(daemons: Daemons) -> None:
     daemons.state.mkdir(parents=True)
     clock = FakeClock()
@@ -661,7 +756,7 @@ def test_spawn_polled_for_5_s(daemons: Daemons) -> None:
     )
     assert client.connect(9.0, wait=True) is None
     assert 5.0 <= clock.now < 5.0 + 2 * cli.POLL_S
-    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
+    assert in_backoff(daemons.state, spawn_key(daemons.config))
 
 
 def test_spawn_wait_inside_the_preflight_deadline() -> None:
@@ -687,7 +782,7 @@ def test_spawn_holding_the_lock_is_not_a_failure(daemons: Daemons) -> None:
         assert client.connect(9.0, wait=True) is None
     finally:
         lock.release()
-    assert not in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
+    assert not in_backoff(daemons.state, spawn_key(daemons.config))
 
 
 def test_spawn_exit_error_is_a_failure(daemons: Daemons) -> None:
@@ -696,7 +791,7 @@ def test_spawn_exit_error_is_a_failure(daemons: Daemons) -> None:
     start = time.monotonic()
     assert client.connect(time.monotonic() + 9, wait=True) is None
     assert time.monotonic() - start < 0.5
-    assert in_backoff(daemons.state, spawn_key(config_digest(daemons.config)))
+    assert in_backoff(daemons.state, spawn_key(daemons.config))
 
 
 # --------------------------------------------------------------------------

@@ -12,9 +12,9 @@ MDM, as administrator:
 2. Install the config (`deploy/config.example.toml`) at `/opt/slashid/codex/config.toml` and the token file it names, both read-only to users.
 3. Install `deploy/requirements.toml` as Codex's managed requirements.
 
-Before an upgrade, stop the daemons (`<tool python> -m slashid_codex daemon` processes under the tool directory; Windows cannot replace a running `.exe`), never hook clients: a killed hook lets its action through. A daemon whose version, config or token differs from the hook's is replaced on the next hook.
+Before an upgrade, stop the daemons (`<tool python> -m slashid_codex daemon` processes under the tool directory; Windows cannot replace a running `.exe`), never hook clients: a killed hook lets its action through. A daemon whose version differs from the hook's is replaced on the next hook; one whose config or token file changed notices within about 5 s and exits, and the next hook starts a new one.
 
-Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `spawn-failed`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `daemon.log` is the daemon's rotated log; `daemon.stderr` holds only output that bypasses it, such as an interpreter crash. `--state-dir` and `--codex-home` exist for tests.
+Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `spawn-failed`, `created_at`, `data.sqlite`) lives in `~/.local/share/slashid-ai-forwarder-codex`, `~/Library/Application Support/slashid-ai-forwarder-codex` or `%LOCALAPPDATA%\slashid\slashid-ai-forwarder-codex`. `daemon.log` is the daemon's rotated log; `daemon.stderr` holds only output that bypasses it, such as an interpreter crash. `--state-dir`, `--codex-home` and `--config-check-seconds` exist for tests.
 
 ## Config
 
@@ -52,5 +52,7 @@ Environment variables are never read.
 
 - Script mode (`codex exec`): the hook's `tool_use_id` (`exec-<uuid>`) is not linked to the call's `call_id`.
 - Reads are checked only for simple shell reads (`cat`, `sed`, `head`, `tail`, `nl` on one path) and `view_image`; other commands are reported after the fact.
+- A token or config rotation takes effect within about 5 s (the daemon checks the files every 5 s and exits; the next hook respawns it).
+- The spawn backoff after a failed start is keyed by the config file's size and mtime: fixing the config applies at once, but fixing only the token file does not reset it and can wait up to the 5-minute backoff window.
 - Identity is claimed, not proven: the token is per connection and readable by the user, so a user can send any `user_id`.
 - Daemon lifetime on macOS and Windows, and the macOS and Windows desktop bundle paths for `codex`, are unverified.

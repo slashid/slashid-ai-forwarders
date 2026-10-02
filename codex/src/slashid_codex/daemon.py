@@ -30,7 +30,7 @@ from slashid_ai_forwarder_core.platform.local import create_local_platform
 from starlette.middleware.base import RequestResponseEndpoint
 
 from .cache import SessionCache
-from .config import CodexConfig
+from .config import CodexConfig, files_digest
 from .discovery import (
     INFO_FILE,
     LOCK_FILE,
@@ -58,6 +58,8 @@ from .state import SqliteFileRecordStore, connect
 log = logging.getLogger(__name__)
 
 TICK_S = 1.0
+# How often the daemon re-reads its config and token files.
+CONFIG_CHECK_S = 5.0
 WATCHDOG_STALE_S = 10.0
 LOCK_WAIT_S = 3.0
 # Inside the watchdog's limit.
@@ -83,6 +85,9 @@ class Services:
     # The same, as the server stops for any reason: uvicorn re-raises SIGTERM
     # once ``serve`` returns, so nothing after it runs.
     on_exit: Callable[[], None] = lambda: None
+    # Whether the config or token file differs from what was loaded.
+    config_changed: Callable[[], bool] = lambda: False
+    config_check_s: float = CONFIG_CHECK_S
 
 
 class Lifetime:
@@ -157,18 +162,45 @@ async def tick(
         await sleep(interval)
 
 
+async def watch_config(
+    changed: Callable[[], bool],
+    on_change: Callable[[], None],
+    *,
+    interval: float,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Calls ``on_change`` once when ``changed`` first says so."""
+    while True:
+        await sleep(interval)
+        if changed():
+            log.info("config or token changed; exiting")
+            on_change()
+            return
+
+
 def create_app(config: CodexConfig, secret: str, port: int, services: Services) -> FastAPI:
     lifetime = Lifetime(services.clock, config.daemon_idle_seconds)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(tick(lifetime, services.on_shutdown))
+        tasks = [
+            asyncio.create_task(tick(lifetime, services.on_shutdown)),
+            asyncio.create_task(
+                watch_config(
+                    services.config_changed,
+                    services.on_shutdown,
+                    interval=services.config_check_s,
+                )
+            ),
+        ]
         try:
             yield
         finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             services.on_exit()
 
     app = FastAPI(lifespan=lifespan, openapi_url=None, docs_url=None, redoc_url=None)
@@ -313,7 +345,13 @@ def _fallback_signal_handlers(stopper: Stopper) -> Iterator[None]:
             signal.signal(sig, handler)
 
 
-def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = None) -> int:
+def run_daemon(
+    config_path: Path,
+    *,
+    state_dir: Path,
+    codex_home: Path | None = None,
+    config_check_s: float | None = None,
+) -> int:
     ensure_state_dir(state_dir)
     setup_logging(state_dir / LOG_FILE)
     log.info("daemon %s starting, pid %d", package_version(), os.getpid())
@@ -331,14 +369,28 @@ def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = 
     stopper = Stopper(state_dir, lock)
     with _fallback_signal_handlers(stopper):
         try:
-            served = _serve(config, digest, state_dir, stopper)
+            served = _serve(
+                config,
+                digest,
+                state_dir,
+                stopper,
+                config_path,
+                CONFIG_CHECK_S if config_check_s is None else config_check_s,
+            )
         finally:
             stopper()
     log.info("daemon stopped")
     return EXIT_OK if served else EXIT_ERROR
 
 
-def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) -> bool:
+def _serve(
+    config: CodexConfig,
+    digest: str,
+    state_dir: Path,
+    stopper: Stopper,
+    config_path: Path,
+    config_check_s: float,
+) -> bool:
     """``False`` if the collector failed or was not ready in time."""
     sock = listen()
     port: int = sock.getsockname()[1]
@@ -355,12 +407,21 @@ def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) 
         if worker is not None:
             worker.submit(trigger)
 
+    def config_changed() -> bool:
+        # An unreadable file (mid-replace) is skipped, never a reason to exit.
+        try:
+            return files_digest(config_path, config.push_token_file) != digest
+        except OSError:
+            return False
+
     handler = Handler(config, preflight, cache, submit)
     services = Services(
         preflight=handler.preflight,
         enqueue_trigger=handler.trigger,
         on_shutdown=stopper,
         on_exit=stopper,
+        config_changed=config_changed,
+        config_check_s=config_check_s,
     )
     app = create_app(config, secret, port, services)
     lifetime = lifetime_of(app)
@@ -385,7 +446,7 @@ def _serve(config: CodexConfig, digest: str, state_dir: Path, stopper: Stopper) 
     worker = Worker(open_collector, on_fatal=stopper)
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, lifespan="on"))
     stopper.server = server
-    info = DaemonInfo(port, secret, os.getpid(), package_version(), digest)
+    info = DaemonInfo(port, secret, os.getpid(), package_version())
     write_daemon_json(state_dir, info)
     clear_spawn_failure(state_dir)
     log.info("listening on 127.0.0.1:%d; %s written", port, INFO_FILE)

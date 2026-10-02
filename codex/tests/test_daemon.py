@@ -31,6 +31,7 @@ from slashid_codex.daemon import (
     listen,
     setup_logging,
     tick,
+    watch_config,
 )
 from slashid_codex.discovery import (
     DaemonInfo,
@@ -321,6 +322,40 @@ async def test_tick_calls_on_idle_once() -> None:
     assert not lifetime.stale()
 
 
+async def test_watch_config_exits_once_changed() -> None:
+    answers = iter([False, False, True])
+    changes: list[int] = []
+    sleeps: list[float] = []
+
+    async def sleep(interval: float) -> None:
+        sleeps.append(interval)
+
+    await watch_config(lambda: next(answers), lambda: changes.append(1), interval=5, sleep=sleep)
+    assert changes == [1]
+    assert sleeps == [5, 5, 5]
+
+
+async def test_lifespan_shuts_down_on_config_change(config: CodexConfig, fakes: Fakes) -> None:
+    services = fakes.services()
+    services.config_changed = lambda: True
+    services.config_check_s = 0.01
+    app = create_app(config, SECRET, PORT, services)
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.1)
+    assert fakes.shutdowns == 1
+
+
+async def test_lifespan_keeps_running_when_config_unchanged(
+    config: CodexConfig, fakes: Fakes
+) -> None:
+    services = fakes.services()
+    services.config_check_s = 0.01
+    app = create_app(config, SECRET, PORT, services)
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.1)
+        assert fakes.shutdowns == 0
+
+
 async def test_lifespan_exits_when_idle(config: CodexConfig, fakes: Fakes) -> None:
     services = fakes.services()
     app = create_app(config.model_copy(update={"daemon_idle_seconds": 0}), SECRET, PORT, services)
@@ -431,7 +466,7 @@ def test_listen_exclusive_on_windows() -> None:
 
 
 def test_stopper_deletes_json_then_releases_lock(tmp_path: Path) -> None:
-    write_daemon_json(tmp_path, DaemonInfo(1, "s", 2, "v", "d"))
+    write_daemon_json(tmp_path, DaemonInfo(1, "s", 2, "v"))
     lock = acquire_lock(tmp_path / "daemon.lock", wait=0)
     assert lock is not None
     order: list[str] = []

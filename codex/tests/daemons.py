@@ -65,10 +65,12 @@ class Daemons:
             check=True,
         )
 
-    def start(self, *command: str) -> DaemonInfo:
+    def start(self, *command: str, check_seconds: float | None = None) -> DaemonInfo:
         """A daemon started directly, for tests where spawning is not the
         subject. ``command`` replaces ``-m slashid_codex``."""
         argv = self.args("daemon")
+        if check_seconds is not None:
+            argv += ["--config-check-seconds", str(check_seconds)]
         if command:
             argv = [argv[0], *command, *argv[3:]]
         process = subprocess.Popen(

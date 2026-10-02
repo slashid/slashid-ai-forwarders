@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from slashid_codex.config import CodexConfig
-from slashid_codex.discovery import config_digest
+from slashid_codex.config import CodexConfig, files_digest
 
 TOKEN = "t" * 32
 
@@ -161,7 +161,7 @@ def test_example_config_loads(tmp_path: Path) -> None:
 
 def test_digest_from_the_bytes_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = _write(tmp_path, BASE)
-    expected = config_digest(path)
+    expected = files_digest(path, tmp_path / "token")
     reads: list[str] = []
     for method in ("read_bytes", "read_text"):
         real = getattr(Path, method)
@@ -175,3 +175,20 @@ def test_digest_from_the_bytes_loaded(tmp_path: Path, monkeypatch: pytest.Monkey
     assert digest == expected
     assert config.push_token == TOKEN
     assert sorted(reads) == ["config.toml", "token"]
+
+
+def test_files_digest(tmp_path: Path) -> None:
+    path = _write(tmp_path, BASE)
+    token = tmp_path / "token"
+    expected = hashlib.sha256(path.read_bytes() + b"\0" + token.read_bytes()).hexdigest()
+    assert files_digest(path, token) == expected
+    token.write_text("u" * 32)
+    assert files_digest(path, token) != expected
+
+
+def test_files_digest_unreadable(tmp_path: Path) -> None:
+    path = _write(tmp_path, BASE)
+    with pytest.raises(OSError):
+        files_digest(path, tmp_path / "absent")
+    with pytest.raises(OSError):
+        files_digest(tmp_path / "absent.toml", tmp_path / "token")
