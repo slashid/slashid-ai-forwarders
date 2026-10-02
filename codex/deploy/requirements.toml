@@ -1,12 +1,13 @@
 # Codex managed requirements for slashid-codex. Install as the system
 # requirements file (/etc/codex/requirements.toml on Linux).
+allow_managed_hooks_only = true
+
 [features]
 hooks = true
 
 [hooks]
 managed_dir = "/opt/slashid/codex"
 windows_managed_dir = 'C:\ProgramData\SlashID\Codex'
-allow_managed_hooks_only = true
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]

@@ -402,13 +402,14 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 **Managed requirements.**
 
 ```toml
+allow_managed_hooks_only = true
+
 [features]
 hooks = true
 
 [hooks]
 managed_dir = "/opt/slashid/codex"
 windows_managed_dir = 'C:\ProgramData\SlashID\Codex'
-allow_managed_hooks_only = true
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
@@ -442,7 +443,7 @@ command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex
 timeout = 3
 ```
 
-Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event <Name>'`. No hook needs `async = true`: every hook returns within its deadline. `allow_managed_hooks_only` sits under `[hooks]` as documented; codex-client puts it at the top level, which may be ignored (**unverified**; the plan tests it with a local `/etc/codex/requirements.toml`).
+Each entry also gets `command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event <Name>'`. No hook needs `async = true`: every hook returns within its deadline. `allow_managed_hooks_only` is a top-level key: under `[hooks]` it is ignored (measured with `/etc/codex/requirements.toml`, codex-cli 0.158.0-alpha.2.1). With it, `~/.codex/hooks.json` is not loaded; without it, a managed hook still replaces user hooks for the same event, but user hooks for other events run.
 
 ## Security
 

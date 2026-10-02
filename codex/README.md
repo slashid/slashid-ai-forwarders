@@ -54,4 +54,3 @@ Environment variables are never read.
 - Reads are checked only for simple shell reads (`cat`, `sed`, `head`, `tail`, `nl` on one path) and `view_image`; other commands are reported after the fact.
 - Identity is claimed, not proven: the token is per connection and readable by the user, so a user can send any `user_id`.
 - Daemon lifetime on macOS and Windows, and the macOS and Windows desktop bundle paths for `codex`, are unverified.
-- `allow_managed_hooks_only` placement under `[hooks]` is untested against a root-installed requirements file.
