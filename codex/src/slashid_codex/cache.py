@@ -137,10 +137,13 @@ class SessionCache:
         log, head, send = open_log(path)
         built = Session(session_id, log, head, send, open_log)
         with self._lock:
-            if (touched := self._touched.pop(session_id, None)) is not None:
-                built.session_started = True
-                built.last_hook_at = touched
+            # A concurrent build may have won; state goes to whichever
+            # session is cached.
             session = self._sessions.setdefault(session_id, built)
+            if (touched := self._touched.pop(session_id, None)) is not None:
+                session.session_started = True
+                if session.last_hook_at is None or touched > session.last_hook_at:
+                    session.last_hook_at = touched
             session.in_use += 1
             return session
 

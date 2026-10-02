@@ -6,11 +6,13 @@ import shutil
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
 from slashid_codex.cache import Session, SessionCache, locate
+from slashid_codex.log import SessionLog
 from slashid_codex.rollout import TokenUsageRecord, parse_line
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
@@ -204,6 +206,30 @@ def test_touch_before_load_applies_on_load(tmp_path: Path) -> None:
         pass
     # A hook's session stays cached after its collection.
     assert cache.evict() == []
+
+
+def test_concurrent_build_loser_gets_the_cached_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _install(tmp_path / ".codex", "script", SCRIPT_ID)
+    cache, _ = _cache(tmp_path)
+    real_open = SessionLog.open
+    racing = False
+
+    def open_after_a_rival_wins(*args: Any, **kwargs: Any) -> SessionLog:
+        nonlocal racing
+        if not racing:
+            racing = True
+            with cache.session(SCRIPT_ID, path):
+                cache.touch_hook(SCRIPT_ID)
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(SessionLog, "open", open_after_a_rival_wins)
+    with cache.session(SCRIPT_ID, path) as session:
+        assert session is cache._sessions[SCRIPT_ID]
+        assert session.in_use == 1
+        assert session.session_started
+        assert session.last_hook_at == T0
 
 
 def test_end_before_load_forgets_the_touch(tmp_path: Path) -> None:
