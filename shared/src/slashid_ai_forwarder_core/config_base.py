@@ -14,6 +14,8 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_ENDPOINT = "https://api.slashid.com"
+
 
 class BaseConfig(BaseSettings):
     """Shared runtime configuration for any AI-forwarder Lambda/service."""
@@ -24,7 +26,8 @@ class BaseConfig(BaseSettings):
         extra="ignore",
     )
 
-    endpoint: str = Field(..., min_length=1)
+    # The production API; override for another environment.
+    endpoint: str = Field(DEFAULT_ENDPOINT, min_length=1)
     push_token: str = Field(..., min_length=1)
     # When true, the full input/output JSON bodies travel in
     # AIInvocationContent.redacted_text. Off by default — hash + mime +

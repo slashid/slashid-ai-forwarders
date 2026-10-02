@@ -87,8 +87,9 @@ variable "observed_models" {
 }
 
 variable "slashid_endpoint" {
-  description = "SlashID base URL for the NHI events endpoint (e.g. https://api.slashid.com)."
+  description = "SlashID base URL for the NHI events endpoint."
   type        = string
+  default     = "https://api.slashid.com"
 }
 
 variable "slashid_push_token" {

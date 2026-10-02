@@ -42,10 +42,15 @@ def test_config_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_config_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("SLASHID_ENDPOINT", "SLASHID_PUSH_TOKEN"):
-        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("SLASHID_PUSH_TOKEN", raising=False)
     with pytest.raises(ValidationError):
         load_config()
+
+
+def test_endpoint_defaults_to_the_production_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SLASHID_ENDPOINT", raising=False)
+    monkeypatch.setenv("SLASHID_PUSH_TOKEN", "token")
+    assert load_config().endpoint == "https://api.slashid.com"
 
 
 def test_config_strips_trailing_slash_from_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
