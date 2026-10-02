@@ -3,14 +3,19 @@ prompt (spec "Attachments")."""
 
 from __future__ import annotations
 
-import re
+from pathlib import PurePosixPath, PureWindowsPath
 
 from pydantic import BaseModel, ConfigDict
 
 _HEADER = "# Files mentioned by the user:"
 _REQUEST = "## My request:"
 _IMAGE_MARKER = "Image attachment: true"
-_ABSOLUTE = re.compile(r"/|[A-Za-z]:\\")
+
+
+def _is_absolute(path: str) -> bool:
+    # Either absolute form, independent of the host platform: the daemon
+    # and Codex run on the same machine, but tests exercise both here.
+    return PurePosixPath(path).is_absolute() or PureWindowsPath(path).is_absolute()
 
 
 class Attachment(BaseModel):
@@ -42,7 +47,7 @@ def _entry(line: str) -> Attachment | None:
     end = len(line)
     while (cut := line.rfind(": ", 0, end)) != -1:
         path = line[cut + 2 :]
-        if _ABSOLUTE.match(path):
+        if _is_absolute(path):
             return Attachment(name=line[:cut], path=path)
         end = cut
     return None

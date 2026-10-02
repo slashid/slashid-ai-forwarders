@@ -46,6 +46,22 @@ def test_windows_path() -> None:
     ]
 
 
+def test_windows_path_forward_slash() -> None:
+    assert parse_attachments(_section("## y.txt: C:/x/y.txt")) == [
+        Attachment(name="y.txt", path="C:/x/y.txt", is_image=False)
+    ]
+
+
+def test_windows_unc_path() -> None:
+    assert parse_attachments(_section(r"## y.txt: \\server\share\y.txt")) == [
+        Attachment(name="y.txt", path=r"\\server\share\y.txt", is_image=False)
+    ]
+
+
+def test_windows_rooted_without_drive_not_an_attachment() -> None:
+    assert parse_attachments(_section(r"## a.txt: \x\y.txt")) == []
+
+
 def test_no_section() -> None:
     assert parse_attachments("## a.txt: /tmp/a.txt") == []
     assert parse_attachments("just a prompt") == []
