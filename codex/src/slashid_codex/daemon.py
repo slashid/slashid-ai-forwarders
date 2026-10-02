@@ -11,11 +11,12 @@ import logging
 import logging.handlers
 import os
 import secrets
+import signal
 import socket
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -291,6 +292,27 @@ def listen() -> socket.socket:
     return sock
 
 
+@contextlib.contextmanager
+def _fallback_signal_handlers(stopper: Stopper) -> Iterator[None]:
+    """A SIGTERM/SIGINT arriving before ``Server.serve()`` reaches its own
+    ``capture_signals()`` (the gap between ``write_daemon_json`` and the
+    event loop actually running) would otherwise kill the process without
+    cleanup. uvicorn saves and overrides these while serving, so the normal
+    shutdown path (lifespan -> ``on_exit=stopper``) is unaffected; this is a
+    stopgap for the startup window only."""
+
+    def _handle(signum: int, frame: object) -> None:
+        stopper()
+        sys.exit(0)
+
+    previous = {sig: signal.signal(sig, _handle) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = None) -> int:
     ensure_state_dir(state_dir)
     setup_logging(state_dir / LOG_FILE)
@@ -307,10 +329,11 @@ def run_daemon(config_path: Path, *, state_dir: Path, codex_home: Path | None = 
         log.info("another daemon holds %s; exiting", LOCK_FILE)
         return EXIT_OK
     stopper = Stopper(state_dir, lock)
-    try:
-        served = _serve(config, digest, state_dir, stopper)
-    finally:
-        stopper()
+    with _fallback_signal_handlers(stopper):
+        try:
+            served = _serve(config, digest, state_dir, stopper)
+        finally:
+            stopper()
     log.info("daemon stopped")
     return EXIT_OK if served else EXIT_ERROR
 
