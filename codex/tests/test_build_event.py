@@ -94,11 +94,10 @@ async def test_function_mode(builder: Builder, tmp_path: Path) -> None:
     invocations, _ = _invocations("function")
     [sed_item] = invocations[2].consumed_items
     assert sed_item.id is not None
-    record = _file(tmp_path, "/home/user/Recipes/notes.md", READ_CONTENT)
+    record = _file(tmp_path, "notes.md", READ_CONTENT)
     builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, record)
-    attachment = _file(tmp_path, "/home/user/Downloads/notes.md", "a").model_copy(
-        update={"provenance": "attachment"}
-    )
+    # Same file name as the read, other content: told apart by hash, in other rounds.
+    attachment = _file(tmp_path, "notes.md", "a").model_copy(update={"provenance": "attachment"})
     builder.records.put_turn("sess", invocations[0].turn_id, [attachment])
 
     events = await builder.events("function")
@@ -124,8 +123,8 @@ async def test_home_relative_read_dedupes_against_its_record(
     invocations, _ = _invocations(rollout)
     [sed_item] = invocations[2].consumed_items
     assert sed_item.id is not None
-    # Preflight names it with ``~`` expanded.
-    record = _file(tmp_path, "/home/user/Recipes/notes.md", READ_CONTENT)
+    # Preflight hashed the expanded path; both entries are named ``notes.md``.
+    record = _file(tmp_path, "notes.md", READ_CONTENT)
     builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, record)
 
     events = await builder.events(rollout)

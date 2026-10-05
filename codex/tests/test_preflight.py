@@ -137,11 +137,11 @@ async def test_prompt_attachments(env: Env) -> None:
     assert sent.available_tools is None
     assert sent.accessed_files is not None
     first, second = sent.accessed_files
-    assert first.name == str(present)
+    assert first.name == present.name
     assert first.provenance == "attachment"
     assert first.content_hashes is not None
     assert first.byte_length == 5
-    assert second.name == str(missing)
+    assert second.name == missing.name
     assert second.content_hashes is None
     assert env.store.for_round(SESSION, [TURN], []) == sent.accessed_files
 
@@ -233,7 +233,9 @@ async def test_tool_read_uses_pending_workdir(env: Env) -> None:
     assert sent.used_tools is None
     assert sent.accessed_files is not None
     [entry] = sent.accessed_files
-    assert entry.name == str(workdir / "notes.md")
+    assert entry.name == "notes.md"
+    # Hashed from the workdir-relative path, which only the real path resolves.
+    assert entry.byte_length == (workdir / "notes.md").stat().st_size
     assert entry.provenance == "tool_result"
     assert entry.content_hashes is not None
     assert env.store.for_round(SESSION, [], ["call_1"]) == [entry]
@@ -246,7 +248,8 @@ async def test_tool_read_script_mode_uses_payload_cwd(env: Env) -> None:
     await env.preflight.pre_tool_use(_ptu("cat note.txt", cwd=cwd, tool_use_id="exec-1"))
     assert env.sent.accessed_files is not None
     [entry] = env.sent.accessed_files
-    assert entry.name == str(cwd / "note.txt")
+    assert entry.name == "note.txt"
+    assert entry.byte_length == 1
     assert env.store.for_round(SESSION, [], ["exec-1"]) == [entry]
 
 
@@ -258,7 +261,8 @@ async def test_tool_read_expands_home(env: Env, monkeypatch: pytest.MonkeyPatch)
     await env.preflight.pre_tool_use(_ptu("cat ~/notes.md", cwd=env.tmp_path))
     assert env.sent.accessed_files is not None
     [entry] = env.sent.accessed_files
-    assert entry.name == str(home / "notes.md")
+    assert entry.name == "notes.md"
+    assert entry.byte_length == len("mine")
     assert entry.content_hashes is not None
 
 

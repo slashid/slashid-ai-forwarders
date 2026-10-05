@@ -208,7 +208,7 @@ async def test_file_data_resolved_metadata_only_populates_md5(
     )
     assert len(files) == 1
     f = files[0]
-    assert f.name == "gs://my-bucket/notes.pdf"
+    assert f.name == "notes.pdf"
     assert f.content_hashes == {"md5": hashlib.md5(raw).hexdigest()}
     assert f.byte_length == len(raw)
     assert f.media_type == "application/pdf"  # part.mimeType overrides HEAD.contentType
@@ -261,7 +261,7 @@ async def test_file_data_head_failure_emits_stub(
     )
     assert len(files) == 1
     f = files[0]
-    assert f.name == "gs://x/y.pdf"
+    assert f.name == "y.pdf"
     assert f.media_type == "application/pdf"
     assert f.byte_length is None
     assert f.content_hashes is None

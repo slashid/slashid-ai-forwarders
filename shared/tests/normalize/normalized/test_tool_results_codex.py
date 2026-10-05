@@ -78,7 +78,7 @@ def test_function_mode_output_strips_header() -> None:
         "Chunk ID: 520ca3\nWall time: 0.0000 seconds\nProcess exited with code 0\n"
         "Original token count: 1746\nOutput:\nhello\n"
     )
-    assert _single_sha(_files("Bash", _cat(), out), "/w/notes.md") == _sha(b"hello\n")
+    assert _single_sha(_files("Bash", _cat(), out), "notes.md") == _sha(b"hello\n")
 
 
 def test_script_mode_output_takes_json_output() -> None:
@@ -97,7 +97,7 @@ def test_script_mode_output_takes_json_output() -> None:
             ),
         },
     ]
-    assert _single_sha(_files("Bash", _cat(), out), "/w/notes.md") == _sha(b"hello\n")
+    assert _single_sha(_files("Bash", _cat(), out), "notes.md") == _sha(b"hello\n")
 
 
 def test_function_mode_failed_read_is_not_hashed() -> None:
@@ -125,18 +125,18 @@ def test_script_mode_failed_read_is_not_hashed() -> None:
 
 def test_bare_stdout_is_hashed_whole() -> None:
     files = _files("Bash", {"command": "cat /etc/hosts"}, "127.0.0.1 localhost\n")
-    assert _single_sha(files, "/etc/hosts") == _sha(b"127.0.0.1 localhost\n")
+    assert _single_sha(files, "hosts") == _sha(b"127.0.0.1 localhost\n")
 
 
 def test_bare_stdout_with_output_line_is_hashed_whole() -> None:
     out = "notes\nOutput:\nmore\n"
-    assert _single_sha(_files("Bash", _cat(), out), "/w/notes.md") == _sha(out.encode())
+    assert _single_sha(_files("Bash", _cat(), out), "notes.md") == _sha(out.encode())
 
 
-def test_home_is_not_expanded(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_home_relative_read_is_named_by_file_name(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/root")
     files = _files("Bash", {"command": "cat ~/x"}, "hello\n")
-    assert _single_sha(files, "~/x") == _sha(b"hello\n")
+    assert _single_sha(files, "x") == _sha(b"hello\n")
 
 
 def test_background_command_is_not_a_read() -> None:
@@ -151,7 +151,7 @@ def test_multi_file_cat_is_not_a_read() -> None:
 
 def test_converse_and_anthropic_text_parts() -> None:
     for out in ([{"text": "hello\n"}], [{"type": "text", "text": "hello\n"}]):
-        assert _single_sha(_files("Bash", _cat(), out), "/w/notes.md") == _sha(b"hello\n")
+        assert _single_sha(_files("Bash", _cat(), out), "notes.md") == _sha(b"hello\n")
 
 
 def _image_output(mime: str = "application/octet-stream") -> list[JsonValue]:
@@ -162,7 +162,7 @@ def _image_output(mime: str = "application/octet-stream") -> list[JsonValue]:
 @pytest.mark.parametrize("mime", ["application/octet-stream", "image/png"])
 def test_view_image_hashes_decoded_bytes(mime: str) -> None:
     files = _files("view_image", {"path": "/w/img.png"}, _image_output(mime))
-    assert _single_sha(files, "/w/img.png") == _sha(_PNG)
+    assert _single_sha(files, "img.png") == _sha(_PNG)
     assert files[0].byte_length == len(_PNG)
 
 
@@ -173,4 +173,4 @@ def test_view_image_never_carries_redacted_content() -> None:
 
 def test_read_unchanged() -> None:
     files = _files("Read", {"file_path": "/tmp/x.py"}, "     1\thello\n")
-    assert _single_sha(files, "/tmp/x.py") == _sha(b"hello\n")
+    assert _single_sha(files, "x.py") == _sha(b"hello\n")

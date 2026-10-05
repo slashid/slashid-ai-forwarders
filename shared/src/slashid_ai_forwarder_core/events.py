@@ -15,9 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .content_utils import truncate_middle
 from .normalize.normalized.otel import extract_otel
@@ -320,6 +321,8 @@ class AIInvocationContent(_WireModel):
 class AIAccessedFile(_WireModel):
     """spec/openapi.yaml — AIAccessedFile."""
 
+    # A file name, never a path: whatever a producer passes, the directories
+    # stay on the machine (or in the provider's bucket).
     name: str | None = None
     content_hashes: dict[str, str] | None = None
     media_type: str | None = None
@@ -332,6 +335,13 @@ class AIAccessedFile(_WireModel):
     # nothing produces it yet, and advertising an unset value is worse than
     # adding the member later.
     provenance: Literal["tool_result", "attachment"] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _file_name_only(cls, v: str | None) -> str | None:
+        # The Windows flavour reads both separators on any host, and drive
+        # letters, UNC shares and ``scheme://`` prefixes fall away with the rest.
+        return (PureWindowsPath(v).name or None) if v is not None else None
 
 
 class AIInvocationObservedV1(_WireModel):

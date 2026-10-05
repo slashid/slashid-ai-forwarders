@@ -157,7 +157,7 @@ def _from_file_data(
          ``content_hashes = {"md5": <hex>}``, no ``redacted_content``.
 
     Fallback (nothing stashed → HEAD failure): stub matching Phase 3.1 —
-    URI as name, media_type from part or filename guess, everything else None.
+    URI's file name as name, media_type from part or filename guess, everything else None.
     """
     uri = file_data.fileUri
     resolved_len = src_dict.get("_resolved_byte_length")
