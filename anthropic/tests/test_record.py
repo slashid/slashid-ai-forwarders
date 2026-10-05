@@ -209,7 +209,7 @@ def _record_with(**over: Any) -> PendingRecord:
             "model": {"id": "claude-opus-5"},
             "accessed_files": [
                 {
-                    "name": "src/a.py",
+                    "name": "a.py",
                     "content_hashes": {"sha256": "aa"},
                     "provenance": "tool_result",
                 },
@@ -231,7 +231,7 @@ def test_digests_replace_the_attachment_group_at_push() -> None:
         contributed=[HOOK, COMPLIANCE],
     )
     event = to_event(record)
-    assert [f.name for f in event.accessed_files or []] == ["src/a.py", "maria.txt"]
+    assert [f.name for f in event.accessed_files or []] == ["a.py", "maria.txt"]
     # The frame's tool-result entry is untouched: it was hashed from an
     # untruncated transcript, which no reader can match.
     assert (event.accessed_files or [])[0].content_hashes == {"sha256": "aa"}
@@ -244,7 +244,7 @@ def test_an_empty_visit_keeps_what_the_frame_hashed() -> None:
     # not evidence the round had no attachment, and a frame's
     # extracted-text digest is exact for plain text.
     event = to_event(_record_with(file_digests=[]))
-    assert [f.name for f in event.accessed_files or []] == ["src/a.py", None]
+    assert [f.name for f in event.accessed_files or []] == ["a.py", None]
 
 
 def test_a_reader_only_record_is_labelled_compliance() -> None:

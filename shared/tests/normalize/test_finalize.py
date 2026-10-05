@@ -65,7 +65,7 @@ def test_finalize_appends_tool_result_files() -> None:
     n = _invocation_with_read("/tmp/x.txt", "hello world")
     finalize(n, config=_config())
     assert len(n.accessed_files) == 1
-    assert n.accessed_files[0].name == "/tmp/x.txt"
+    assert n.accessed_files[0].name == "x.txt"
     assert n.accessed_files[0].byte_length == 11
 
 
@@ -80,10 +80,10 @@ def test_finalize_preserves_pre_existing_entries() -> None:
     """If accessed_files was already populated (e.g. by bedrock-side attachment
     extractor), finalize appends to it, doesn't replace."""
     n = _invocation_with_read("/tmp/x.txt", "hello")
-    n.accessed_files.append(AIAccessedFile(name="/attach/pdf", byte_length=1024))
+    n.accessed_files.append(AIAccessedFile(name="attached.pdf", byte_length=1024))
     finalize(n, config=_config())
     names = [f.name for f in n.accessed_files]
-    assert names == ["/attach/pdf", "/tmp/x.txt"]
+    assert names == ["attached.pdf", "x.txt"]
 
 
 def test_finalize_is_idempotent_via_cross_dedup() -> None:
@@ -107,7 +107,7 @@ def test_finalize_cross_dedup_against_attachment() -> None:
     n = _invocation_with_read("/tmp/x.txt", "hello")
     n.accessed_files.append(
         AIAccessedFile(
-            name="/tmp/x.txt",
+            name="x.txt",
             content_hashes={"sha256": _h.sha256(b"hello").hexdigest()},
             byte_length=5,
         )
@@ -228,7 +228,7 @@ def test_finalize_dedup_ignores_provenance_and_keeps_first_seen() -> None:
     n = _invocation_with_read("/tmp/x.txt", "hello")
     n.accessed_files.append(
         AIAccessedFile(
-            name="/tmp/x.txt",
+            name="x.txt",
             content_hashes={"sha256": _h.sha256(b"hello").hexdigest()},
             byte_length=5,
             provenance="attachment",

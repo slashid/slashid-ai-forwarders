@@ -14,7 +14,7 @@ def test_hashes_small_file(tmp_path: Path) -> None:
     path = tmp_path / "x.md"
     path.write_bytes(b"hello")
     got = hash_local_file(path, max_bytes=100, provenance="tool_result")
-    assert got.name == str(path)
+    assert got.name == "x.md"
     assert got.content_hashes == {
         "sha256": hashlib.sha256(b"hello").hexdigest(),
         "sha1": hashlib.sha1(b"hello").hexdigest(),
@@ -72,7 +72,7 @@ def test_symlink_hashes_target(tmp_path: Path) -> None:
     link = tmp_path / "link.md"
     link.symlink_to(target)
     got = hash_local_file(link, max_bytes=100, provenance="tool_result")
-    assert got.name == str(link)
+    assert got.name == "link.md"
     assert got.content_hashes is not None
     assert got.content_hashes["sha256"] == hashlib.sha256(b"hello").hexdigest()
     assert got.byte_length == 5

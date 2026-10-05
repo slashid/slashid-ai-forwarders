@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from slashid_ai_forwarder_core.events import (
-    AIAccessedFile,
     AIInvocationObservedV1,
     AIModel,
     AIToolServer,
@@ -15,7 +13,7 @@ from slashid_ai_forwarder_core.events import (
     OpenAIIdentityDetails,
     build_event_from_normalized,
 )
-from slashid_ai_forwarder_core.normalize.finalize import dedupe_by_name_hash, finalize
+from slashid_ai_forwarder_core.normalize.finalize import finalize
 from slashid_ai_forwarder_core.normalize.openai.responses.normalize import to_normalized
 
 from .config import CodexConfig
@@ -53,13 +51,6 @@ def record_keys(invocation: RolloutInvocation) -> tuple[list[str], list[str]]:
     )
 
 
-def _expand_home(entry: AIAccessedFile) -> AIAccessedFile:
-    name = entry.name
-    if entry.provenance != "tool_result" or name is None or name.partition("/")[0] != "~":
-        return entry
-    return entry.model_copy(update={"name": os.path.expanduser(name)})
-
-
 async def build_event(
     invocation: RolloutInvocation,
     context: SessionContext,
@@ -79,10 +70,6 @@ async def build_event(
     turn_ids, tool_ids = record_keys(invocation)
     normalized.accessed_files = records.for_round(context.session_id, turn_ids, tool_ids)
     finalize(normalized, config=config)
-    # Preflight names a ``~/x`` read by its expanded path; so must its tool result.
-    normalized.accessed_files = dedupe_by_name_hash(
-        [_expand_home(f) for f in normalized.accessed_files]
-    )
     envelope = EventEnvelope(
         request_id=invocation.response_id,
         timestamp=wire_time(invocation.timestamp),

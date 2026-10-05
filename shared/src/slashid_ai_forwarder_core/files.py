@@ -18,13 +18,13 @@ _CHUNK = 1 << 20
 def hash_local_file(
     path: Path, *, max_bytes: int, provenance: Literal["tool_result", "attachment"]
 ) -> AIAccessedFile:
-    """``name`` is the path as given (callers pass it resolved, as tool-result
-    entries name files by their path argument). A file over ``max_bytes``,
-    missing or unreadable carries no ``content_hashes``: the server counts it
-    unchecked instead of failing the request."""
+    """Reads ``path`` as given; ``name`` is only its file name, never the
+    directory. A file over ``max_bytes``, missing or unreadable carries no
+    ``content_hashes``: the server counts it unchecked instead of failing the
+    request."""
     size, hashes = _size_and_hashes(path, max_bytes)
     return AIAccessedFile(
-        name=str(path),
+        name=path.name,
         media_type=mimetypes.guess_type(path.name)[0],
         provenance=provenance,
         byte_length=size,

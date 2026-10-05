@@ -52,7 +52,7 @@ expected:
   used_tool_ids: [toolu_01Dqhr2d1w2UCUqbXhCSGutC]
   used_tool_errors: [false]
   accessed_files:
-    - {name: /home/alice/proj/notes.txt, sha256: e6bab19e50f90145e62b963a3584ec72ea6b88adcb71de6522301ebb9fa0813d}
+    - {name: notes.txt, sha256: e6bab19e50f90145e62b963a3584ec72ea6b88adcb71de6522301ebb9fa0813d}
   tool_names: [Read]
   servers: [[builtin, runtime]]
 ---

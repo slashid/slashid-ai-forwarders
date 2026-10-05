@@ -119,7 +119,8 @@ async def test_image_inline() -> None:
     }
 
 
-async def test_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_s3_source_uses_object_file_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The bucket and key prefix of an s3:// URI are not sent: only the file name.
     async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
         pass  # no AWS calls — leave source without _resolved_* keys
 
@@ -154,8 +155,8 @@ async def test_s3_source_uses_uri_as_name(monkeypatch: pytest.MonkeyPatch) -> No
     assert doc.media_type == "application/pdf"
     assert doc.content_hashes is None
     assert doc.byte_length is None
-    # image: name from s3 URI, media_type from format
-    assert img.name == "s3://my-bucket/photo.jpg"
+    # image: name is the object's file name (no bucket or prefix), media_type from format
+    assert img.name == "photo.jpg"
     assert img.media_type == "image/jpeg"
     assert img.content_hashes is None
 
@@ -186,7 +187,7 @@ async def test_s3uri_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert len(files) == 1
     f = files[0]
-    assert f.name == "s3://my-bucket/photo.png"
+    assert f.name == "photo.png"
     assert f.media_type == "image/png"
     assert f.byte_length == 50000
 
@@ -309,7 +310,7 @@ async def test_stub_has_media_type_from_filename(
     )
     assert len(files) == 1
     f = files[0]
-    assert f.name == "s3://bucket/photo.png"
+    assert f.name == "photo.png"
     assert f.media_type == "image/png"
     assert f.byte_length is None
     assert f.content_hashes is None

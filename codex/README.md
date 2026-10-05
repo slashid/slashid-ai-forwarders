@@ -43,7 +43,7 @@ Environment variables are never read.
 
 ## Notes
 
-- Preflight sends file names (full paths) and hashes (attachments and the file a tool call reads), the model, tool and MCP server names, and the conversation and turn IDs; codex-client sent none of the files. No prompt text, tool arguments, file content or `cwd`, whatever the config says. Events carry the same metadata plus token counts; `include_raw_content` is what adds text and file contents.
+- Preflight sends file names (never paths) and hashes (attachments and the file a tool call reads), the model, tool and MCP server names, and the conversation and turn IDs; codex-client sent none of the files. No prompt text, tool arguments, file content or `cwd`, whatever the config says. Events carry the same metadata plus token counts; `include_raw_content` is what adds text and file contents.
 - A time-window rule on `invoke_model` also blocks tool calls of a turn already running when the window closes.
 - Collection runs on one worker, and each failed batch is retried, so an unreachable SlashID can hold it for minutes.
 - The `PreToolUse` matcher `.*` costs one preflight round-trip per tool call; narrowing it gives up the read checks.

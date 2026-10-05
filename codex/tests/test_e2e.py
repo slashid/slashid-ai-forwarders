@@ -171,7 +171,7 @@ def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
     assert prompt["identity_details"] == {"kind": "openai", "user_id": "user-abc"}
     assert tool["requested_tool_uses"][0]["tool_use_id"] == json.loads(ptu)["tool_use_id"]
     [read] = tool["accessed_files"]
-    assert read["name"] == str(note)
+    assert read["name"] == note.name
     assert read["content_hashes"]
 
     stop = _payload("stop.json", transcript_path=str(rollout))
@@ -182,9 +182,11 @@ def test_end_to_end(daemons: Daemons, stub: StubSlashID) -> None:
     assert [e["request_id"] for e in stub.pushed] == expected
     assert {e["parsed_as"] for e in stub.pushed} == {"codex-rollout"}
     # The response that consumed the script-mode call carries its read, joined
-    # by the hook's ``exec-<uuid>``.
+    # by the hook's ``exec-<uuid>``. The rollout's own read has the same file
+    # name, so the record is picked out by its hashes.
     reads = [
-        [f for f in e.get("accessed_files") or [] if f["name"] == str(note)] for e in stub.pushed
+        [f for f in e.get("accessed_files") or [] if f["content_hashes"] == read["content_hashes"]]
+        for e in stub.pushed
     ]
     assert reads == [[], [read]]
     assert stub.auth == {f"Bearer {TOKEN}"}
