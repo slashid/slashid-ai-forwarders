@@ -8,7 +8,7 @@ Each hook runs `slashid-codex hook`, a thin client (standard library and `platfo
 
 MDM, as administrator:
 
-1. Install uv, then `uv tool install <wheel>` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it.
+1. Install uv, then `uv tool install --find-links <dir> slashid-codex` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it. `<dir>` holds two wheels, `slashid_codex` and the `slashid_ai_forwarder_core` it depends on (neither is on an index yet); build them with `uv build --package slashid-codex --wheel` and `uv build --package slashid-ai-forwarder-core --wheel`, one package per call. Do not install from a checkout (`uv tool install ./codex`): uv links the core into the checkout as an editable install, and the daemon stops starting once the checkout moves.
 2. Install the config (`deploy/config.example.toml`) at `/opt/slashid/codex/config.toml` and the token file it names, both read-only to users.
 3. Install `deploy/requirements.toml` as Codex's managed requirements.
 
@@ -26,7 +26,7 @@ Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `sp
 | `verdict_fail_mode` | `deny` | without a verdict (SlashID or the daemon unavailable, bad payload): `deny` blocks, `allow` allows |
 | `preflight_timeout_seconds` | 4.0 | verdict budget from the hook's arrival, capped at 8 s |
 | `max_file_bytes` | 50 MiB | larger files go without hashes |
-| `include_raw_content`, `max_content_size` | off, 100000 | round text in events |
+| `include_raw_content`, `max_content_size` | off, 100000 | the round's text and the contents of files tool calls returned, in events, each cut to `max_content_size`; off, events carry hashes, content types and sizes only |
 | `input_scope`, `round_link_depth` | `round`, 10 | |
 | `codex_home` | `~/.codex` | does not read `CODEX_HOME` |
 | `codex_bin` | | for `codex mcp list`; else `codex` on `PATH`, else the desktop bundle |
@@ -43,13 +43,14 @@ Environment variables are never read.
 
 ## Notes
 
-- Preflight sends file names and hashes (attachments and the file a tool call reads); codex-client sent none. No prompt text, tool arguments, file content or `cwd`.
+- Preflight sends file names (full paths) and hashes (attachments and the file a tool call reads), the model, tool and MCP server names, and the conversation and turn IDs; codex-client sent none of the files. No prompt text, tool arguments, file content or `cwd`, whatever the config says. Events carry the same metadata plus token counts; `include_raw_content` is what adds text and file contents.
 - A time-window rule on `invoke_model` also blocks tool calls of a turn already running when the window closes.
 - Collection runs on one worker, and each failed batch is retried, so an unreachable SlashID can hold it for minutes.
 - The `PreToolUse` matcher `.*` costs one preflight round-trip per tool call; narrowing it gives up the read checks.
 
 ## Known limitations
 
+- A hook Codex cannot start (the session's working directory no longer exists, or the executable is missing) is a nonblocking failure: the prompt or tool call goes through unchecked, and `verdict_fail_mode` never applies because the client never ran. Observed in the desktop app after its project folder was deleted: the session's own commands failed with "No such file or directory" and no hook reached the daemon.
 - Script mode (`codex exec`): the hook's `tool_use_id` (`exec-<uuid>`) is not linked to the call's `call_id`.
 - Reads are checked only for simple shell reads (`cat`, `sed`, `head`, `tail`, `nl` on one path) and `view_image`; other commands are reported after the fact.
 - A token or config rotation takes effect within about 5 s (the daemon checks the files every 5 s and exits; the next hook respawns it).

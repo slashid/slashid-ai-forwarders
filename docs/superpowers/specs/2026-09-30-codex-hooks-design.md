@@ -398,7 +398,7 @@ To document: a time-window rule on `invoke_model` also blocks tool calls in a tu
 
 ## Deployment
 
-**Install.** MDM installs uv and runs `uv tool install <wheel>` as administrator with `UV_TOOL_DIR=/opt/slashid/codex/tools`, `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools`, `…\bin`), so users cannot modify it; it also installs the config and token file. Before an upgrade it stops `<python> -m slashid_codex daemon` processes under the tool directory (Windows cannot replace a running `.exe`), never hook clients, since a killed hook is a nonblocking failure that lets its action through. The next hook starts the new version.
+**Install.** MDM installs uv and runs `uv tool install --find-links <dir> slashid-codex` as administrator, `<dir>` holding the `slashid_codex` and `slashid_ai_forwarder_core` wheels (a checkout install links the core editable and breaks when the checkout moves) with `UV_TOOL_DIR=/opt/slashid/codex/tools`, `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools`, `…\bin`), so users cannot modify it; it also installs the config and token file. Before an upgrade it stops `<python> -m slashid_codex daemon` processes under the tool directory (Windows cannot replace a running `.exe`), never hook clients, since a killed hook is a nonblocking failure that lets its action through. The next hook starts the new version.
 
 **Managed requirements.**
 
