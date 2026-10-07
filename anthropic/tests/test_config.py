@@ -194,6 +194,8 @@ def test_a_local_platform_needs_no_project_id(monkeypatch: pytest.MonkeyPatch) -
     assert config.platform == "local"
     assert config.project_id is None
     assert config.data_dir is None
+    monkeypatch.setenv("SLASHID_DATA_DIR", "/x")
+    assert Config().data_dir == "/x"
 
 
 def test_gcp_refuses_an_empty_project_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,7 +205,9 @@ def test_gcp_refuses_an_empty_project_id(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_an_empty_data_dir_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch, SLASHID_PLATFORM="local", SLASHID_DATA_DIR="")
+    _env(monkeypatch, SLASHID_PLATFORM="local", SLASHID_DATA_DIR="/x")
+    assert Config().data_dir == "/x"
+    monkeypatch.setenv("SLASHID_DATA_DIR", "")
     assert Config().data_dir is None
 
 

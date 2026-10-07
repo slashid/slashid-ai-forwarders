@@ -53,9 +53,15 @@ async def test_a_claim_that_loses_the_compare_and_set_returns_none(
 
     monkeypatch.setattr(store, "_read", rival_claims_after_the_read)
     assert await store.claim(ADDRESS, LEASE, owner="loser", now=PAST_DEADLINE) is None
-    monkeypatch.setattr(store, "_read", read)
     record = await store.claim(ADDRESS, LEASE, owner="late", now=PAST_DEADLINE + LEASE * 2)
     assert record is not None
+
+
+async def test_an_append_dedups_its_own_repeated_values(store: SqlitePendingStore) -> None:
+    await store.upsert(ADDRESS, {"webhook_ids": Append(("x", "x"))}, (), now=NOW)
+    record = await store.claim(ADDRESS, LEASE, owner="t", now=PAST_DEADLINE)
+    assert record is not None
+    assert record.webhook_ids == ["x"]
 
 
 async def test_two_interleaved_upserts_both_extend_one_field(store: SqlitePendingStore) -> None:

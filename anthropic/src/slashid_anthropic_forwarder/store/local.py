@@ -79,7 +79,10 @@ def _merge_map(base: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
     for key, value in fields.items():
         if isinstance(value, Append):
             current = list(out.get(key) or [])
-            out[key] = [*current, *(v for v in value.values if v not in current)]
+            for v in value.values:
+                if v not in current:
+                    current.append(v)
+            out[key] = current
         elif isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _merge_map(out[key], value)
         else:
@@ -109,7 +112,8 @@ class SqlitePendingStore:
     async def open(cls, *, db: aiosqlite.Connection, **options: Any) -> SqlitePendingStore:
         """The store, with its table in place."""
         for statement in _SCHEMA:
-            await db.execute(statement)
+            async with db.execute(statement):
+                pass
         return cls(db=db, **options)
 
     async def _read(self, address: str) -> tuple[int, dict[str, Any]] | None:
@@ -227,10 +231,11 @@ class SqlitePendingStore:
     async def due(self, now: datetime, limit: int) -> list[PendingRecord]:
         """Also where expired tombstones are deleted: SQLite has no TTL
         policy, and this runs once per tick."""
-        await self._db.execute(
+        async with self._db.execute(
             "DELETE FROM pending WHERE collection = ? AND tombstone_expires_us <= ?",
             (self._collection, _us(now)),
-        )
+        ):
+            pass
         async with self._db.execute(
             "SELECT address, doc FROM pending WHERE collection = ? AND tombstoned_us IS NULL"
             " AND next_attempt_us <= ? ORDER BY next_attempt_us, address LIMIT ?",

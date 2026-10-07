@@ -109,7 +109,7 @@ async def test_complete_merges_maps_per_field_and_replaces_lists(store: PendingS
     assert record.event["accessed_files"] == [{"name": "b"}]
 
 
-async def test_two_completers_both_land(store: PendingStore) -> None:
+async def test_two_completions_both_land(store: PendingStore) -> None:
     await store.upsert(
         ADDRESS, {"event": an_event(), "contributed": Append(("hook",))}, (AWAITING,), now=NOW
     )
