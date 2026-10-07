@@ -20,8 +20,9 @@ class Config(BaseConfig):
     # for about a minute after the cutover; ``verify`` tries every entry,
     # so more than two is allowed and costs one failed HMAC each.
     hook_signing_secret: str = ""
-    # POST {endpoint}/ip/nhi/events/ai-invocations/preflight on every prompt.
-    preflight_enabled: bool = False
+    # POST {endpoint}/ip/nhi/events/ai-invocations/preflight on every prompt
+    # and tool call.
+    preflight_enabled: bool = True
     # Answer when a check fails or comes back unverified. Allow by default:
     # refusing to answer is self-inflicted downtime, and the customer has
     # Anthropic-side failure handling for strictness.
@@ -33,9 +34,9 @@ class Config(BaseConfig):
     # It never delays the verdict.
     push_budget_ms: int = 2_000
     # Our own shadow mode, named after claude.ai's `shadow_mode` and
-    # independent of it: when either is on, nothing is blocked. On by
-    # default, so a fresh deployment observes before it enforces.
-    shadow_mode: bool = True
+    # independent of it: when either is on, nothing is blocked. Off by
+    # default: a deployment enforces.
+    shadow_mode: bool = False
     # Request body cap. Cloud Run's HTTP/1 limit is 32 MiB.
     max_body_bytes: int = 32 * 1024 * 1024
     # When set, every frame is written raw to this GCS bucket for

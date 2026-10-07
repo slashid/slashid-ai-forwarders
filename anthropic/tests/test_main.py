@@ -162,7 +162,7 @@ async def test_deny_marker_denies_only_outside_shadow_mode(sign: Signer) -> None
     text = {"type": "text", "text": "SLASHID_DENY_ME"}
     frame = {**FRAME, "messages": [{"role": "user", "content": [text]}]}
     body = json.dumps(frame).encode()
-    async with _client(_config(capture_deny_marker="SLASHID_DENY_ME")) as c:
+    async with _client(_config(capture_deny_marker="SLASHID_DENY_ME", shadow_mode=True)) as c:
         r = await c.post("/", content=body, headers=sign(body, "req_test"))
     assert r.json() == {"action": "allow"}
     async with _client(_config(capture_deny_marker="SLASHID_DENY_ME", shadow_mode=False)) as c:
