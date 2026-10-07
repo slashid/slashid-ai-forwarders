@@ -147,7 +147,7 @@ enablement — the first BigQuery row (and therefore the first forwarded
 event) may take that long to appear after `terraform apply` returns.
 
 The image tag is derived from `var.release_version`
-(`vertex-v0.1.11` pulls `slashid-vertex-forwarder:0.1.11`). The first
+(`vertex-v0.1.11` pulls `slashid-ai-forwarder-vertex:0.1.11`). The first
 revision fails to start if the image cannot be pulled, so while the
 package is private set `ghcr_username` and `ghcr_token`.
 

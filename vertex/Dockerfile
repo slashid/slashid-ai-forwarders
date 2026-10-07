@@ -22,11 +22,11 @@ COPY shared/pyproject.toml shared/
 COPY bedrock/pyproject.toml bedrock/
 COPY vertex/pyproject.toml vertex/
 COPY anthropic/pyproject.toml anthropic/
-RUN uv sync --frozen --no-dev --no-install-workspace --package slashid-vertex-forwarder
+RUN uv sync --frozen --no-dev --no-install-workspace --package slashid-ai-forwarder-vertex
 
 COPY shared/src shared/src
 COPY vertex/src vertex/src
-RUN uv sync --frozen --no-dev --no-editable --package slashid-vertex-forwarder
+RUN uv sync --frozen --no-dev --no-editable --package slashid-ai-forwarder-vertex
 
 
 FROM cgr.dev/chainguard/wolfi-base:latest

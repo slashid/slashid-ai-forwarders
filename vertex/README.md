@@ -161,5 +161,5 @@ git push origin vertex-v0.1.0
 ```
 
 Builds the container image and pushes it to
-`ghcr.io/slashid/slashid-vertex-forwarder:<version>`, and publishes the
+`ghcr.io/slashid/slashid-ai-forwarder-vertex:<version>`, and publishes the
 GitHub Release naming the image and the Terraform module `ref`.

@@ -89,7 +89,7 @@ locals {
   version_short = trimprefix(var.release_version, "vertex-v")
   image = var.image != "" ? var.image : join("", [
     "${local.deployment_region}-docker.pkg.dev/${var.project_id}/${var.registry_repository_id}",
-    "/slashid/slashid-vertex-forwarder:${local.version_short}",
+    "/slashid/slashid-ai-forwarder-vertex:${local.version_short}",
   ])
 }
 

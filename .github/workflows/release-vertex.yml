@@ -54,13 +54,13 @@ jobs:
           # One immutable tag per release. Terraform pins by version, so
           # no floating tag exists for a pre-release to move under a
           # customer.
-          tags: ghcr.io/slashid/slashid-vertex-forwarder:${{ env.VERSION }}
+          tags: ghcr.io/slashid/slashid-ai-forwarder-vertex:${{ env.VERSION }}
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ steps.prerelease.outputs.value }}
           body: |
-            Image: `ghcr.io/slashid/slashid-vertex-forwarder:${{ env.VERSION }}`
+            Image: `ghcr.io/slashid/slashid-ai-forwarder-vertex:${{ env.VERSION }}`
 
             Terraform: `source = "git::https://github.com/slashid/slashid-ai-forwarders.git//vertex/deploy/terraform?ref=${{ github.ref_name }}"`

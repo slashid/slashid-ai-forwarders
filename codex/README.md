@@ -8,7 +8,7 @@ Each hook runs `slashid-codex hook`, a thin client (standard library and `platfo
 
 MDM, as administrator:
 
-1. Install uv, then `uv tool install --find-links <dir> slashid-codex` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it. `<dir>` holds two wheels, `slashid_codex` and the `slashid_ai_forwarder_core` it depends on (neither is on an index yet); build them with `uv build --package slashid-codex --wheel` and `uv build --package slashid-ai-forwarder-core --wheel`, one package per call. Do not install from a checkout (`uv tool install ./codex`): uv links the core into the checkout as an editable install, and the daemon stops starting once the checkout moves.
+1. Install uv, then `uv tool install --find-links <dir> slashid-ai-forwarder-codex` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it. `<dir>` holds two wheels, `slashid_ai_forwarder_codex` and the `slashid_ai_forwarder_core` it depends on (neither is on an index yet); build them with `uv build --package slashid-ai-forwarder-codex --wheel` and `uv build --package slashid-ai-forwarder-core --wheel`, one package per call. Do not install from a checkout (`uv tool install ./codex`): uv links the core into the checkout as an editable install, and the daemon stops starting once the checkout moves.
 2. Install the config (`deploy/config.example.toml`) at `/opt/slashid/codex/config.toml` and the token file it names, both read-only to users.
 3. Install `deploy/requirements.toml` as Codex's managed requirements.
 

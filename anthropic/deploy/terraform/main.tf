@@ -31,7 +31,7 @@ locals {
   version_short = trimprefix(var.release_version, "anthropic-v")
   image = var.image != "" ? var.image : join("", [
     "${var.region}-docker.pkg.dev/${var.project_id}/${var.registry_repository_id}",
-    "/slashid/slashid-anthropic-forwarder:${local.version_short}",
+    "/slashid/slashid-ai-forwarder-anthropic:${local.version_short}",
   ])
 
   # The cadence is an input as a NUMBER (the service compares it against

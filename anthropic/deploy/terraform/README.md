@@ -96,7 +96,7 @@ terminal's dedup key is `{org}:{conn}:{request_id}`.
 ## The image
 
 The release workflow publishes
-`ghcr.io/slashid/slashid-anthropic-forwarder:<version>` and the module
+`ghcr.io/slashid/slashid-ai-forwarder-anthropic:<version>` and the module
 derives the tag from `release_version` by dropping the `anthropic-v`
 prefix: `anthropic-v0.1.0` → `:0.1.0`. Cloud Run then pulls it through
 the Artifact Registry remote repository this module creates.

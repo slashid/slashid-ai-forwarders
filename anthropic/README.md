@@ -386,6 +386,6 @@ saw are still emitted by the reader — subject to the `tool_use`-only join abov
 git tag anthropic-v0.1.0 && git push origin anthropic-v0.1.0
 ```
 
-publishes `ghcr.io/slashid/slashid-anthropic-forwarder:0.1.0`. The tag must
+publishes `ghcr.io/slashid/slashid-ai-forwarder-anthropic:0.1.0`. The tag must
 match the `version` in `anthropic/pyproject.toml`; the release workflow refuses
 the mismatch.

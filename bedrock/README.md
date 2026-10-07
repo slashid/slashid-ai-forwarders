@@ -109,5 +109,5 @@ The same code path also covers OpenCode / Amazon Q Developer / Gemini CLI (`Read
 
 Tagged releases publish two artifacts to GitHub Releases:
 
-- `slashid-bedrock-forwarder-<version>.zip` — Lambda deployment package
+- `slashid-ai-forwarder-bedrock-<version>.zip` — Lambda deployment package
 - `cloudformation.yaml` — install template

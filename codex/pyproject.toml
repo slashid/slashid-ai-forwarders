@@ -1,5 +1,5 @@
 [project]
-name = "slashid-codex"
+name = "slashid-ai-forwarder-codex"
 version = "0.1.0"
 description = "Codex managed hook and per-user daemon: preflight verdicts and rollout events for SlashID NHI"
 requires-python = ">=3.12"
