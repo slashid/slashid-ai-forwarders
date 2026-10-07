@@ -47,6 +47,15 @@ from slashid_ai_forwarder_core.normalize.converse.schema import (
     ConverseRequestBody,
     ConverseResponse,
 )
+from slashid_ai_forwarder_core.normalize.llama.normalize import (
+    llama_stream_to_normalized_invocation,
+    llama_to_normalized_invocation,
+)
+from slashid_ai_forwarder_core.normalize.llama.schema import (
+    LlamaRequest,
+    LlamaResponse,
+    LlamaStream,
+)
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
 from slashid_ai_forwarder_core.normalize.openai.chat.normalize import (
     chat_stream_to_normalized_invocation,
@@ -217,6 +226,18 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
         response_adapter=TypeAdapter(ChatStream),
         to_invocation=chat_stream_to_normalized_invocation,
         on_parse=_on_openai_chat_stream_parse,
+    ),
+    _Format(
+        name="llama",
+        request_adapter=TypeAdapter(LlamaRequest),
+        response_adapter=TypeAdapter(LlamaResponse),
+        to_invocation=llama_to_normalized_invocation,
+    ),
+    _Format(
+        name="llama-stream",
+        request_adapter=TypeAdapter(LlamaRequest),
+        response_adapter=TypeAdapter(LlamaStream),
+        to_invocation=llama_stream_to_normalized_invocation,
     ),
 ]
 

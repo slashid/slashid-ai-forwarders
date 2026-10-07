@@ -1012,3 +1012,41 @@ async def test_invoke_model_chat_bodies_carry_the_answer(fixture: str, operation
     assert normalized.output.message is not None
     assert normalized.output.stop_reason == "end_turn"
     assert [b.text for b in normalized.output.message.content] == ["Hi there!"]
+
+
+# --------------------------------------------------------------------------
+# Llama native
+# --------------------------------------------------------------------------
+
+_LLAMA_FIXTURES = [
+    ("invoke_llama_native_mil.json", "llama"),
+    ("invoke_llama_native_stream_mil.json", "llama-stream"),
+]
+
+
+@pytest.mark.parametrize("fixture,expected", _LLAMA_FIXTURES)
+async def test_llama_sets_parsed_as_and_carries_the_answer(fixture: str, expected: str) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == expected
+    assert normalized.output.message is not None
+    assert [b.text for b in normalized.output.message.content] == ["Hello to you."]
+    assert normalized.output.stop_reason == "end_turn"
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _LLAMA_FIXTURES])
+def test_llama_never_matches_earlier_formats(fixture: str) -> None:
+    record = _fixture(fixture)
+    for fmt in _FORMATS:
+        if fmt.name.startswith("llama"):
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(record["input"]["inputBodyJson"])
+            fmt.response_adapter.validate_python(record["output"]["outputBodyJson"])
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _CHAT_FIXTURES] + ["openai_responses_mil.json"])
+async def test_other_formats_are_not_taken_for_llama(fixture: str) -> None:
+    record = _fixture(fixture)
+    await normalize_record(record, config=_CONFIG)
+    assert not record["_parsed_as"].startswith("llama")
