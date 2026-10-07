@@ -128,7 +128,9 @@ def create_app(
                 # Never a failed tick: the next one re-runs the pass from its watermark.
                 log.exception("tick: the reader pass failed; flushing anyway")
             flushed = await flush_due(store, config=config, client=http())
-        return {"flushed": flushed, **counters}
+        result = {"flushed": flushed, **counters}
+        log.info("tick: %s", result)
+        return result
 
     async def tick_forever() -> None:
         while True:
