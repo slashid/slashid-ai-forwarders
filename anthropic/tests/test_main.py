@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import pathlib
 import re
+import subprocess
+import sys
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -16,6 +20,7 @@ from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.platform import TickLease
 from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
+from slashid_ai_forwarder_core.platform.local import create_local_platform
 
 from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder import platform as anthropic_platform
@@ -24,10 +29,13 @@ from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
 from slashid_anthropic_forwarder.platform import Backends, open_backends
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
+from slashid_anthropic_forwarder.store.local import SqlitePendingStore
 from tests.conftest import SECRET, Signer
 from tests.fake_firestore import FakeFirestore
 from tests.test_cursors import _cursors
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
+
+NOW_UTC = datetime.now(UTC)
 
 FRAME: dict[str, Any] = {
     "type": "prompt",
@@ -466,3 +474,64 @@ async def test_a_reader_failure_does_not_fail_the_tick(monkeypatch: pytest.Monke
     # ran, which is the part that matters.)
     assert response.status_code == 200
     assert response.json()["flushed"] == 0
+
+
+async def test_open_backends_on_the_local_platform_uses_sqlite(tmp_path: Path) -> None:
+    config = _config(platform="local", project_id=None, data_dir=str(tmp_path))
+    async with open_backends(config) as backends:
+        assert isinstance(backends.store, SqlitePendingStore)
+        assert (tmp_path / "data.sqlite").exists()
+        # the platform's own stores share the file
+        assert await backends.cursors.activities.window_age_seconds(now=NOW_UTC) == 0.0
+        assert await backends.tick_auth("anything") is False
+
+
+async def test_the_local_platform_tick_principal_is_the_bearer_token(tmp_path: Path) -> None:
+    config = _config(
+        platform="local", project_id=None, data_dir=str(tmp_path), tick_principal="s3cret"
+    )
+    async with open_backends(config) as backends:
+        assert await backends.tick_auth("s3cret") is True
+        assert await backends.tick_auth("other") is False
+
+
+async def test_local_without_a_data_dir_names_the_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict[str, Any]] = []
+
+    @contextlib.asynccontextmanager
+    async def get(name: str, **options: Any) -> AsyncIterator[Any]:
+        seen.append({"name": name, **options})
+        async with create_local_platform(None) as platform:
+            yield platform
+
+    monkeypatch.setattr(anthropic_platform.platforms, "get", get)
+    async with open_backends(_config(platform="local", project_id=None)):
+        pass
+    assert seen == [{"name": "local", "app": "slashid_anthropic_forwarder"}]
+
+
+def test_local_mode_loads_no_google_module(tmp_path: Path) -> None:
+    script = (
+        "import asyncio, sys\n"
+        "from slashid_anthropic_forwarder.config import Config\n"
+        "from slashid_anthropic_forwarder.platform import open_backends\n"
+        "async def main():\n"
+        "    async with open_backends(Config()):\n"
+        "        pass\n"
+        "asyncio.run(main())\n"
+        "prefixes = ('google.cloud', 'google.api_core')\n"
+        "bad = sorted(m for m in sys.modules if m.startswith(prefixes))\n"
+        "print(bad)\n"
+        "sys.exit(1 if bad else 0)\n"
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "SLASHID_PLATFORM": "local",
+        "SLASHID_DATA_DIR": str(tmp_path),
+        "SLASHID_PUSH_TOKEN": "t",
+        "SLASHID_HOOK_SIGNING_SECRET": "whsec_AAA",
+    }
+    done = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
