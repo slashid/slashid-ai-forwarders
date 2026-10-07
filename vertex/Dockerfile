@@ -6,11 +6,11 @@
 FROM cgr.dev/chainguard/wolfi-base:latest AS builder
 
 USER root
-RUN apk add --no-cache python-3.12 uv
+RUN apk add --no-cache python-3.14 uv
 
 WORKDIR /build
 ENV UV_PROJECT_ENVIRONMENT=/venv \
-    UV_PYTHON=/usr/bin/python3.12 \
+    UV_PYTHON=/usr/bin/python3.14 \
     UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
     UV_NO_CACHE=1
@@ -32,7 +32,7 @@ RUN uv sync --frozen --no-dev --no-editable --package slashid-vertex-forwarder
 FROM cgr.dev/chainguard/wolfi-base:latest
 
 USER root
-RUN apk add --no-cache python-3.12 && rm -rf /var/cache/apk/*
+RUN apk add --no-cache python-3.14 && rm -rf /var/cache/apk/*
 
 ENV PYTHONUNBUFFERED=1 \
     PATH="/venv/bin:$PATH" \
