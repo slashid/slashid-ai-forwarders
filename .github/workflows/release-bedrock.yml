@@ -39,7 +39,7 @@ jobs:
           fi
           {
             echo "VERSION=$FILE_VERSION"
-            echo "ARTIFACT=slashid-bedrock-forwarder-v${FILE_VERSION}.zip"
+            echo "ARTIFACT=slashid-ai-forwarder-bedrock-v${FILE_VERSION}.zip"
           } >> "$GITHUB_ENV"
 
       - name: Export runtime dependencies (skip workspace member)
@@ -49,7 +49,7 @@ jobs:
         # sources at deploy time).
         run: |
           uv export \
-            --package slashid-bedrock-forwarder \
+            --package slashid-ai-forwarder-bedrock \
             --no-dev \
             --no-emit-workspace \
             --no-hashes \

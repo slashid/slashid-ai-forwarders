@@ -9,11 +9,11 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "slashid-ai-forwarder-anthropic",
+    "slashid-ai-forwarder-bedrock",
+    "slashid-ai-forwarder-codex",
     "slashid-ai-forwarder-core",
-    "slashid-anthropic-forwarder",
-    "slashid-bedrock-forwarder",
-    "slashid-codex",
-    "slashid-vertex-forwarder",
+    "slashid-ai-forwarder-vertex",
 ]
 
 [manifest.dependency-groups]
@@ -1701,6 +1701,79 @@ wheels = [
 ]
 
 [[package]]
+name = "slashid-ai-forwarder-anthropic"
+version = "0.1.7"
+source = { editable = "anthropic" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "google-cloud-firestore" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "slashid-ai-forwarder-core", extra = ["gcp", "local"] },
+    { name = "standardwebhooks" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "google-cloud-firestore", specifier = ">=2.16" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "slashid-ai-forwarder-core", extras = ["gcp", "local"], editable = "shared" },
+    { name = "standardwebhooks", specifier = ">=1.1" },
+    { name = "uvicorn", specifier = ">=0.32" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pyyaml", specifier = ">=6.0" }]
+
+[[package]]
+name = "slashid-ai-forwarder-bedrock"
+version = "0.1.5"
+source = { editable = "bedrock" }
+dependencies = [
+    { name = "slashid-ai-forwarder-core", extra = ["converse"] },
+]
+
+[package.metadata]
+requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], editable = "shared" }]
+
+[[package]]
+name = "slashid-ai-forwarder-codex"
+version = "0.1.0"
+source = { editable = "codex" }
+dependencies = [
+    { name = "certifi" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "slashid-ai-forwarder-core", extra = ["local"] },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "certifi" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "platformdirs", specifier = ">=4.2" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "slashid-ai-forwarder-core", extras = ["local"], editable = "shared" },
+    { name = "uvicorn", specifier = ">=0.32" },
+]
+
+[[package]]
 name = "slashid-ai-forwarder-core"
 version = "0.1.0"
 source = { editable = "shared" }
@@ -1761,80 +1834,7 @@ dev = [
 ]
 
 [[package]]
-name = "slashid-anthropic-forwarder"
-version = "0.1.7"
-source = { editable = "anthropic" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "google-cloud-firestore" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "slashid-ai-forwarder-core", extra = ["gcp", "local"] },
-    { name = "standardwebhooks" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "google-cloud-firestore", specifier = ">=2.16" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "slashid-ai-forwarder-core", extras = ["gcp", "local"], editable = "shared" },
-    { name = "standardwebhooks", specifier = ">=1.1" },
-    { name = "uvicorn", specifier = ">=0.32" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pyyaml", specifier = ">=6.0" }]
-
-[[package]]
-name = "slashid-bedrock-forwarder"
-version = "0.1.5"
-source = { editable = "bedrock" }
-dependencies = [
-    { name = "slashid-ai-forwarder-core", extra = ["converse"] },
-]
-
-[package.metadata]
-requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], editable = "shared" }]
-
-[[package]]
-name = "slashid-codex"
-version = "0.1.0"
-source = { editable = "codex" }
-dependencies = [
-    { name = "certifi" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "platformdirs" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "slashid-ai-forwarder-core", extra = ["local"] },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "certifi" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "platformdirs", specifier = ">=4.2" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "slashid-ai-forwarder-core", extras = ["local"], editable = "shared" },
-    { name = "uvicorn", specifier = ">=0.32" },
-]
-
-[[package]]
-name = "slashid-vertex-forwarder"
+name = "slashid-ai-forwarder-vertex"
 version = "0.1.11"
 source = { editable = "vertex" }
 dependencies = [

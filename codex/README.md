@@ -1,14 +1,14 @@
-# slashid-codex
+# slashid-ai-forwarder-codex
 
 Codex managed hook for SlashID. `UserPromptSubmit` and `PreToolUse` become SlashID preflight verdicts (deny reasons block the prompt or tool call); the session rollouts (`~/.codex/sessions/…`) become one `AIInvocationObservedV1` per model response. Design: `docs/superpowers/specs/2026-09-30-codex-hooks-design.md`.
 
-Each hook runs `slashid-codex hook`, a thin client (standard library and `platformdirs` only) that forwards the payload to a per-user daemon on `127.0.0.1`, starting it on first use. The daemon (`slashid-codex daemon`, FastAPI) answers preflight on a warm connection and pushes events from a worker thread. It exits after `daemon_idle_seconds` without hooks or published events; the next hook starts it again, and its startup sweep sends what was missed.
+Each hook runs `slashid-ai-forwarder-codex hook`, a thin client (standard library and `platformdirs` only) that forwards the payload to a per-user daemon on `127.0.0.1`, starting it on first use. The daemon (`slashid-ai-forwarder-codex daemon`, FastAPI) answers preflight on a warm connection and pushes events from a worker thread. It exits after `daemon_idle_seconds` without hooks or published events; the next hook starts it again, and its startup sweep sends what was missed.
 
 ## Install
 
 MDM, as administrator:
 
-1. Install uv, then `uv tool install --find-links <dir> slashid-codex` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it. `<dir>` holds two wheels, `slashid_codex` and the `slashid_ai_forwarder_core` it depends on (neither is on an index yet); build them with `uv build --package slashid-codex --wheel` and `uv build --package slashid-ai-forwarder-core --wheel`, one package per call. Do not install from a checkout (`uv tool install ./codex`): uv links the core into the checkout as an editable install, and the daemon stops starting once the checkout moves.
+1. Install uv, then `uv tool install --find-links <dir> slashid-ai-forwarder-codex` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it. `<dir>` holds two wheels, `slashid_ai_forwarder_codex` and the `slashid_ai_forwarder_core` it depends on (neither is on an index yet); build them with `uv build --package slashid-ai-forwarder-codex --wheel` and `uv build --package slashid-ai-forwarder-core --wheel`, one package per call. Do not install from a checkout (`uv tool install ./codex`): uv links the core into the checkout as an editable install, and the daemon stops starting once the checkout moves.
 2. Install the config (`deploy/config.example.toml`) at `/opt/slashid/codex/config.toml` and the token file it names, both read-only to users.
 3. Install `deploy/requirements.toml` as Codex's managed requirements.
 

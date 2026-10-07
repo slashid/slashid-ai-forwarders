@@ -1,5 +1,5 @@
 [project]
-name = "slashid-codex"
+name = "slashid-ai-forwarder-codex"
 version = "0.1.0"
 description = "Codex managed hook and per-user daemon: preflight verdicts and rollout events for SlashID NHI"
 requires-python = ">=3.12"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-slashid-codex = "slashid_codex.cli:main"
+slashid-ai-forwarder-codex = "slashid_codex.cli:main"
 
 [tool.uv.sources]
 slashid-ai-forwarder-core = { workspace = true }

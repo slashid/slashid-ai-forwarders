@@ -291,7 +291,7 @@ variable "checkpoint_collection" {
 
 variable "service_name" {
   type    = string
-  default = "slashid-anthropic-forwarder"
+  default = "slashid-ai-forwarder-anthropic"
 }
 
 variable "service_account_id" {

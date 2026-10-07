@@ -23,11 +23,11 @@ COPY shared/pyproject.toml shared/
 COPY bedrock/pyproject.toml bedrock/
 COPY vertex/pyproject.toml vertex/
 COPY anthropic/pyproject.toml anthropic/
-RUN uv sync --frozen --no-dev --no-install-workspace --package slashid-anthropic-forwarder
+RUN uv sync --frozen --no-dev --no-install-workspace --package slashid-ai-forwarder-anthropic
 
 COPY shared/src shared/src
 COPY anthropic/src anthropic/src
-RUN uv sync --frozen --no-dev --no-editable --package slashid-anthropic-forwarder
+RUN uv sync --frozen --no-dev --no-editable --package slashid-ai-forwarder-anthropic
 
 
 FROM cgr.dev/chainguard/wolfi-base:latest

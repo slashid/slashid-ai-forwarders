@@ -59,7 +59,7 @@ def ensure_state_dir(path: Path) -> None:
 @functools.cache
 def package_version() -> str:
     try:
-        return importlib.metadata.version("slashid-codex")
+        return importlib.metadata.version("slashid-ai-forwarder-codex")
     except importlib.metadata.PackageNotFoundError:
         return "0+unknown"
 

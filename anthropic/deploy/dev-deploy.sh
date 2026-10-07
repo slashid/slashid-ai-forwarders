@@ -15,7 +15,7 @@ set -euo pipefail
 
 PROJECT="${1:?project id}"
 REGION="${2:-us-central1}"
-SERVICE=slashid-anthropic-forwarder
+SERVICE=slashid-ai-forwarder-anthropic
 SA_ID=slashid-anthropic-sa
 SA="${SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 REPO=slashid-anthropic

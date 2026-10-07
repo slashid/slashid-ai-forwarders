@@ -1,4 +1,4 @@
-# slashid-codex configuration, installed by MDM read-only to users
+# slashid-ai-forwarder-codex configuration, installed by MDM read-only to users
 # (/opt/slashid/codex/config.toml, C:\ProgramData\SlashID\Codex\config.toml).
 # Environment variables are never read.
 
