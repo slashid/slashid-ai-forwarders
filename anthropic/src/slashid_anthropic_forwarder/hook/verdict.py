@@ -25,7 +25,7 @@ from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 
 from ..config import Config
 from .checks import ALLOW, CheckFailed, Decision, Verdict
-from .frame import PromptFrame
+from .frame import Frame
 from .preflight import preflight_check
 
 log = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def _denied_hash(tail_event: AIInvocationObservedV1 | None, config: Config) -> s
 
 
 async def decide(
-    frame: PromptFrame,
+    frame: Frame,
     *,
     raw_body: bytes,
     headers: Mapping[str, str],
@@ -110,11 +110,13 @@ async def decide(
     config: Config,
     client: httpx.AsyncClient,
 ) -> Decision:
+    """``tail_event`` is the invocation being judged: the fresh round of a
+    prompt frame, or the requested tool calls of a tool call frame."""
     lower = {k.lower(): v for k, v in headers.items()}
     webhook_id = lower.get("webhook-id", frame.request_id)
     ref = reference_id(webhook_id)
 
-    if frame.type != "prompt" or frame.is_connection_test():
+    if frame.type not in ("prompt", "tool_call") or frame.is_connection_test():
         # Neither carries an invocation to judge; the protocol wants allow.
         return _answer(config, Verdict("allow", source="bypass"))
 
