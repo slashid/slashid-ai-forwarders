@@ -17,7 +17,7 @@ from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud.firestore_v1.transforms import ArrayRemove, ArrayUnion
 
-from ..record import Append, PendingRecord, from_document
+from ..record import Append, PendingRecord, event_time, from_document
 from . import NO_OP, Outcome, Retirement, Seen
 
 
@@ -211,7 +211,7 @@ class FirestorePendingStore:
         out: list[PendingRecord] = []
         async for snapshot in query.stream():
             record = from_document(snapshot.id, snapshot.to_dict() or {})
-            when = _event_time(record)
+            when = event_time(record)
             if when is not None and abs(when - at) <= window:
                 out.append(record)
         return out
@@ -263,18 +263,6 @@ class FirestorePendingStore:
         if (snapshot.to_dict() or {}).get("tombstoned_at") is not None:
             return Seen.TOMBSTONED
         return Seen.LIVE
-
-
-def _event_time(record: PendingRecord) -> datetime | None:
-    """The stored event's timestamp, which is a wire string."""
-    raw = record.event.get("timestamp")
-    if not isinstance(raw, str):
-        return None
-    try:
-        when = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def _transforms(fields: dict[str, Any]) -> dict[str, Any]:
