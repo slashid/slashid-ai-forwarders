@@ -1702,7 +1702,7 @@ wheels = [
 
 [[package]]
 name = "slashid-ai-forwarder-anthropic"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
@@ -1737,7 +1737,7 @@ dev = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "slashid-ai-forwarder-bedrock"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "bedrock" }
 dependencies = [
     { name = "slashid-ai-forwarder-core", extra = ["converse"] },
@@ -1835,7 +1835,7 @@ dev = [
 
 [[package]]
 name = "slashid-ai-forwarder-vertex"
-version = "0.1.11"
+version = "0.1.12"
 source = { editable = "vertex" }
 dependencies = [
     { name = "fastapi" },

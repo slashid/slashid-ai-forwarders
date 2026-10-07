@@ -31,13 +31,13 @@ so before the apply reaches Cloud Run.
 
 ```hcl
 module "slashid_anthropic_forwarder" {
-  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-v0.1.0"
+  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-v0.1.8"
 
   project_id         = "customer-project-123456"
   region             = "us-central1"
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token # sensitive
-  release_version    = "anthropic-v0.1.0"
+  release_version    = "anthropic-v0.1.8"
 
   hook_signing_secret = var.hook_signing_secret # whsec_… , sensitive
 
@@ -55,12 +55,12 @@ internal-only and `min_instance_count` is pinned to 0 regardless of
 
 ```hcl
 module "slashid_anthropic_forwarder" {
-  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-v0.1.0"
+  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-v0.1.8"
 
   project_id         = "customer-project-123456"
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token
-  release_version    = "anthropic-v0.1.0"
+  release_version    = "anthropic-v0.1.8"
 
   compliance_key    = var.compliance_key # sk-ant-api01-… , sensitive
   organization_uuid = "11111111-1111-1111-1111-111111111111"
@@ -74,12 +74,12 @@ every linked organization, so the readers filter to one.
 
 ```hcl
 module "slashid_anthropic_forwarder" {
-  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-v0.1.0"
+  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-v0.1.8"
 
   project_id         = "customer-project-123456"
   slashid_endpoint   = "https://api.slashid.com"
   slashid_push_token = var.slashid_push_token
-  release_version    = "anthropic-v0.1.0"
+  release_version    = "anthropic-v0.1.8"
 
   hook_signing_secret = var.hook_signing_secret
   compliance_key      = var.compliance_key
@@ -98,7 +98,7 @@ terminal's dedup key is `{org}:{conn}:{request_id}`.
 The release workflow publishes
 `ghcr.io/slashid/slashid-ai-forwarder-anthropic:<version>` and the module
 derives the tag from `release_version` by dropping the `anthropic-v`
-prefix: `anthropic-v0.1.0` → `:0.1.0`. Cloud Run then pulls it through
+prefix: `anthropic-v0.1.8` → `:0.1.8`. Cloud Run then pulls it through
 the Artifact Registry remote repository this module creates.
 
 While the repository — and therefore its package — is private,

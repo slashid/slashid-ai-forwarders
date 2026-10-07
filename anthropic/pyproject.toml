@@ -1,6 +1,6 @@
 [project]
 name = "slashid-ai-forwarder-anthropic"
-version = "0.1.7"
+version = "0.1.8"
 description = "Receives Claude Enterprise Inference Hooks, returns allow/deny verdicts, forwards AI invocations to SlashID NHI"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
