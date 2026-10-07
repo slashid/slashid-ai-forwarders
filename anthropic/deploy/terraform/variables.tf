@@ -289,6 +289,12 @@ variable "checkpoint_collection" {
   default     = "anthropic_checkpoints"
 }
 
+variable "secret_prefix" {
+  description = "Prefix of the Secret Manager secret ids (<prefix>_push_token, …). Secret ids are project-wide, so a second deployment in the same project needs its own."
+  type        = string
+  default     = "slashid_anthropic"
+}
+
 variable "service_name" {
   type    = string
   default = "slashid-ai-forwarder-anthropic"
