@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
+import os
 import pathlib
 import re
-from collections.abc import AsyncIterator
-from datetime import timedelta
+import subprocess
+import sys
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
@@ -16,6 +21,7 @@ from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from slashid_ai_forwarder_core.platform import TickLease
 from slashid_ai_forwarder_core.platform.gcp import GcpPlatform
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreTickLease
+from slashid_ai_forwarder_core.platform.local import create_local_platform
 
 from slashid_anthropic_forwarder import main
 from slashid_anthropic_forwarder import platform as anthropic_platform
@@ -24,7 +30,8 @@ from slashid_anthropic_forwarder.main import create_app
 from slashid_anthropic_forwarder.pending import TICK_LEASE
 from slashid_anthropic_forwarder.platform import Backends, open_backends
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
-from tests.conftest import SECRET, Signer
+from slashid_anthropic_forwarder.store.local import SqlitePendingStore
+from tests.conftest import SECRET, Signer, _no_readers, _until
 from tests.fake_firestore import FakeFirestore
 from tests.test_cursors import _cursors
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
@@ -59,6 +66,7 @@ def _config(**overrides: Any) -> Config:
         "push_token": "tok",
         "hook_signing_secret": SECRET,
         "project_id": "proj",
+        "platform": "gcp",
     }
     base.update(overrides)
     return Config(**base)
@@ -466,3 +474,162 @@ async def test_a_reader_failure_does_not_fail_the_tick(monkeypatch: pytest.Monke
     # ran, which is the part that matters.)
     assert response.status_code == 200
     assert response.json()["flushed"] == 0
+
+
+async def test_open_backends_on_the_local_platform_uses_sqlite(tmp_path: Path) -> None:
+    config = _config(platform="local", project_id=None, data_dir=str(tmp_path))
+    async with open_backends(config) as backends:
+        assert isinstance(backends.store, SqlitePendingStore)
+        assert (tmp_path / "data.sqlite").exists()
+        # the platform's own stores share the file
+        assert await backends.cursors.activities.window_age_seconds(now=datetime.now(UTC)) == 0.0
+        assert await backends.tick_auth("anything") is False
+
+
+async def test_the_local_platform_tick_principal_is_the_bearer_token(tmp_path: Path) -> None:
+    config = _config(
+        platform="local", project_id=None, data_dir=str(tmp_path), tick_principal="s3cret"
+    )
+    async with open_backends(config) as backends:
+        assert await backends.tick_auth("s3cret") is True
+        assert await backends.tick_auth("other") is False
+
+
+async def test_local_without_a_data_dir_names_the_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict[str, Any]] = []
+
+    @contextlib.asynccontextmanager
+    async def get(name: str, **options: Any) -> AsyncIterator[Any]:
+        seen.append({"name": name, **options})
+        async with create_local_platform(None) as platform:
+            yield platform
+
+    monkeypatch.setattr(anthropic_platform.platforms, "get", get)
+    async with open_backends(_config(platform="local", project_id=None)):
+        pass
+    assert seen == [{"name": "local", "app": "slashid_anthropic_forwarder"}]
+
+
+def test_local_mode_loads_no_google_module(tmp_path: Path) -> None:
+    script = (
+        "import asyncio, sys\n"
+        "from slashid_anthropic_forwarder.config import Config\n"
+        "from slashid_anthropic_forwarder.platform import open_backends\n"
+        "async def main():\n"
+        "    async with open_backends(Config()):\n"
+        "        pass\n"
+        "asyncio.run(main())\n"
+        "prefixes = ('google.cloud', 'google.api_core')\n"
+        "bad = sorted(m for m in sys.modules if m.startswith(prefixes))\n"
+        "print(bad)\n"
+        "sys.exit(1 if bad else 0)\n"
+    )
+    env = {
+        "PATH": os.environ["PATH"],
+        "SLASHID_PLATFORM": "local",
+        "SLASHID_DATA_DIR": str(tmp_path),
+        "SLASHID_PUSH_TOKEN": "t",
+        "SLASHID_HOOK_SIGNING_SECRET": "whsec_AAA",
+    }
+    done = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def _opened(
+    store: FirestorePendingStore,
+) -> Callable[[], contextlib.AbstractAsyncContextManager[Backends]]:
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        yield Backends(
+            store=store,
+            lease=_RecordingLease(),
+            cursors=_cursors()[0],
+            tick_auth=_accepts_the_scheduler,
+            capture=None,
+        )
+
+    return opened
+
+
+async def test_a_local_platform_drives_its_own_ticks(
+    monkeypatch: pytest.MonkeyPatch, fast_ticks: None
+) -> None:
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    store = a_store(join_wait=timedelta(seconds=-1))
+    await seed(store)
+    sink = Sink()
+    app = create_app(_config(platform="local"), backends=_opened(store), client=sink.client())
+    async with app.router.lifespan_context(app):
+        await _until(lambda: sink.request_ids == [ADDRESS])
+
+
+async def test_a_failed_tick_does_not_stop_the_next(
+    monkeypatch: pytest.MonkeyPatch, fast_ticks: None
+) -> None:
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    real_flush = main.flush_due
+    calls: list[int] = []
+
+    async def flaky(store: Any, **kwargs: Any) -> int:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("sink down")
+        return await real_flush(store, **kwargs)
+
+    monkeypatch.setattr(main, "flush_due", flaky)
+    store = a_store(join_wait=timedelta(seconds=-1))
+    await seed(store)
+    sink = Sink()
+    app = create_app(_config(platform="local"), backends=_opened(store), client=sink.client())
+    async with app.router.lifespan_context(app):
+        await _until(lambda: sink.request_ids == [ADDRESS])
+    assert len(calls) >= 2
+
+
+async def test_the_timer_is_stopped_before_the_platform_closes(
+    monkeypatch: pytest.MonkeyPatch, fast_ticks: None
+) -> None:
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    ticks: list[int] = []
+    closed: list[int] = []
+
+    async def counting(store: Any, **_: Any) -> int:
+        ticks.append(len(closed))
+        return 0
+
+    monkeypatch.setattr(main, "flush_due", counting)
+
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        yield Backends(
+            store=a_store(),
+            lease=_RecordingLease(),
+            cursors=_cursors()[0],
+            tick_auth=_accepts_the_scheduler,
+            capture=None,
+        )
+        closed.append(1)
+        await asyncio.sleep(0.05)  # a live timer would tick here, after the close
+
+    app = create_app(_config(platform="local"), backends=opened, client=Sink().client())
+    async with app.router.lifespan_context(app):
+        await _until(lambda: len(ticks) >= 2)
+    settled = len(ticks)
+    await asyncio.sleep(0.05)
+    assert len(ticks) == settled
+    assert set(ticks) == {0}  # no tick ran after the platform closed
+
+
+async def test_gcp_starts_no_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+
+    async def counting(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(main, "sleep", counting)
+    app = create_app(_config(), backends=_opened(a_store()), client=Sink().client())
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.05)
+    assert slept == []

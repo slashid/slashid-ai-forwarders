@@ -41,6 +41,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY --from=builder /venv /venv
 
+# State for the local platform; harmless where the platform is gcp.
+RUN mkdir -p /data && chown nonroot:nonroot /data
+ENV SLASHID_DATA_DIR=/data
+VOLUME /data
+
 USER nonroot
 WORKDIR /app
 EXPOSE 8080

@@ -280,6 +280,38 @@ The push runs after the response has gone out, bounded by
 makes the sink's own `SLASHID_REQUEST_TIMEOUT_SECONDS` and `SLASHID_MAX_RETRIES`
 largely inert — they can only spend time the push budget has already capped.
 
+## Running without GCP
+
+The image runs anywhere with a volume. `local` is the default platform; the
+Terraform module sets `gcp`. Keep `/data` on durable storage: pending records, the reader watermarks and the
+tick lease live in one SQLite file there. The process ticks itself every
+`SLASHID_TICK_INTERVAL_SECONDS`; there is no scheduler to configure.
+
+```sh
+docker run -d --name slashid-anthropic \
+  -e SLASHID_PUSH_TOKEN=... \
+  -e SLASHID_HOOK_SIGNING_SECRET=... \
+  -v slashid-anthropic-data:/data \
+  -p 8080:8080 \
+  <image>
+```
+
+A bind mount in place of the named volume must be writable by the image's
+`nonroot` user.
+
+Exposing the container is yours to arrange. Anthropic must reach the webhook
+URL under the same terms as in Prerequisites: public `https://` on 443, a
+valid public CA certificate, no redirects, no reverse tunnels.
+
+Run one replica. A second process on the same local volume is safe, because a
+tick that cannot take the lease skips, but SQLite does not belong on a network
+filesystem. Losing the volume loses unflushed records, the watermarks and the
+tombstones, so a late reader can emit an invocation twice.
+
+`POST /tick` stays mounted. It is refused unless `SLASHID_TICK_PRINCIPAL` is
+set, and then the caller sends it as `Authorization: Bearer <value>`; the
+timer does not use it.
+
 ## Configuration
 
 All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
@@ -289,8 +321,9 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | --- | --- | --- |
 | `SLASHID_ENDPOINT` | no | `https://api.slashid.com` |
 | `SLASHID_PUSH_TOKEN` | yes | — |
-| `SLASHID_PLATFORM` | no | `gcp` (the only one today) |
-| `SLASHID_PROJECT_ID` | yes | — |
+| `SLASHID_PLATFORM` | no | `local` (the Terraform module sets `gcp`) |
+| `SLASHID_PROJECT_ID` | with `gcp` | — |
+| `SLASHID_DATA_DIR` | no | user data directory (`/data` in the image) — local platform only |
 | `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |
 | `SLASHID_COMPLIANCE_KEY` | one capability required | — |
 | `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |

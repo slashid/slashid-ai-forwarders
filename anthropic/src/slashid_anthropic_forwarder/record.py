@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
@@ -199,6 +199,18 @@ def to_event(record: PendingRecord) -> AIInvocationObservedV1:
             "parsed_as": parsed_as(record.contributed),
         }
     )
+
+
+def event_time(record: PendingRecord) -> datetime | None:
+    """The stored event's timestamp, which is a wire string."""
+    raw = record.event.get("timestamp")
+    if not isinstance(raw, str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
 
 
 def from_document(address: str, data: dict[str, Any]) -> PendingRecord:
