@@ -1,6 +1,6 @@
 [project]
 name = "slashid-ai-forwarder-vertex"
-version = "0.1.11"
+version = "0.1.12"
 description = "GCP Cloud Run service forwarding Vertex AI generateContent request-response logs to SlashID NHI"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
