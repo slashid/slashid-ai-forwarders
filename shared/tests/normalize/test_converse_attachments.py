@@ -384,3 +384,30 @@ async def test_all_included_when_no_prior_assistant_turn() -> None:
 async def test_none_when_no_attachments() -> None:
     files = await _extract([{"role": "user", "content": [{"text": "just a text message"}]}])
     assert files == []
+
+
+async def test_every_attachment_is_marked_as_an_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_resolve(source: dict[str, Any], *, max_content_size: int) -> None:
+        if "found" in (source.get("s3Uri") or ""):
+            source["_resolved_byte_length"] = 3
+            source["_resolved_bytes"] = b"abc"
+
+    monkeypatch.setattr(converse_attachments, "_resolve_s3_attachment", fake_resolve)
+    inline = base64.b64encode(b"inline").decode()
+    files = await _extract(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"document": {"name": "a.txt", "format": "txt", "source": {"bytes": inline}}},
+                    {"image": {"format": "png", "source": {"bytes": inline}}},
+                    {"image": {"format": "png", "source": {"s3Uri": "s3://bucket/found.png"}}},
+                    {"image": {"format": "png", "source": {"s3Uri": "s3://bucket/missing.png"}}},
+                ],
+            }
+        ]
+    )
+    assert len(files) == 4
+    assert [f.provenance for f in files] == ["attachment"] * 4
