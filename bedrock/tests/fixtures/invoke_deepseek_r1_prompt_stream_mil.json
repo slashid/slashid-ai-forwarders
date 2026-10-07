@@ -1,0 +1,252 @@
+{
+ "timestamp": "2026-10-07T06:31:41Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "8d84f7d4-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.deepseek.r1-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "prompt": "Say hi in 3 words.",
+   "max_tokens": 60
+  },
+  "inputTokenCount": 7,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "text": " I",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "\u2019",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "ll start",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": ": I",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " love",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " you.\n",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": ">",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " ",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " 202",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "3",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "-10-",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "04",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "\nHi",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " in",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " 3\n",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "> ",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " 2023-",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "10-04",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "\nHi",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": ", I\u2019",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "m hungry",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": ".\n> ",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": " 202",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "3-",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "10-04",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "\nHi, I",
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "text": "\u2019m hungry",
+      "stop_reason": "length"
+     }
+    ],
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 7,
+     "outputTokenCount": 60,
+     "invocationLatency": 747,
+     "firstByteLatency": 227
+    }
+   }
+  ],
+  "outputTokenCount": 60
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

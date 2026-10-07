@@ -1,0 +1,301 @@
+{
+ "timestamp": "2026-10-07T06:31:41Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "4d5dfa50-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.deepseek.r1-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Say hi in 3 words."
+    }
+   ],
+   "max_tokens": 60
+  },
+  "inputTokenCount": 12,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": "Okay"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": ", the user wants"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " me to say \""
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": "hi\" in three"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " words. Let me"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " think about"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " how to approach this"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": ".\n\nFirst,"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " \""
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": "hi\" itself"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " is one"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " word. If"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " I need three"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " words, maybe I"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " can expand it into"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " a phrase"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": ". Maybe"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " something like \"Hi"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " there,"
+      },
+      "stop_reason": null
+     }
+    ]
+   },
+   {
+    "choices": [
+     {
+      "index": 0,
+      "message": {
+       "role": "assistant",
+       "content": null,
+       "reasoning_content": " friend!\" That"
+      },
+      "stop_reason": "length"
+     }
+    ],
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 12,
+     "outputTokenCount": 60,
+     "invocationLatency": 551,
+     "firstByteLatency": 248
+    }
+   }
+  ],
+  "outputTokenCount": 60
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

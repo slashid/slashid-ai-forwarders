@@ -1,0 +1,61 @@
+{
+ "timestamp": "2026-10-07T06:33:41Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "fab79dc7-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.mistral.pixtral-large-2502-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Say hi in 3 words."
+    }
+   ],
+   "max_tokens": 60
+  },
+  "inputTokenCount": 10
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "id": "d1a024f5-b4f8-4191-8d9a-7c591eb8dee3",
+   "object": "chat.completion",
+   "created": 1791354821,
+   "model": "pixtral-large-2502",
+   "choices": [
+    {
+     "index": 0,
+     "message": {
+      "role": "assistant",
+      "tool_calls": null,
+      "index": null,
+      "tool_call_id": null,
+      "content": "Hi there!",
+      "audio": null,
+      "metadata": null
+     },
+     "finish_reason": "stop",
+     "logprobs": null,
+     "context_logits": null,
+     "generation_logits": null
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 10,
+    "total_tokens": 14,
+    "completion_tokens": 4,
+    "request_count": null
+   }
+  },
+  "outputTokenCount": 4
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

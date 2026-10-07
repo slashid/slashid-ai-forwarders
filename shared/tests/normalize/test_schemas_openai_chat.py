@@ -253,3 +253,18 @@ def test_reasoning_content_field_is_read_and_accumulated() -> None:
     content = streamed.choices[0].message.content
     assert isinstance(content, str)
     assert content.startswith("Hi there")
+
+
+def test_explicit_null_list_fields_are_tolerated() -> None:
+    record = _load("invoke_pixtral_chat_mil.json")
+    response = ChatCompletion.model_validate(record["output"]["outputBodyJson"])
+    assert response.choices[0].message.content == "Hi there!"
+    assert response.choices[0].message.tool_calls == []
+
+
+def test_stream_chunks_with_message_fragments_and_stop_reason() -> None:
+    final = _accumulated("invoke_pixtral_chat_stream_mil.json")
+    assert final.choices[0].message.content == "Hi there!"
+    assert final.choices[0].finish_reason == "stop"
+    assert final.usage is not None
+    assert (final.usage.prompt_tokens, final.usage.completion_tokens) == (10, 4)

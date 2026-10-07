@@ -908,6 +908,8 @@ _CHAT_FIXTURES = [
     ("openai_chat_trivial_stream_mil.json", "openai-chat-stream"),
     ("openai_chat_tool_call_stream_mil.json", "openai-chat-stream"),
     ("openai_chat_thinking_high_stream_mil.json", "openai-chat-stream"),
+    ("invoke_pixtral_chat_mil.json", "openai-chat"),
+    ("invoke_pixtral_chat_stream_mil.json", "openai-chat-stream"),
 ]
 
 
@@ -994,3 +996,101 @@ async def test_openai_chat_inline_attachments_are_hashed(
 async def test_openai_chat_without_attachments_reports_no_files() -> None:
     normalized = await normalize_record(_fixture("openai_chat_trivial_mil.json"), config=_CONFIG)
     assert normalized.accessed_files == []
+
+
+@pytest.mark.parametrize(
+    ("fixture", "operation"),
+    [
+        ("invoke_pixtral_chat_mil.json", "InvokeModel"),
+        ("invoke_pixtral_chat_stream_mil.json", "InvokeModelWithResponseStream"),
+    ],
+)
+async def test_invoke_model_chat_bodies_carry_the_answer(fixture: str, operation: str) -> None:
+    record = _fixture(fixture)
+    assert record["operation"] == operation
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert normalized.output.message is not None
+    assert normalized.output.stop_reason == "end_turn"
+    assert [b.text for b in normalized.output.message.content] == ["Hi there!"]
+
+
+# --------------------------------------------------------------------------
+# Llama native
+# --------------------------------------------------------------------------
+
+_LLAMA_FIXTURES = [
+    ("invoke_llama_native_mil.json", "llama"),
+    ("invoke_llama_native_stream_mil.json", "llama-stream"),
+]
+
+
+@pytest.mark.parametrize("fixture,expected", _LLAMA_FIXTURES)
+async def test_llama_sets_parsed_as_and_carries_the_answer(fixture: str, expected: str) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == expected
+    assert normalized.output.message is not None
+    assert [b.text for b in normalized.output.message.content] == ["Hello to you."]
+    assert normalized.output.stop_reason == "end_turn"
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _LLAMA_FIXTURES])
+def test_llama_never_matches_earlier_formats(fixture: str) -> None:
+    record = _fixture(fixture)
+    for fmt in _FORMATS:
+        if fmt.name.startswith("llama"):
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(record["input"]["inputBodyJson"])
+            fmt.response_adapter.validate_python(record["output"]["outputBodyJson"])
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _CHAT_FIXTURES] + ["openai_responses_mil.json"])
+async def test_other_formats_are_not_taken_for_llama(fixture: str) -> None:
+    record = _fixture(fixture)
+    await normalize_record(record, config=_CONFIG)
+    assert not record["_parsed_as"].startswith("llama")
+
+
+# --------------------------------------------------------------------------
+# DeepSeek R1 native
+# --------------------------------------------------------------------------
+
+_DEEPSEEK_FIXTURES = [
+    ("invoke_deepseek_r1_chat_mil.json", "deepseek"),
+    ("invoke_deepseek_r1_prompt_mil.json", "deepseek"),
+    ("invoke_deepseek_r1_chat_stream_mil.json", "deepseek-stream"),
+    ("invoke_deepseek_r1_prompt_stream_mil.json", "deepseek-stream"),
+]
+
+
+@pytest.mark.parametrize("fixture,expected", _DEEPSEEK_FIXTURES)
+async def test_deepseek_sets_parsed_as_and_carries_the_answer(fixture: str, expected: str) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == expected
+    assert normalized.output.message is not None
+    assert normalized.output.stop_reason == "max_tokens"
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _DEEPSEEK_FIXTURES])
+def test_deepseek_never_matches_earlier_formats(fixture: str) -> None:
+    record = _fixture(fixture)
+    for fmt in _FORMATS:
+        if fmt.name.startswith("deepseek"):
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(record["input"]["inputBodyJson"])
+            fmt.response_adapter.validate_python(record["output"]["outputBodyJson"])
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [f for f, _ in _CHAT_FIXTURES]
+    + [f for f, _ in _LLAMA_FIXTURES]
+    + ["openai_responses_mil.json"],
+)
+async def test_other_formats_are_not_taken_for_deepseek(fixture: str) -> None:
+    record = _fixture(fixture)
+    await normalize_record(record, config=_CONFIG)
+    assert not record["_parsed_as"].startswith("deepseek")

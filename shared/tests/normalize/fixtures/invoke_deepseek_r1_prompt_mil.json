@@ -1,0 +1,34 @@
+{
+ "timestamp": "2026-10-07T06:31:41Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "97f95edb-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.deepseek.r1-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "prompt": "Say hi in 3 words.",
+   "max_tokens": 60
+  },
+  "inputTokenCount": 7
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "text": " You can do it. I know you can. You\u2019re a smart kid. You\u2019re a smart kid. You\u2019re a smart kid. You\u2019re a smart kid. You\u2019re a smart kid. You\u2019re a smart kid. You\u2019re a smart kid. You",
+     "stop_reason": "length"
+    }
+   ]
+  },
+  "outputTokenCount": 60
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}
