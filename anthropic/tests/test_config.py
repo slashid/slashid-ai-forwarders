@@ -185,3 +185,29 @@ def test_tombstone_ttl_must_outlive_join_wait_poll_lag_and_one_tick(
         Config()
     _env(monkeypatch, SLASHID_TICK_INTERVAL_SECONDS="3600", SLASHID_TOMBSTONE_TTL_SECONDS="10800")
     assert Config().tombstone_ttl_seconds == 10800
+
+
+def test_a_local_platform_needs_no_project_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_PLATFORM="local")
+    monkeypatch.delenv("SLASHID_PROJECT_ID")
+    config = Config()
+    assert config.platform == "local"
+    assert config.project_id is None
+    assert config.data_dir is None
+
+
+def test_gcp_refuses_an_empty_project_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_PROJECT_ID="")
+    with pytest.raises(ValidationError, match="SLASHID_PROJECT_ID"):
+        Config()
+
+
+def test_an_empty_data_dir_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_PLATFORM="local", SLASHID_DATA_DIR="")
+    assert Config().data_dir is None
+
+
+def test_an_unknown_platform_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch, SLASHID_PLATFORM="azure")
+    with pytest.raises(ValidationError):
+        Config()

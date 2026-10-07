@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import cache
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import field_validator, model_validator
 from slashid_ai_forwarder_core.config_base import BaseConfig
 
 
@@ -97,11 +97,12 @@ class Config(BaseConfig):
     soft_join_window_seconds: int = 15
     # The cloud the backends are built on; ``platform.py`` switches
     # on it. The fields below it are that cloud's.
-    platform: Literal["gcp"] = "gcp"
-    # The project holding Firestore; vertex/ has the same field. Required:
-    # this chunk builds the client, and ``project=None`` is a client that
-    # talks to nothing.
-    project_id: str = Field(..., min_length=1)
+    platform: Literal["gcp", "local"] = "gcp"
+    # The project holding Firestore; required on gcp, unused locally.
+    project_id: str | None = None
+    # Where the local platform keeps its SQLite file and blobs. Unset, the
+    # user data directory for this application.
+    data_dir: str | None = None
     # The named database, as vertex/ names its own slashid-vertex rather
     # than using (default).
     database: str = "slashid-anthropic"
@@ -149,6 +150,7 @@ class Config(BaseConfig):
         "organization_uuid",
         "capture_bucket",
         "capture_deny_marker",
+        "data_dir",
         mode="before",
     )
     @classmethod
@@ -180,6 +182,12 @@ class Config(BaseConfig):
         counterpart and is already defined above.
         """
         return bool(self.signing_secrets)
+
+    @model_validator(mode="after")
+    def _check_platform(self) -> Config:
+        if self.platform == "gcp" and not self.project_id:
+            raise ValueError("SLASHID_PROJECT_ID is required on the gcp platform")
+        return self
 
     @model_validator(mode="after")
     def _check_capabilities(self) -> Config:
