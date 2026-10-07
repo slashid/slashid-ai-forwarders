@@ -8,7 +8,12 @@ Each hook runs `slashid-ai-forwarder-codex hook`, a thin client (standard librar
 
 MDM, as administrator:
 
-1. Install uv, then `uv tool install --find-links <dir> slashid-ai-forwarder-codex` with `UV_TOOL_DIR=/opt/slashid/codex/tools` and `UV_TOOL_BIN_DIR=/opt/slashid/codex/bin` (Windows `C:\ProgramData\SlashID\Codex\tools` and `…\bin`), so users cannot modify it. `<dir>` holds two wheels, `slashid_ai_forwarder_codex` and the `slashid_ai_forwarder_core` it depends on (neither is on an index yet); build them with `uv build --package slashid-ai-forwarder-codex --wheel` and `uv build --package slashid-ai-forwarder-core --wheel`, one package per call. Do not install from a checkout (`uv tool install ./codex`): uv links the core into the checkout as an editable install, and the daemon stops starting once the checkout moves.
+1. Install the package where users cannot modify it. It is one wheel on PyPI (also attached to each GitHub release) that carries the shared core inside it. Any of:
+   - **uv**, which needs no Python on the device: `UV_TOOL_DIR=/opt/slashid/codex/tools UV_TOOL_BIN_DIR=/opt/slashid/codex/bin uv tool install slashid-ai-forwarder-codex`.
+   - **pipx**, with Python 3.12 or later: `PIPX_HOME=/opt/slashid/codex/pipx PIPX_BIN_DIR=/opt/slashid/codex/bin pipx install slashid-ai-forwarder-codex`.
+   - **pip**, into a virtual environment: `python3.12 -m venv /opt/slashid/codex/venv && /opt/slashid/codex/venv/bin/pip install slashid-ai-forwarder-codex`, then link `venv/bin/slashid-ai-forwarder-codex` into `/opt/slashid/codex/bin`.
+
+   On Windows the directories are `C:\ProgramData\SlashID\Codex\tools` (or `pipx`, `venv`) and `…\bin`. `requirements.toml` expects the command in the `bin` directory.
 2. Install the config (`deploy/config.example.toml`) at `/opt/slashid/codex/config.toml` and the token file it names, both read-only to users.
 3. Install `deploy/requirements.toml` as Codex's managed requirements.
 

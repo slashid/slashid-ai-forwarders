@@ -1,0 +1,103 @@
+name: Release Codex
+
+on:
+  push:
+    tags: ["codex-v*"]
+  # A manual run builds and checks the wheel and publishes nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Resolve and verify version
+        id: version
+        # The tag triggers the release; codex/pyproject.toml is the source of
+        # truth for the number. Refuse on mismatch so a fat-fingered tag
+        # cannot publish a wrong-numbered wheel, which PyPI never lets you
+        # replace.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#codex-v}"
+          FILE_VERSION="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("codex/pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME expects version $TAG_VERSION but codex/pyproject.toml has $FILE_VERSION"
+            exit 1
+          fi
+          echo "version=$FILE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build the wheel
+        # One wheel: codex/hatch_build.py puts the core inside it.
+        run: uv build --package slashid-ai-forwarder-codex --wheel --out-dir dist
+
+      - name: Check the wheel on a clean interpreter
+        # The oldest Python the package supports, with nothing from the
+        # checkout on the path.
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/smoke"
+          uv pip install --python "$RUNNER_TEMP/smoke/bin/python" dist/*.whl
+          "$RUNNER_TEMP/smoke/bin/slashid-ai-forwarder-codex" --help
+          "$RUNNER_TEMP/smoke/bin/python" - <<EOF
+          import importlib.metadata as m
+          import slashid_ai_forwarder_core
+          import slashid_codex
+          assert m.version("slashid-ai-forwarder-codex") == "${{ steps.version.outputs.version }}"
+          assert "site-packages" in slashid_ai_forwarder_core.__file__, slashid_ai_forwarder_core.__file__
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # The PyPI trusted publisher is bound to this workflow and this environment.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Determine pre-release
+        id: prerelease
+        run: |
+          if [[ "${{ needs.build.outputs.version }}" =~ (a|b|rc)[0-9]+$|\.dev[0-9]+$ ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.whl
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.value }}
+          body: |
+            PyPI: `pip install slashid-ai-forwarder-codex==${{ needs.build.outputs.version }}`

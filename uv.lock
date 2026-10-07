@@ -1751,27 +1751,39 @@ name = "slashid-ai-forwarder-codex"
 version = "0.1.0"
 source = { editable = "codex" }
 dependencies = [
+    { name = "aiosqlite" },
     { name = "certifi" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "platformdirs" },
     { name = "pydantic" },
+    { name = "pydantic-extra-types" },
     { name = "pydantic-settings" },
-    { name = "slashid-ai-forwarder-core", extra = ["local"] },
+    { name = "tenacity" },
     { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "slashid-ai-forwarder-core", extra = ["local"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20" },
     { name = "certifi" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "platformdirs", specifier = ">=4.2" },
     { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-extra-types", specifier = ">=2.10" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "slashid-ai-forwarder-core", extras = ["local"], editable = "shared" },
+    { name = "tenacity", specifier = ">=9.0" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "slashid-ai-forwarder-core", extras = ["local"], editable = "shared" }]
 
 [[package]]
 name = "slashid-ai-forwarder-core"
