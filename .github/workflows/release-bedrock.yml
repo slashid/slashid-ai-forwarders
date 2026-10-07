@@ -9,7 +9,7 @@ permissions:
 
 env:
   # Lambda runtime target. Must match the Runtime in bedrock/deploy/cloudformation/forwarder.yaml.
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.12"
   # x86_64 is Lambda's default architecture; pinning the wheel tag here means
   # `uv pip install` picks the right pydantic-core / httpx native binaries.
   # Format is uv's `--python-platform` syntax, not the pip wheel-tag syntax.

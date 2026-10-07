@@ -2,7 +2,7 @@
 name = "slashid-bedrock-forwarder"
 version = "0.1.5"
 description = "AWS Lambda forwarding Bedrock Model Invocation Logging events to SlashID NHI"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
@@ -21,7 +21,7 @@ packages = ["src/slashid_bedrock_forwarder"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
