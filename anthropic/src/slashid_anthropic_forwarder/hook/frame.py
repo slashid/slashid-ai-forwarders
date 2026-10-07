@@ -36,13 +36,14 @@ class Source(_Lenient):
     application: str | None = None
 
 
-class PromptFrame(_Lenient):
+class Frame(_Lenient):
+    """What every hook delivery carries, whichever event it is."""
+
     type: str
     request_id: str
     tenant_id: str | None = None
     actor: Actor = Field(default_factory=lambda: Actor(type="unknown"))
     source: Source = Field(default_factory=Source)
-    messages: list[AnthropicRequestMessage] = Field(default_factory=list)
     session_id: str | None = None
     model: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -52,6 +53,55 @@ class PromptFrame(_Lenient):
         circuit breaker's recovery checks. Carries no user content, so it
         bypasses the checks and writes no record."""
         return self.source.application == "config-test"
+
+
+class PromptFrame(Frame):
+    messages: list[AnthropicRequestMessage] = Field(default_factory=list)
+
+
+class ToolInfo(_Lenient):
+    """Who provides a tool. Only ``type`` is reliable: new kinds appear."""
+
+    type: str = "client"
+    toolset_name: str | None = None
+
+
+class ToolCallBlock(_Lenient):
+    type: str
+    id: str | None = None
+    tool_name: str | None = None
+    tool_info: ToolInfo = Field(default_factory=ToolInfo)
+
+
+class ToolUse(_Lenient):
+    """A ``tool_use`` block that names its call and its tool."""
+
+    id: str
+    tool_name: str
+    tool_info: ToolInfo
+
+
+class ToolCallMessage(_Lenient):
+    role: str
+    content: list[ToolCallBlock] | str = ""
+
+
+class ToolCallFrame(Frame):
+    """One verdict covers every call in the response: ``messages`` holds only
+    the assistant message that asked for them, text blocks and one
+    ``tool_use`` per call."""
+
+    messages: list[ToolCallMessage] = Field(default_factory=list)
+
+    def tool_uses(self) -> list[ToolUse]:
+        """The calls of the last message; the protocol may add earlier ones."""
+        if not self.messages or isinstance(self.messages[-1].content, str):
+            return []
+        return [
+            ToolUse(id=block.id, tool_name=block.tool_name, tool_info=block.tool_info)
+            for block in self.messages[-1].content
+            if block.type == "tool_use" and block.id and block.tool_name
+        ]
 
 
 @dataclass(frozen=True)

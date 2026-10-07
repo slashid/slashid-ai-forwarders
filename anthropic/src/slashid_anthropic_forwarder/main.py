@@ -30,8 +30,9 @@ from .compliance.readers import run_readers
 from .config import Config, load_config
 from .hook.capture import capture_frame
 from .hook.checks import ALLOW, Decision
-from .hook.frame import PromptFrame
+from .hook.frame import Frame, PromptFrame, ToolCallFrame
 from .hook.signature import verify
+from .hook.toolcall import tool_call_event
 from .hook.verdict import decide
 from .pending import TICK_LEASE, flush_due, unanswered_round, write_from_frame
 from .platform import Backends, open_backends
@@ -56,9 +57,12 @@ async def _write_safely(**kwargs: Any) -> None:
         log.exception("pending write failed for %s", kwargs.get("webhook_id"))
 
 
-def _parse(body: bytes) -> PromptFrame | None:
+def _parse(body: bytes) -> PromptFrame | ToolCallFrame | None:
     try:
-        return PromptFrame.model_validate(json.loads(body))
+        raw = json.loads(body)
+        if Frame.model_validate(raw).type == "tool_call":
+            return ToolCallFrame.model_validate(raw)
+        return PromptFrame.model_validate(raw)
     except Exception:
         return None
 
@@ -193,6 +197,18 @@ def create_app(
             # shape we cannot parse is answered, not rejected.
             log.warning("frame %s did not parse; allowing", webhook_id)
             return JSONResponse(ALLOW.to_wire(), background=background)
+        if isinstance(frame, ToolCallFrame):
+            # One verdict for every call in the response, judged before any
+            # runs. Not an invocation: it writes no record.
+            decision = await decide(
+                frame,
+                raw_body=body,
+                headers=headers,
+                tail_event=tool_call_event(frame, signed_at=_signed_at(headers)),
+                config=config,
+                client=http(),
+            )
+            return JSONResponse(decision.answered.to_wire(), background=background)
         if frame.type != "prompt" or frame.is_connection_test():
             # No invocation, so no record: a pending one would have no
             # successor frame, and the flush would later push a console
