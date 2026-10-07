@@ -1,0 +1,108 @@
+{
+ "timestamp": "2026-10-07T07:54:38Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "694fecda-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "What is the weather in Lisbon? Use the tool."
+      }
+     ]
+    }
+   ],
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   },
+   "inferenceConfig": {
+    "maxTokens": 300
+   }
+  },
+  "inputTokenCount": 437
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "content": [
+      {
+       "text": "<thinking>The User has asked for the weather in Lisbon. I have the 'get_weather' tool available to me, which will allow me to retrieve this information.</thinking>\n"
+      },
+      {
+       "toolUse": {
+        "name": "get_weather",
+        "toolUseId": "805eff2b-2dd4-4385-b7a0-efe50b62227a",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      }
+     ],
+     "role": "assistant"
+    }
+   },
+   "stopReason": "tool_use",
+   "usage": {
+    "inputTokens": 437,
+    "outputTokens": 55,
+    "totalTokens": 492,
+    "cacheReadInputTokenCount": 0,
+    "cacheWriteInputTokenCount": 0
+   }
+  },
+  "outputTokenCount": 55
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

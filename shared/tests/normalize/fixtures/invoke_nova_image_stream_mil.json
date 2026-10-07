@@ -1,0 +1,1351 @@
+{
+ "timestamp": "2026-10-07T07:54:40Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "34c8e521-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Name the two colours, left to right."
+      },
+      {
+       "image": {
+        "format": "png",
+        "source": {
+         "bytes": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAUElEQVR4nO3PsQkAAAzDsPz/dHpFliLwbFCaTBvvu94DAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPAAcuOzw4j9XSHcAAAAASUVORK5CYII="
+        }
+       }
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 200
+   }
+  },
+  "inputTokenCount": 539,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "messageStart": {
+     "role": "assistant"
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "The"
+     },
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " two"
+     },
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colours"
+     },
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " in"
+     },
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " image"
+     },
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 6
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 6
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " from"
+     },
+     "contentBlockIndex": 7
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 7
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " left"
+     },
+     "contentBlockIndex": 8
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 8
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " to"
+     },
+     "contentBlockIndex": 9
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 9
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " right"
+     },
+     "contentBlockIndex": 10
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 10
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 11
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 11
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " are"
+     },
+     "contentBlockIndex": 12
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 12
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " red"
+     },
+     "contentBlockIndex": 13
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 13
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " and"
+     },
+     "contentBlockIndex": 14
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 14
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " blue"
+     },
+     "contentBlockIndex": 15
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 15
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 16
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 16
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " The"
+     },
+     "contentBlockIndex": 17
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 17
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " red"
+     },
+     "contentBlockIndex": 18
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 18
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colour"
+     },
+     "contentBlockIndex": 19
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 19
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " is"
+     },
+     "contentBlockIndex": 20
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 20
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " on"
+     },
+     "contentBlockIndex": 21
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 21
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 22
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 22
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " left"
+     },
+     "contentBlockIndex": 23
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 23
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " side"
+     },
+     "contentBlockIndex": 24
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 24
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " of"
+     },
+     "contentBlockIndex": 25
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 25
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 26
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 26
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " image"
+     },
+     "contentBlockIndex": 27
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 27
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 28
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 28
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " while"
+     },
+     "contentBlockIndex": 29
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 29
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 30
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 30
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " blue"
+     },
+     "contentBlockIndex": 31
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 31
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colour"
+     },
+     "contentBlockIndex": 32
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 32
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " is"
+     },
+     "contentBlockIndex": 33
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 33
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " on"
+     },
+     "contentBlockIndex": 34
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 34
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 35
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 35
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " right"
+     },
+     "contentBlockIndex": 36
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 36
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " side"
+     },
+     "contentBlockIndex": 37
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 37
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 38
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 38
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " Both"
+     },
+     "contentBlockIndex": 39
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 39
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colours"
+     },
+     "contentBlockIndex": 40
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 40
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " are"
+     },
+     "contentBlockIndex": 41
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 41
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " solid"
+     },
+     "contentBlockIndex": 42
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 42
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " and"
+     },
+     "contentBlockIndex": 43
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 43
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " cover"
+     },
+     "contentBlockIndex": 44
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 44
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 45
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 45
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " entire"
+     },
+     "contentBlockIndex": 46
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 46
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " width"
+     },
+     "contentBlockIndex": 47
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 47
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " of"
+     },
+     "contentBlockIndex": 48
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 48
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 49
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 49
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " image"
+     },
+     "contentBlockIndex": 50
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 50
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 51
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 51
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " There"
+     },
+     "contentBlockIndex": 52
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 52
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " is"
+     },
+     "contentBlockIndex": 53
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 53
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " a"
+     },
+     "contentBlockIndex": 54
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 54
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " clear"
+     },
+     "contentBlockIndex": 55
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 55
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " and"
+     },
+     "contentBlockIndex": 56
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 56
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " distinct"
+     },
+     "contentBlockIndex": 57
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 57
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " line"
+     },
+     "contentBlockIndex": 58
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 58
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " separating"
+     },
+     "contentBlockIndex": 59
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 59
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 60
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 60
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " two"
+     },
+     "contentBlockIndex": 61
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 61
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colours"
+     },
+     "contentBlockIndex": 62
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 62
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 63
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 63
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " indicating"
+     },
+     "contentBlockIndex": 64
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 64
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " that"
+     },
+     "contentBlockIndex": 65
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 65
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " they"
+     },
+     "contentBlockIndex": 66
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 66
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " are"
+     },
+     "contentBlockIndex": 67
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 67
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " not"
+     },
+     "contentBlockIndex": 68
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 68
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " blended"
+     },
+     "contentBlockIndex": 69
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 69
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " or"
+     },
+     "contentBlockIndex": 70
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 70
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " mixed"
+     },
+     "contentBlockIndex": 71
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 71
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " together"
+     },
+     "contentBlockIndex": 72
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 72
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 73
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 73
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " The"
+     },
+     "contentBlockIndex": 74
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 74
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " red"
+     },
+     "contentBlockIndex": 75
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 75
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colour"
+     },
+     "contentBlockIndex": 76
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 76
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " appears"
+     },
+     "contentBlockIndex": 77
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 77
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " to"
+     },
+     "contentBlockIndex": 78
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 78
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " be"
+     },
+     "contentBlockIndex": 79
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 79
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " a"
+     },
+     "contentBlockIndex": 80
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 80
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " deep"
+     },
+     "contentBlockIndex": 81
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 81
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 82
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 82
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " rich"
+     },
+     "contentBlockIndex": 83
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 83
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " shade"
+     },
+     "contentBlockIndex": 84
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 84
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 85
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 85
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " while"
+     },
+     "contentBlockIndex": 86
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 86
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 87
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 87
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " blue"
+     },
+     "contentBlockIndex": 88
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 88
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " colour"
+     },
+     "contentBlockIndex": 89
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 89
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " is"
+     },
+     "contentBlockIndex": 90
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 90
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " a"
+     },
+     "contentBlockIndex": 91
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 91
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " bright"
+     },
+     "contentBlockIndex": 92
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 92
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " and"
+     },
+     "contentBlockIndex": 93
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 93
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " vibrant"
+     },
+     "contentBlockIndex": 94
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 94
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " hue"
+     },
+     "contentBlockIndex": 95
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 95
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 96
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 96
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ""
+     },
+     "contentBlockIndex": 97
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 97
+    }
+   },
+   {
+    "messageStop": {
+     "stopReason": "end_turn"
+    }
+   },
+   {
+    "metadata": {
+     "usage": {
+      "inputTokens": 539,
+      "outputTokens": 98,
+      "cacheReadInputTokenCount": 0,
+      "cacheWriteInputTokenCount": 0
+     },
+     "metrics": {},
+     "trace": {}
+    },
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 0,
+     "outputTokenCount": 0,
+     "invocationLatency": 1344,
+     "firstByteLatency": 957
+    }
+   }
+  ],
+  "outputTokenCount": 98
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

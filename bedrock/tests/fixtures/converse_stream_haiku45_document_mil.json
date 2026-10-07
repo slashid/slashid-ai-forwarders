@@ -1,0 +1,69 @@
+{
+ "timestamp": "2026-10-07T07:51:59Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "b0168751-0000-4000-8000-000000000000",
+ "operation": "ConverseStream",
+ "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "What is the secret word in this document?"
+      },
+      {
+       "document": {
+        "format": "pdf",
+        "name": "secret",
+        "source": {
+         "s3Uri": "s3://example-mil-bucket/large-volume/AWSLogs/123456789012/BedrockModelInvocationLogs/us-east-2/2026/10/07/07/data/e8fe9ac9-0c1d-4d4b-98de-96f534c376f1_input_media_01.pdf"
+        }
+       }
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 200
+   }
+  },
+  "inputTokenCount": 1645,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "text": "According to the document, the secret word is **PIN**."
+      }
+     ]
+    }
+   },
+   "stopReason": "end_turn",
+   "metrics": {
+    "latencyMs": 576
+   },
+   "usage": {
+    "inputTokens": 1645,
+    "outputTokens": 15,
+    "totalTokens": 1660
+   }
+  },
+  "outputTokenCount": 15
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

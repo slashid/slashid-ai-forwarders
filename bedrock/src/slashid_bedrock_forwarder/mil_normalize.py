@@ -43,10 +43,14 @@ from slashid_ai_forwarder_core.normalize.anthropic.schema import (
 from slashid_ai_forwarder_core.normalize.converse.normalize import (
     to_normalized_invocation as converse_to_normalized_invocation,
 )
+from slashid_ai_forwarder_core.normalize.converse.normalize import (
+    to_stream_normalized_invocation as converse_stream_to_normalized_invocation,
+)
 from slashid_ai_forwarder_core.normalize.converse.schema import (
     ConverseRequestBody,
     ConverseResponse,
 )
+from slashid_ai_forwarder_core.normalize.converse.stream import ConverseStream
 from slashid_ai_forwarder_core.normalize.deepseek.normalize import (
     deepseek_stream_to_normalized_invocation,
     deepseek_to_normalized_invocation,
@@ -207,6 +211,12 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
         request_adapter=TypeAdapter(ConverseRequestBody),
         response_adapter=TypeAdapter(ConverseResponse),
         to_invocation=converse_to_normalized_invocation,
+    ),
+    _Format(
+        name="bedrock-converse-stream",
+        request_adapter=TypeAdapter(ConverseRequestBody),
+        response_adapter=TypeAdapter(ConverseStream),
+        to_invocation=converse_stream_to_normalized_invocation,
     ),
     _Format(
         name="openai-responses",

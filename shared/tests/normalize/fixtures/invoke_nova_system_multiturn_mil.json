@@ -1,0 +1,78 @@
+{
+ "timestamp": "2026-10-07T07:54:38Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "fcad0bb9-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "system": [
+    {
+     "text": "Be terse."
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Name a colour."
+      }
+     ]
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "text": "Blue."
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Another."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 200
+   }
+  },
+  "inputTokenCount": 16
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "content": [
+      {
+       "text": "Green."
+      }
+     ],
+     "role": "assistant"
+    }
+   },
+   "stopReason": "end_turn",
+   "usage": {
+    "inputTokens": 16,
+    "outputTokens": 3,
+    "totalTokens": 19,
+    "cacheReadInputTokenCount": 0,
+    "cacheWriteInputTokenCount": 0
+   }
+  },
+  "outputTokenCount": 3
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

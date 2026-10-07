@@ -1,0 +1,826 @@
+{
+ "timestamp": "2026-10-07T07:54:38Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "d9e83a20-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "What is the weather in Lisbon? Use the tool."
+      }
+     ]
+    }
+   ],
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   },
+   "inferenceConfig": {
+    "maxTokens": 300
+   }
+  },
+  "inputTokenCount": 437,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "messageStart": {
+     "role": "assistant"
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "<thinking"
+     },
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ">"
+     },
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "The"
+     },
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " User"
+     },
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " wants"
+     },
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " to"
+     },
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " know"
+     },
+     "contentBlockIndex": 6
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 6
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 7
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 7
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " weather"
+     },
+     "contentBlockIndex": 8
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 8
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " in"
+     },
+     "contentBlockIndex": 9
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 9
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " Lisbon"
+     },
+     "contentBlockIndex": 10
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 10
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 11
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 11
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " I"
+     },
+     "contentBlockIndex": 12
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 12
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " can"
+     },
+     "contentBlockIndex": 13
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 13
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " use"
+     },
+     "contentBlockIndex": 14
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 14
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 15
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 15
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " get"
+     },
+     "contentBlockIndex": 16
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 16
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "_"
+     },
+     "contentBlockIndex": 17
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 17
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "weather"
+     },
+     "contentBlockIndex": 18
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 18
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " tool"
+     },
+     "contentBlockIndex": 19
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 19
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " for"
+     },
+     "contentBlockIndex": 20
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 20
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " this"
+     },
+     "contentBlockIndex": 21
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 21
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 22
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 22
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " No"
+     },
+     "contentBlockIndex": 23
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 23
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " previous"
+     },
+     "contentBlockIndex": 24
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 24
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " tool"
+     },
+     "contentBlockIndex": 25
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 25
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " results"
+     },
+     "contentBlockIndex": 26
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 26
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " are"
+     },
+     "contentBlockIndex": 27
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 27
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " available"
+     },
+     "contentBlockIndex": 28
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 28
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 29
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 29
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " I"
+     },
+     "contentBlockIndex": 30
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 30
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " need"
+     },
+     "contentBlockIndex": 31
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 31
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " to"
+     },
+     "contentBlockIndex": 32
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 32
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " call"
+     },
+     "contentBlockIndex": 33
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 33
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 34
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 34
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " get"
+     },
+     "contentBlockIndex": 35
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 35
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "_"
+     },
+     "contentBlockIndex": 36
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 36
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "weather"
+     },
+     "contentBlockIndex": 37
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 37
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " tool"
+     },
+     "contentBlockIndex": 38
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 38
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " with"
+     },
+     "contentBlockIndex": 39
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 39
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 40
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 40
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " city"
+     },
+     "contentBlockIndex": 41
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 41
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " parameter"
+     },
+     "contentBlockIndex": 42
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 42
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " set"
+     },
+     "contentBlockIndex": 43
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 43
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " to"
+     },
+     "contentBlockIndex": 44
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 44
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " \""
+     },
+     "contentBlockIndex": 45
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 45
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "Li"
+     },
+     "contentBlockIndex": 46
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 46
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "s"
+     },
+     "contentBlockIndex": 47
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 47
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "bon"
+     },
+     "contentBlockIndex": 48
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 48
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "\"."
+     },
+     "contentBlockIndex": 49
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 49
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "</"
+     },
+     "contentBlockIndex": 50
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 50
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "thinking"
+     },
+     "contentBlockIndex": 51
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 51
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ">\n"
+     },
+     "contentBlockIndex": 52
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 52
+    }
+   },
+   {
+    "contentBlockStart": {
+     "start": {
+      "toolUse": {
+       "toolUseId": "c53348b5-c124-41d1-b183-8c430ded058c",
+       "name": "get_weather"
+      }
+     },
+     "contentBlockIndex": 53
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "toolUse": {
+       "input": "{\"city\":\"Lisbon\"}"
+      }
+     },
+     "contentBlockIndex": 53
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 53
+    }
+   },
+   {
+    "messageStop": {
+     "stopReason": "tool_use"
+    }
+   },
+   {
+    "metadata": {
+     "usage": {
+      "inputTokens": 437,
+      "outputTokens": 72,
+      "cacheReadInputTokenCount": 0,
+      "cacheWriteInputTokenCount": 0
+     },
+     "metrics": {},
+     "trace": {}
+    },
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 0,
+     "outputTokenCount": 0,
+     "invocationLatency": 698,
+     "firstByteLatency": 303
+    }
+   }
+  ],
+  "outputTokenCount": 72
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

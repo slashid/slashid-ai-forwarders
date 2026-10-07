@@ -1,0 +1,699 @@
+{
+ "timestamp": "2026-10-07T07:54:39Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "48a79d68-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Weather in Lisbon? Use the tool."
+      }
+     ]
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "toolUse": {
+        "toolUseId": "tool_1",
+        "name": "get_weather",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "toolResult": {
+        "toolUseId": "tool_1",
+        "content": [
+         {
+          "text": "22C sunny"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   },
+   "inferenceConfig": {
+    "maxTokens": 300
+   }
+  },
+  "inputTokenCount": 483,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "messageStart": {
+     "role": "assistant"
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "<thinking"
+     },
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ">"
+     },
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " The"
+     },
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " tool"
+     },
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " has"
+     },
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " returned"
+     },
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " the"
+     },
+     "contentBlockIndex": 6
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 6
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " weather"
+     },
+     "contentBlockIndex": 7
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 7
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " in"
+     },
+     "contentBlockIndex": 8
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 8
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " Lisbon"
+     },
+     "contentBlockIndex": 9
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 9
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " as"
+     },
+     "contentBlockIndex": 10
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 10
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ""
+     },
+     "contentBlockIndex": 11
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 11
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " 2"
+     },
+     "contentBlockIndex": 12
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 12
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "2"
+     },
+     "contentBlockIndex": 13
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 13
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "C"
+     },
+     "contentBlockIndex": 14
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 14
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " with"
+     },
+     "contentBlockIndex": 15
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 15
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " sunny"
+     },
+     "contentBlockIndex": 16
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 16
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " conditions"
+     },
+     "contentBlockIndex": 17
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 17
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 18
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 18
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " </"
+     },
+     "contentBlockIndex": 19
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 19
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "thinking"
+     },
+     "contentBlockIndex": 20
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 20
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ">\n"
+     },
+     "contentBlockIndex": 21
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 21
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "<response"
+     },
+     "contentBlockIndex": 22
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 22
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ">"
+     },
+     "contentBlockIndex": 23
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 23
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " The"
+     },
+     "contentBlockIndex": 24
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 24
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " weather"
+     },
+     "contentBlockIndex": 25
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 25
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " in"
+     },
+     "contentBlockIndex": 26
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 26
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " Lisbon"
+     },
+     "contentBlockIndex": 27
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 27
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " is"
+     },
+     "contentBlockIndex": 28
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 28
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " currently"
+     },
+     "contentBlockIndex": 29
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 29
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ""
+     },
+     "contentBlockIndex": 30
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 30
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " 2"
+     },
+     "contentBlockIndex": 31
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 31
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "2"
+     },
+     "contentBlockIndex": 32
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 32
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " degrees"
+     },
+     "contentBlockIndex": 33
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 33
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " Celsius"
+     },
+     "contentBlockIndex": 34
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 34
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " with"
+     },
+     "contentBlockIndex": 35
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 35
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " sunny"
+     },
+     "contentBlockIndex": 36
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 36
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " conditions"
+     },
+     "contentBlockIndex": 37
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 37
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 38
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 38
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " </"
+     },
+     "contentBlockIndex": 39
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 39
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "response"
+     },
+     "contentBlockIndex": 40
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 40
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ">"
+     },
+     "contentBlockIndex": 41
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 41
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ""
+     },
+     "contentBlockIndex": 42
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 42
+    }
+   },
+   {
+    "messageStop": {
+     "stopReason": "end_turn"
+    }
+   },
+   {
+    "metadata": {
+     "usage": {
+      "inputTokens": 483,
+      "outputTokens": 45,
+      "cacheReadInputTokenCount": 0,
+      "cacheWriteInputTokenCount": 0
+     },
+     "metrics": {},
+     "trace": {}
+    },
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 0,
+     "outputTokenCount": 0,
+     "invocationLatency": 800,
+     "firstByteLatency": 547
+    }
+   }
+  ],
+  "outputTokenCount": 45
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

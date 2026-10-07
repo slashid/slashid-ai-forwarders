@@ -1,0 +1,57 @@
+{
+ "timestamp": "2026-10-07T07:54:39Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "398d6ea6-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Write a long story about a dragon."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 12
+   }
+  },
+  "inputTokenCount": 8
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "content": [
+      {
+       "text": "In a time long forgotten, when the world was still young"
+      }
+     ],
+     "role": "assistant"
+    }
+   },
+   "stopReason": "max_tokens",
+   "usage": {
+    "inputTokens": 8,
+    "outputTokens": 12,
+    "totalTokens": 20,
+    "cacheReadInputTokenCount": 0,
+    "cacheWriteInputTokenCount": 0
+   }
+  },
+  "outputTokenCount": 12
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

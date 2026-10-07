@@ -1,0 +1,74 @@
+{
+ "timestamp": "2026-10-07T07:51:59Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "4701befe-0000-4000-8000-000000000000",
+ "operation": "ConverseStream",
+ "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "A bat and ball cost $1.10; the bat costs $1 more. Ball price? Think step by step."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 2000
+   },
+   "additionalModelRequestFields": {
+    "thinking": {
+     "type": "enabled",
+     "budget_tokens": 1024
+    }
+   }
+  },
+  "inputTokenCount": 62,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "reasoningContent": {
+        "reasoningText": {
+         "text": "Let me set up this problem with variables.\n\nLet B = price of the ball\nLet b = price of the bat\n\nFrom the problem, I know:\n1) B + b = $1.10 (bat and ball together cost $1.10)\n2) b = B + $1 (the bat costs $1 more than the ball)\n\nNow I'll substitute equation 2 into equation 1:\nB + (B + $1) = $1.10\n2B + $1 = $1.10\n2B = $0.10\nB = $0.05\n\nSo the ball costs $0.05 (or 5 cents)\n\nLet me verify:\n- Ball: $0.05\n- Bat: $0.05 + $1.00 = $1.05\n- Total: $0.05 + $1.05 = $1.10 \u2713\n- Bat is $1 more than ball: $1.05 - $0.05 = $1.00 \u2713",
+         "signature": "Eu4FCoQBCBIQARgCKkDQF1rbPrFaZDFBuYUu/HWU2QL7TLhrkiSCGI4EsG8j41zrHxjuxBdqalQS3l6aMWTNDkucGSVwwJ9zzgr0NLXjMhljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxOABCCHRoaW5raW5nWgw4NTE3MjU0OTcwMDmoAaD0l9YGEgwynOXjOoz/wD38SKcaDOmlqizatkoTdULY5SIwVkxUUMA5utgqQuHH9lSAOcGs5VNKJ5edY/pwgfC+2JjS+eAJf6sNc78Dc2fF5cjCKpYElsKOjnJQpJ7pa/drHD/qIR7bNVyH9oEe4wWbcgIbU8DOej+SUiRU7sTRPgo7ndvgek+zLAXQXYvoOaj1f+vhtZy79/Kk3RfyJZzIW8E04tQxf+9PwkJmPmCmPVmWiV+OWfMVraqB61yASGWjWzxYmNN/M2NOmH+rXSZfNgX/gcKHUtYjwlDjppMuIIb/tqo56Znmdw7duDJjv6/1kSC/vd4RnyaZMPlltR3+s8bSa7+Mn5aDxljOvMhPldQ9jH3zUxrdLInU1LT3vrgDZlBFbJ8mMtji52NUta7Tmrc+GDdEnm5kpxIEVLe7OIWeZXH2DFYEFxlLegidLv208pfuve1wXYq5ZpvfWnsh8hhp5ignyKeBnuA4jqaMBWMyYdGEP0q4wNjbQ95Qq4+OuvNlX6sx85bhS4svuv5pnTDBEuMo6YbBZ4VvocivHY4DpdP+sUwMry+uQsJU916pN+Q4tNc0/d7cYWRuUJRCYEwoGGw/4Drp/1ftigg3CxopW3XZ/Eh+MRZRFa+XCbxEiZnEoc7dla1YOwe42TQINy9GOWIH+siiF5hRwln1UTShbahFmJtWAp7oeJfpddhkRH4M12e1K51tMN9a5If5DK+K6ivtKhcMtqSeW+Xkm7oQ1z0EBn0DVN49uqjeygCE2d6pyjWn2DZovGfJTdRLlhe9CLSyivIyw4Z4jjVrsRA6z4+dn03TZs+dGAE="
+        }
+       }
+      },
+      {
+       "text": "# Step-by-Step Solution\n\nLet me define:\n- **B** = price of the ball\n- **b** = price of the bat\n\n**Given information:**\n1. B + b = $1.10 (total cost)\n2. b = B + $1 (bat costs $1 more)\n\n**Substitute equation 2 into equation 1:**\n\nB + (B + $1) = $1.10\n\n2B + $1 = $1.10\n\n2B = $0.10\n\n**B = $0.05**\n\n**Verification:**\n- Ball: $0.05\n- Bat: $0.05 + $1.00 = $1.05\n- Total: $0.05 + $1.05 = $1.10 \u2713\n\n**The ball costs $0.05 (5 cents)**"
+      }
+     ]
+    }
+   },
+   "stopReason": "end_turn",
+   "metrics": {
+    "latencyMs": 2530
+   },
+   "usage": {
+    "inputTokens": 62,
+    "outputTokens": 451,
+    "totalTokens": 513
+   }
+  },
+  "outputTokenCount": 451
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

@@ -1,0 +1,128 @@
+{
+ "timestamp": "2026-10-07T07:54:39Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "0cf1bf01-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Weather in Lisbon? Use the tool."
+      }
+     ]
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "toolUse": {
+        "toolUseId": "tool_1",
+        "name": "get_weather",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "toolResult": {
+        "toolUseId": "tool_1",
+        "content": [
+         {
+          "text": "22C sunny"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   },
+   "inferenceConfig": {
+    "maxTokens": 300
+   }
+  },
+  "inputTokenCount": 483
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "content": [
+      {
+       "text": "<thinking> The tool has provided the weather in Lisbon. I can now share this information with the User. </thinking>\nLisbon's current weather is 22\u00b0C and sunny."
+      }
+     ],
+     "role": "assistant"
+    }
+   },
+   "stopReason": "end_turn",
+   "usage": {
+    "inputTokens": 483,
+    "outputTokens": 42,
+    "totalTokens": 525,
+    "cacheReadInputTokenCount": 0,
+    "cacheWriteInputTokenCount": 0
+   }
+  },
+  "outputTokenCount": 42
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}
