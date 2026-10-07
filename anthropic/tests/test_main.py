@@ -31,7 +31,7 @@ from slashid_anthropic_forwarder.pending import TICK_LEASE
 from slashid_anthropic_forwarder.platform import Backends, open_backends
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
 from slashid_anthropic_forwarder.store.local import SqlitePendingStore
-from tests.conftest import SECRET, Signer
+from tests.conftest import SECRET, Signer, _no_readers, _until
 from tests.fake_firestore import FakeFirestore
 from tests.test_cursors import _cursors
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
@@ -538,22 +538,6 @@ def test_local_mode_loads_no_google_module(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
 
 
-@pytest.fixture
-def fast_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
-    real = asyncio.sleep
-
-    async def quick(_seconds: float) -> None:
-        await real(0.005)
-
-    monkeypatch.setattr(main, "_sleep", quick)
-
-
-async def _until(done: Callable[[], bool], *, seconds: float = 5.0) -> None:
-    async with asyncio.timeout(seconds):
-        while not done():
-            await asyncio.sleep(0.005)
-
-
 def _opened(
     store: FirestorePendingStore,
 ) -> Callable[[], contextlib.AbstractAsyncContextManager[Backends]]:
@@ -568,10 +552,6 @@ def _opened(
         )
 
     return opened
-
-
-async def _no_readers(**_: Any) -> dict[str, int]:
-    return {}
 
 
 async def test_a_local_platform_drives_its_own_ticks(

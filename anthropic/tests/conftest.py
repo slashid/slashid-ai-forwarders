@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import time
 from collections.abc import Callable
+from typing import Any
 
 import pytest
+
+from slashid_anthropic_forwarder import main
 
 SECRET = "whsec_" + base64.b64encode(bytes([0xFB, 0xFF, 0xBF]) * 8).decode()
 
@@ -35,3 +39,23 @@ def sign() -> Signer:
         }
 
     return _sign
+
+
+@pytest.fixture
+def fast_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = asyncio.sleep
+
+    async def quick(_seconds: float) -> None:
+        await real(0.005)
+
+    monkeypatch.setattr(main, "_sleep", quick)
+
+
+async def _until(done: Callable[[], bool], *, seconds: float = 5.0) -> None:
+    async with asyncio.timeout(seconds):
+        while not done():
+            await asyncio.sleep(0.005)
+
+
+async def _no_readers(**_: Any) -> dict[str, int]:
+    return {}
