@@ -48,7 +48,7 @@ class FeedCursor:
         whole retention window as standalone events, so it has to be an
         explicit decision someone makes on purpose.
         """
-        return (await load_or_start(self._store, now=now)).timestamp
+        return (await load_or_start(self._store, now=now)).timestamp or now
 
     async def advance(self, *, timestamp: datetime, id: str | None = None, drained: bool) -> None:
         """Move the watermark, but only after a drain that finished, and never
