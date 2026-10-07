@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import time
+from asyncio import sleep
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -37,8 +38,6 @@ from .platform import Backends, open_backends
 from .store import PendingStore
 
 log = logging.getLogger(__name__)
-
-_sleep = asyncio.sleep
 
 
 async def _capture_safely(capture: BlobSink, request_id: str, headers: dict, body: bytes) -> None:
@@ -133,7 +132,7 @@ def create_app(
 
     async def tick_forever() -> None:
         while True:
-            await _sleep(config.tick_interval_seconds)
+            await sleep(config.tick_interval_seconds)
             try:
                 await run_tick()
             except Exception:

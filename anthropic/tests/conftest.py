@@ -48,7 +48,7 @@ def fast_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
     async def quick(_seconds: float) -> None:
         await real(0.005)
 
-    monkeypatch.setattr(main, "_sleep", quick)
+    monkeypatch.setattr(main, "sleep", quick)
 
 
 async def _until(done: Callable[[], bool], *, seconds: float = 5.0) -> None:

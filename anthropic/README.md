@@ -282,14 +282,13 @@ largely inert — they can only spend time the push budget has already capped.
 
 ## Running without GCP
 
-The image runs anywhere with a volume. Set `SLASHID_PLATFORM=local` and keep
-`/data` on durable storage: pending records, the reader watermarks and the
+The image runs anywhere with a volume. `local` is the default platform; the
+Terraform module sets `gcp`. Keep `/data` on durable storage: pending records, the reader watermarks and the
 tick lease live in one SQLite file there. The process ticks itself every
 `SLASHID_TICK_INTERVAL_SECONDS`; there is no scheduler to configure.
 
 ```sh
 docker run -d --name slashid-anthropic \
-  -e SLASHID_PLATFORM=local \
   -e SLASHID_PUSH_TOKEN=... \
   -e SLASHID_HOOK_SIGNING_SECRET=... \
   -v slashid-anthropic-data:/data \
@@ -322,7 +321,7 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | --- | --- | --- |
 | `SLASHID_ENDPOINT` | no | `https://api.slashid.com` |
 | `SLASHID_PUSH_TOKEN` | yes | — |
-| `SLASHID_PLATFORM` | no | `gcp` (or `local`) |
+| `SLASHID_PLATFORM` | no | `local` (the Terraform module sets `gcp`) |
 | `SLASHID_PROJECT_ID` | with `gcp` | — |
 | `SLASHID_DATA_DIR` | no | user data directory (`/data` in the image) — local platform only |
 | `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |

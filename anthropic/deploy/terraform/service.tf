@@ -54,6 +54,10 @@ resource "google_cloud_run_v2_service" "receiver" {
         value = var.slashid_endpoint
       }
       env {
+        name  = "SLASHID_PLATFORM"
+        value = "gcp"
+      }
+      env {
         name  = "SLASHID_PROJECT_ID"
         value = var.project_id
       }

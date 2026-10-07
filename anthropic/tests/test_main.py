@@ -66,6 +66,7 @@ def _config(**overrides: Any) -> Config:
         "push_token": "tok",
         "hook_signing_secret": SECRET,
         "project_id": "proj",
+        "platform": "gcp",
     }
     base.update(overrides)
     return Config(**base)
@@ -627,7 +628,7 @@ async def test_gcp_starts_no_timer(monkeypatch: pytest.MonkeyPatch) -> None:
     async def counting(seconds: float) -> None:
         slept.append(seconds)
 
-    monkeypatch.setattr(main, "_sleep", counting)
+    monkeypatch.setattr(main, "sleep", counting)
     app = create_app(_config(), backends=_opened(a_store()), client=Sink().client())
     async with app.router.lifespan_context(app):
         await asyncio.sleep(0.05)

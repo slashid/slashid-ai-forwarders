@@ -97,7 +97,7 @@ class Config(BaseConfig):
     soft_join_window_seconds: int = 15
     # The cloud the backends are built on; ``platform.py`` switches
     # on it. The fields below it are that cloud's.
-    platform: Literal["gcp", "local"] = "gcp"
+    platform: Literal["gcp", "local"] = "local"
     # The project holding Firestore; required on gcp, unused locally.
     project_id: str | None = None
     # Where the local platform keeps its SQLite file and blobs. Unset, the

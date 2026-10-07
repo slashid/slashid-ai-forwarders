@@ -14,6 +14,7 @@ def _env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
         "SLASHID_PUSH_TOKEN": "token",
         "SLASHID_HOOK_SIGNING_SECRET": "whsec_AAA",
         "SLASHID_PROJECT_ID": "proj",
+        "SLASHID_PLATFORM": "gcp",
     }
     base.update(overrides)
     for k, v in base.items():
@@ -215,3 +216,10 @@ def test_an_unknown_platform_is_refused(monkeypatch: pytest.MonkeyPatch) -> None
     _env(monkeypatch, SLASHID_PLATFORM="azure")
     with pytest.raises(ValidationError):
         Config()
+
+
+def test_local_is_the_default_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    monkeypatch.delenv("SLASHID_PLATFORM")
+    monkeypatch.delenv("SLASHID_PROJECT_ID")
+    assert Config().platform == "local"

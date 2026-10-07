@@ -11,7 +11,7 @@ The Anthropic forwarder runs only on GCP: Firestore holds the pending records an
 
 ## Goals
 
-1. `SLASHID_PLATFORM=local` runs the same FastAPI app from the same image on a container with a volume: no Google SDK is loaded, no Cloud Scheduler exists.
+1. The default platform, `local`, runs the same FastAPI app from the same image on a container with a volume: no Google SDK is loaded, no Cloud Scheduler exists.
 2. The process drives its own ticks on a timer.
 3. Pending records live in the same SQLite database as the checkpoints and the lease.
 4. GCP behaviour is unchanged.
@@ -24,7 +24,7 @@ Ingress: the customer exposes the container to Anthropic over public HTTPS, and 
 
 ### Config
 
-- `platform: Literal["gcp", "local"]`.
+- `platform: Literal["gcp", "local"]`, default `local`; the Terraform module and `dev-deploy.sh` set `gcp`.
 - `project_id` becomes `str | None`; a validator requires it when `platform == "gcp"`, so the existing "project id is required" behaviour holds there.
 - `data_dir: str | None` (`SLASHID_DATA_DIR`): the state directory. Unset, the registry's default applies, `user_data_dir("slashid_anthropic_forwarder", "slashid")`. The image sets it to a volume path.
 - `tick_interval_seconds` already exists (default 300) and already feeds the tombstone-TTL floor; locally it is also the timer's period. `tick_principal` locally is the expected bearer token for `/tick`.
@@ -78,7 +78,7 @@ The shared `record.from_document` and `Append` are reused unchanged.
 ### Packaging and docs
 
 - `anthropic/pyproject.toml` depends on `slashid-ai-forwarder-core[local]` as well as the GCP extra it uses today, so the one image serves both; the Dockerfile's `uv sync` follows, and `uv.lock` is regenerated. The image sets `SLASHID_DATA_DIR=/data` and declares `VOLUME /data`.
-- README: a "Running without GCP" section: the environment variables (`SLASHID_PLATFORM=local`, `SLASHID_DATA_DIR`, `SLASHID_TICK_INTERVAL_SECONDS`, `SLASHID_TICK_PRINCIPAL` if `/tick` is wanted), a `docker run` with a volume, the requirement that Anthropic reach the webhook URL over public HTTPS (provided by the customer), and a note that one replica is the supported shape (several are safe but share one file, so they must share a volume).
+- README: a "Running without GCP" section: the environment variables (`SLASHID_DATA_DIR`, `SLASHID_TICK_INTERVAL_SECONDS`, `SLASHID_TICK_PRINCIPAL` if `/tick` is wanted), a `docker run` with a volume, the requirement that Anthropic reach the webhook URL over public HTTPS (provided by the customer), and a note that one replica is the supported shape (several are safe but share one file, so they must share a volume).
 
 ## Testing
 
