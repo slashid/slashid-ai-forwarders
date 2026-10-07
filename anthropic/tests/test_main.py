@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import pathlib
 import re
@@ -314,6 +315,16 @@ async def test_the_tick_flushes_records_past_their_deadline() -> None:
         r = await c.post("/tick", headers=SCHEDULER)
     assert r.json() == {"flushed": 1}
     assert sink.request_ids == [ADDRESS]
+
+
+async def test_a_tick_logs_what_it_did(caplog: pytest.LogCaptureFixture) -> None:
+    store = a_store(join_wait=timedelta(seconds=-1))
+    await seed(store)
+    with caplog.at_level(logging.INFO, logger=main.log.name):
+        async with _client(_config(), store=store, sink=Sink()) as c:
+            await c.post("/tick", headers=SCHEDULER)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("tick:")]
+    assert lines == ["tick: {'flushed': 1}"]
 
 
 async def test_a_tick_that_finds_the_lease_held_does_no_work() -> None:
