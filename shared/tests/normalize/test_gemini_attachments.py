@@ -366,3 +366,30 @@ async def test_file_data_dedupes_repeated_uris(
         ]
     )
     assert len(files) == 1
+
+
+async def test_every_attachment_is_marked_as_an_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_resolve(source: dict, **_kw) -> None:  # type: ignore[type-arg]
+        if "found" in source["fileUri"]:
+            source["_resolved_byte_length"] = 3
+            source["_resolved_md5_hex"] = hashlib.md5(b"abc").hexdigest()
+
+    monkeypatch.setattr(_attachments, "_resolve_gcs_attachment", _fake_resolve)
+    inline = base64.b64encode(b"inline").decode()
+    files = await _extract(
+        [
+            {
+                "role": "user",
+                "parts": [
+                    {"inlineData": {"mimeType": "text/plain", "data": inline}},
+                    {"inlineData": {"mimeType": "image/png", "data": "!!!not-base64!!!"}},
+                    {"fileData": {"mimeType": "image/png", "fileUri": "gs://b/found.png"}},
+                    {"fileData": {"mimeType": "image/png", "fileUri": "gs://b/missing.png"}},
+                ],
+            }
+        ]
+    )
+    assert len(files) == 4
+    assert [f.provenance for f in files] == ["attachment"] * 4

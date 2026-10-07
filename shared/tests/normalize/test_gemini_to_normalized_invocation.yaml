@@ -184,6 +184,7 @@ expected:
   accessed_files:
     - name: null
       media_type: text/plain
+      provenance: attachment
       byte_length: 11
       content_hashes:
         sha256: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
@@ -216,6 +217,7 @@ expected:
   accessed_files:
     - name: "gs://my-bucket/notes.pdf"
       media_type: application/pdf
+      provenance: attachment
 ---
 id: safety_finish_maps_to_content_filtered
 req:

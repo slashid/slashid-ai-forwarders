@@ -195,6 +195,7 @@ def _build_files_from_block_dicts(
                 media_type=media_type,
                 byte_length=len(raw_bytes) if raw_bytes is not None else length,
                 redacted_content=redacted,
+                provenance="attachment",
             )
         )
 

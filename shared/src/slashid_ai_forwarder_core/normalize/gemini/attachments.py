@@ -119,6 +119,7 @@ def _from_inline_data(blob: GeminiBlob, config: BaseConfig) -> AIAccessedFile:
             media_type=blob.mimeType or None,
             byte_length=None,
             redacted_content=None,
+            provenance="attachment",
         )
     content_hashes = {
         "sha256": hashlib.sha256(raw_bytes).hexdigest(),
@@ -134,6 +135,7 @@ def _from_inline_data(blob: GeminiBlob, config: BaseConfig) -> AIAccessedFile:
         media_type=blob.mimeType or None,
         byte_length=len(raw_bytes),
         redacted_content=redacted,
+        provenance="attachment",
     )
 
 
@@ -173,6 +175,7 @@ def _from_file_data(
             media_type=media_type,
             byte_length=None,
             redacted_content=None,
+            provenance="attachment",
         )
 
     raw_bytes = src_dict.get("_resolved_bytes")
@@ -213,6 +216,7 @@ def _from_file_data(
         media_type=media_type,
         byte_length=resolved_len,
         redacted_content=redacted,
+        provenance="attachment",
     )
 
 
