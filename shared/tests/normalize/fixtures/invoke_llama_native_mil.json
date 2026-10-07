@@ -1,0 +1,32 @@
+{
+ "timestamp": "2026-10-07T06:33:36Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "9c58fce0-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.meta.llama3-3-70b-instruct-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "prompt": "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\nSay hi in 3 words.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+   "max_gen_len": 60
+  },
+  "inputTokenCount": 17
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "generation": "Hello to you.",
+   "prompt_token_count": 17,
+   "generation_token_count": 5,
+   "stop_reason": "stop"
+  },
+  "outputTokenCount": 5
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

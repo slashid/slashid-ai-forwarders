@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, JsonValue
+from pydantic import AfterValidator, BeforeValidator, Field, JsonValue
 
 from ..._base import _LenientModel
+
+
+def _none_to_empty(value: object) -> object:
+    """Some providers send ``null`` for a list that OpenAI omits."""
+    return [] if value is None else value
+
 
 # --------------------------------------------------------------------------
 # Content parts
@@ -68,7 +74,9 @@ class ChatMessage(_LenientModel):
     content: str | list[ChatPart] | None = None
     refusal: str | None = None
     reasoning_content: str | None = None
-    tool_calls: list[ChatToolCall] = Field(default_factory=list)
+    tool_calls: Annotated[list[ChatToolCall], BeforeValidator(_none_to_empty)] = Field(
+        default_factory=list
+    )
     tool_call_id: str | None = None
 
 
@@ -86,7 +94,7 @@ class ChatTool(_LenientModel):
 class ChatRequest(_LenientModel):
     model: str | None = None
     messages: list[ChatMessage]
-    tools: list[ChatTool] = Field(default_factory=list)
+    tools: Annotated[list[ChatTool], BeforeValidator(_none_to_empty)] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -143,13 +151,18 @@ class ChatDelta(_LenientModel):
     content: str | None = None
     refusal: str | None = None
     reasoning_content: str | None = None
-    tool_calls: list[ChatDeltaToolCall] = Field(default_factory=list)
+    tool_calls: Annotated[list[ChatDeltaToolCall], BeforeValidator(_none_to_empty)] = Field(
+        default_factory=list
+    )
 
 
 class ChatChunkChoice(_LenientModel):
     index: int = 0
     delta: ChatDelta = Field(default_factory=ChatDelta)
     finish_reason: str | None = None
+    # Mistral and DeepSeek stream ``message`` fragments and ``stop_reason`` instead.
+    message: ChatDelta | None = None
+    stop_reason: str | None = None
 
 
 class ChatChunk(_LenientModel):
@@ -196,12 +209,13 @@ def accumulate_stream(chunks: list[ChatChunk]) -> ChatCompletion | None:
         usage = chunk.usage or usage
         for choice in chunk.choices:
             acc = choices.setdefault(choice.index, _ChoiceAcc())
-            acc.role = choice.delta.role or acc.role
-            acc.content += choice.delta.content or ""
-            acc.refusal += choice.delta.refusal or ""
-            acc.reasoning += choice.delta.reasoning_content or ""
-            acc.finish_reason = choice.finish_reason or acc.finish_reason
-            for call in choice.delta.tool_calls:
+            delta = choice.message or choice.delta
+            acc.role = delta.role or acc.role
+            acc.content += delta.content or ""
+            acc.refusal += delta.refusal or ""
+            acc.reasoning += delta.reasoning_content or ""
+            acc.finish_reason = choice.finish_reason or choice.stop_reason or acc.finish_reason
+            for call in delta.tool_calls:
                 tool = acc.tool_calls.setdefault(call.index, _ToolCallAcc())
                 tool.id = call.id or tool.id
                 if call.function is not None:

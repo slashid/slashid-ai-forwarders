@@ -908,6 +908,8 @@ _CHAT_FIXTURES = [
     ("openai_chat_trivial_stream_mil.json", "openai-chat-stream"),
     ("openai_chat_tool_call_stream_mil.json", "openai-chat-stream"),
     ("openai_chat_thinking_high_stream_mil.json", "openai-chat-stream"),
+    ("invoke_pixtral_chat_mil.json", "openai-chat"),
+    ("invoke_pixtral_chat_stream_mil.json", "openai-chat-stream"),
 ]
 
 
@@ -994,3 +996,19 @@ async def test_openai_chat_inline_attachments_are_hashed(
 async def test_openai_chat_without_attachments_reports_no_files() -> None:
     normalized = await normalize_record(_fixture("openai_chat_trivial_mil.json"), config=_CONFIG)
     assert normalized.accessed_files == []
+
+
+@pytest.mark.parametrize(
+    ("fixture", "operation"),
+    [
+        ("invoke_pixtral_chat_mil.json", "InvokeModel"),
+        ("invoke_pixtral_chat_stream_mil.json", "InvokeModelWithResponseStream"),
+    ],
+)
+async def test_invoke_model_chat_bodies_carry_the_answer(fixture: str, operation: str) -> None:
+    record = _fixture(fixture)
+    assert record["operation"] == operation
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert normalized.output.message is not None
+    assert normalized.output.stop_reason == "end_turn"
+    assert [b.text for b in normalized.output.message.content] == ["Hi there!"]

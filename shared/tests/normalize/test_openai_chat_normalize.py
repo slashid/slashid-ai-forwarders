@@ -306,3 +306,13 @@ def test_reasoning_content_in_assistant_history() -> None:
         NormalizedContent(kind="reasoning", text="why"),
         _text("a"),
     ]
+
+
+async def test_message_fragment_stream_matches_non_stream() -> None:
+    plain = await _fixture("invoke_pixtral_chat_mil.json")
+    streamed = await _stream_fixture("invoke_pixtral_chat_stream_mil.json")
+    assert plain.output.message is not None
+    assert plain.output.message.content == [_text("Hi there!")]
+    assert streamed.output.message == plain.output.message
+    assert (plain.output.stop_reason, streamed.output.stop_reason) == ("end_turn", "end_turn")
+    assert streamed.tokens == plain.tokens == AIInvocationTokens(input=10, output=4)

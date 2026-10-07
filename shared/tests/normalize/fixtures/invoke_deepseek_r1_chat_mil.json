@@ -1,0 +1,44 @@
+{
+ "timestamp": "2026-10-07T06:31:41Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "ba3ea3e1-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.deepseek.r1-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Say hi in 3 words."
+    }
+   ],
+   "max_tokens": 60
+  },
+  "inputTokenCount": 12
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "index": 0,
+     "message": {
+      "role": "assistant",
+      "content": null,
+      "reasoning_content": "Okay, the user wants me to say \"hi\" in three words. Let me think about how to approach this.\n\nFirst, \"hi\" is a greeting, so I need to expand it into three words. Maybe I can use synonyms or phrases that convey the same meaning. For example,"
+     },
+     "stop_reason": "length"
+    }
+   ]
+  },
+  "outputTokenCount": 60
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

@@ -1,0 +1,150 @@
+{
+ "timestamp": "2026-10-07T06:33:41Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "77927f86-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.mistral.pixtral-large-2502-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Say hi in 3 words."
+    }
+   ],
+   "max_tokens": 60
+  },
+  "inputTokenCount": 10,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "id": "e29beb0c-3573-4c8e-b313-ed817dff1e42",
+    "object": "chat.completion.chunk",
+    "created": 1791354822,
+    "model": "pixtral-large-2502",
+    "choices": [
+     {
+      "index": 0,
+      "logprobs": null,
+      "context_logits": null,
+      "generation_logits": null,
+      "message": {
+       "role": null,
+       "tool_calls": null,
+       "index": null,
+       "tool_call_id": null,
+       "content": "Hi",
+       "audio": null,
+       "metadata": null
+      },
+      "stop_reason": null
+     }
+    ],
+    "usage": null,
+    "p": null
+   },
+   {
+    "id": "e29beb0c-3573-4c8e-b313-ed817dff1e42",
+    "object": "chat.completion.chunk",
+    "created": 1791354822,
+    "model": "pixtral-large-2502",
+    "choices": [
+     {
+      "index": 0,
+      "logprobs": null,
+      "context_logits": null,
+      "generation_logits": null,
+      "message": {
+       "role": null,
+       "tool_calls": null,
+       "index": null,
+       "tool_call_id": null,
+       "content": " there",
+       "audio": null,
+       "metadata": null
+      },
+      "stop_reason": null
+     }
+    ],
+    "usage": null,
+    "p": null
+   },
+   {
+    "id": "e29beb0c-3573-4c8e-b313-ed817dff1e42",
+    "object": "chat.completion.chunk",
+    "created": 1791354822,
+    "model": "pixtral-large-2502",
+    "choices": [
+     {
+      "index": 0,
+      "logprobs": null,
+      "context_logits": null,
+      "generation_logits": null,
+      "message": {
+       "role": null,
+       "tool_calls": null,
+       "index": null,
+       "tool_call_id": null,
+       "content": "!",
+       "audio": null,
+       "metadata": null
+      },
+      "stop_reason": null
+     }
+    ],
+    "usage": null,
+    "p": null
+   },
+   {
+    "id": "e29beb0c-3573-4c8e-b313-ed817dff1e42",
+    "object": "chat.completion.chunk",
+    "created": 1791354822,
+    "model": "pixtral-large-2502",
+    "choices": [
+     {
+      "index": 0,
+      "logprobs": null,
+      "context_logits": null,
+      "generation_logits": null,
+      "message": {
+       "role": null,
+       "tool_calls": null,
+       "index": null,
+       "tool_call_id": null,
+       "content": "",
+       "audio": null,
+       "metadata": null
+      },
+      "stop_reason": "stop"
+     }
+    ],
+    "usage": {
+     "prompt_tokens": 10,
+     "total_tokens": 14,
+     "completion_tokens": 4,
+     "request_count": null
+    },
+    "p": null,
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 10,
+     "outputTokenCount": 4,
+     "invocationLatency": 269,
+     "firstByteLatency": 256
+    }
+   }
+  ],
+  "outputTokenCount": 4
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}
