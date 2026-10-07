@@ -239,3 +239,17 @@ def test_stream_schema_rejects_empty_and_foreign_lists() -> None:
     with pytest.raises(ValidationError):
         _STREAM.validate_python([{"type": "response.completed"}])
     assert accumulate_stream([]) is None
+
+
+def test_reasoning_content_field_is_read_and_accumulated() -> None:
+    plain = ChatCompletion.model_validate(
+        _load("openai_chat_kimi_k3_mil.json")["output"]["outputBodyJson"]
+    )
+    reasoning = plain.choices[0].message.reasoning_content
+    assert reasoning is not None
+    assert reasoning.startswith("The user asked")
+    streamed = _accumulated("openai_chat_kimi_k3_stream_mil.json")
+    assert streamed.choices[0].message.reasoning_content
+    content = streamed.choices[0].message.content
+    assert isinstance(content, str)
+    assert content.startswith("Hi there")

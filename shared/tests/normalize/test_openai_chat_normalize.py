@@ -280,3 +280,29 @@ async def test_stream_missing_usage_still_normalizes() -> None:
     )
     assert normalized.tokens == AIInvocationTokens()
     assert normalized.output.stop_reason == "end_turn"
+
+
+async def test_reasoning_content_field_becomes_a_leading_reasoning_block() -> None:
+    normalized = await _fixture("openai_chat_kimi_k3_mil.json")
+    assert normalized.output.message is not None
+    reasoning, text = normalized.output.message.content
+    assert (reasoning.kind, (reasoning.text or "")[:14]) == ("reasoning", "The user asked")
+    assert text == _text("Hi there, friend! 👋")
+    streamed = await _stream_fixture("openai_chat_kimi_k3_stream_mil.json")
+    assert streamed.output.message is not None
+    assert [b.kind for b in streamed.output.message.content] == ["reasoning", "text"]
+
+
+def test_reasoning_content_in_assistant_history() -> None:
+    normalized = _invocation(
+        [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a", "reasoning_content": "why"},
+            {"role": "user", "content": "more"},
+        ],
+        {"content": "ok"},
+    )
+    assert normalized.input.messages[1].content == [
+        NormalizedContent(kind="reasoning", text="why"),
+        _text("a"),
+    ]

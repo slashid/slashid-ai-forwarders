@@ -111,6 +111,8 @@ def _output_message(message: ChatMessage) -> NormalizedMessage | None:
 
 def _assistant_blocks(message: ChatMessage) -> list[NormalizedContent]:
     blocks = _parts(message.content, split_reasoning=True)
+    if message.reasoning_content:
+        blocks.insert(0, NormalizedContent(kind="reasoning", text=message.reasoning_content))
     if message.refusal:
         blocks.append(NormalizedContent(kind="text", text=message.refusal))
     blocks.extend(_tool_use(call) for call in message.tool_calls)

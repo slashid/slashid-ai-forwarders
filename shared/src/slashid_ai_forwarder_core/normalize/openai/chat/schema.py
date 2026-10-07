@@ -67,6 +67,7 @@ class ChatMessage(_LenientModel):
     role: str
     content: str | list[ChatPart] | None = None
     refusal: str | None = None
+    reasoning_content: str | None = None
     tool_calls: list[ChatToolCall] = Field(default_factory=list)
     tool_call_id: str | None = None
 
@@ -141,6 +142,7 @@ class ChatDelta(_LenientModel):
     role: str | None = None
     content: str | None = None
     refusal: str | None = None
+    reasoning_content: str | None = None
     tool_calls: list[ChatDeltaToolCall] = Field(default_factory=list)
 
 
@@ -179,6 +181,7 @@ class _ChoiceAcc:
         self.role = "assistant"
         self.content = ""
         self.refusal = ""
+        self.reasoning = ""
         self.finish_reason: str | None = None
         self.tool_calls: dict[int, _ToolCallAcc] = {}
 
@@ -196,6 +199,7 @@ def accumulate_stream(chunks: list[ChatChunk]) -> ChatCompletion | None:
             acc.role = choice.delta.role or acc.role
             acc.content += choice.delta.content or ""
             acc.refusal += choice.delta.refusal or ""
+            acc.reasoning += choice.delta.reasoning_content or ""
             acc.finish_reason = choice.finish_reason or acc.finish_reason
             for call in choice.delta.tool_calls:
                 tool = acc.tool_calls.setdefault(call.index, _ToolCallAcc())
@@ -213,6 +217,7 @@ def accumulate_stream(chunks: list[ChatChunk]) -> ChatCompletion | None:
                     role=acc.role,
                     content=acc.content or None,
                     refusal=acc.refusal or None,
+                    reasoning_content=acc.reasoning or None,
                     tool_calls=[
                         ChatToolCall(
                             id=t.id, function=ChatFunctionCall(name=t.name, arguments=t.arguments)
