@@ -242,7 +242,7 @@ variable "scheduler_name" {
 variable "service_name" {
   description = "Cloud Run service name."
   type        = string
-  default     = "slashid-vertex-forwarder"
+  default     = "slashid-ai-forwarder-vertex"
 }
 
 variable "min_instances" {

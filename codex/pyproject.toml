@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-slashid-codex = "slashid_codex.cli:main"
+slashid-ai-forwarder-codex = "slashid_codex.cli:main"
 
 [tool.uv.sources]
 slashid-ai-forwarder-core = { workspace = true }

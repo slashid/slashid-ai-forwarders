@@ -1,4 +1,4 @@
-# Codex managed requirements for slashid-codex. Install as the system
+# Codex managed requirements for slashid-ai-forwarder-codex. Install as the system
 # requirements file (/etc/codex/requirements.toml on Linux).
 allow_managed_hooks_only = true
 
@@ -12,35 +12,35 @@ windows_managed_dir = 'C:\ProgramData\SlashID\Codex'
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event UserPromptSubmit"
-command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event UserPromptSubmit'
+command = "/opt/slashid/codex/bin/slashid-ai-forwarder-codex hook --config /opt/slashid/codex/config.toml --event UserPromptSubmit"
+command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-ai-forwarder-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event UserPromptSubmit'
 timeout = 10
 
 [[hooks.PreToolUse]]
 matcher = ".*"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event PreToolUse"
-command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event PreToolUse'
+command = "/opt/slashid/codex/bin/slashid-ai-forwarder-codex hook --config /opt/slashid/codex/config.toml --event PreToolUse"
+command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-ai-forwarder-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event PreToolUse'
 timeout = 10
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event Stop"
-command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event Stop'
+command = "/opt/slashid/codex/bin/slashid-ai-forwarder-codex hook --config /opt/slashid/codex/config.toml --event Stop"
+command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-ai-forwarder-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event Stop'
 timeout = 5
 
 [[hooks.SessionStart]]
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event SessionStart"
-command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event SessionStart'
+command = "/opt/slashid/codex/bin/slashid-ai-forwarder-codex hook --config /opt/slashid/codex/config.toml --event SessionStart"
+command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-ai-forwarder-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event SessionStart'
 timeout = 5
 
 [[hooks.SessionEnd]]
 [[hooks.SessionEnd.hooks]]
 type = "command"
-command = "/opt/slashid/codex/bin/slashid-codex hook --config /opt/slashid/codex/config.toml --event SessionEnd"
-command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event SessionEnd'
+command = "/opt/slashid/codex/bin/slashid-ai-forwarder-codex hook --config /opt/slashid/codex/config.toml --event SessionEnd"
+command_windows = 'C:\ProgramData\SlashID\Codex\bin\slashid-ai-forwarder-codex.exe hook --config C:\ProgramData\SlashID\Codex\config.toml --event SessionEnd'
 timeout = 3

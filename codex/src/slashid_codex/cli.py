@@ -1,4 +1,4 @@
-"""``slashid-codex hook`` (the client) and ``slashid-codex daemon``.
+"""``slashid-ai-forwarder-codex hook`` (the client) and ``slashid-ai-forwarder-codex daemon``.
 
 The hook path imports only the standard library, ``platformdirs`` and
 ``discovery``; the daemon's modules are imported inside ``main``. Plain
@@ -252,7 +252,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = _Parser(prog="slashid-codex")
+    parser = _Parser(prog="slashid-ai-forwarder-codex")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("hook", "daemon"):
         command = commands.add_parser(name)
@@ -361,7 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             # A hook always exits 0 with valid JSON.
             _stdout(_bad_arguments_answer(args_list))
             return 0
-        print(f"slashid-codex: {exc}", file=sys.stderr)
+        print(f"slashid-ai-forwarder-codex: {exc}", file=sys.stderr)
         return 2
     if args.command == "hook":
         run_hook(args.event, args.config, args.state_dir, args.codex_home, sys.stdin.buffer)

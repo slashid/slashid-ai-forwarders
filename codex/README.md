@@ -1,8 +1,8 @@
-# slashid-codex
+# slashid-ai-forwarder-codex
 
 Codex managed hook for SlashID. `UserPromptSubmit` and `PreToolUse` become SlashID preflight verdicts (deny reasons block the prompt or tool call); the session rollouts (`~/.codex/sessions/…`) become one `AIInvocationObservedV1` per model response. Design: `docs/superpowers/specs/2026-09-30-codex-hooks-design.md`.
 
-Each hook runs `slashid-codex hook`, a thin client (standard library and `platformdirs` only) that forwards the payload to a per-user daemon on `127.0.0.1`, starting it on first use. The daemon (`slashid-codex daemon`, FastAPI) answers preflight on a warm connection and pushes events from a worker thread. It exits after `daemon_idle_seconds` without hooks or published events; the next hook starts it again, and its startup sweep sends what was missed.
+Each hook runs `slashid-ai-forwarder-codex hook`, a thin client (standard library and `platformdirs` only) that forwards the payload to a per-user daemon on `127.0.0.1`, starting it on first use. The daemon (`slashid-ai-forwarder-codex daemon`, FastAPI) answers preflight on a warm connection and pushes events from a worker thread. It exits after `daemon_idle_seconds` without hooks or published events; the next hook starts it again, and its startup sweep sends what was missed.
 
 ## Install
 
