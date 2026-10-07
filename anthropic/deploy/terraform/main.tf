@@ -24,7 +24,8 @@ locals {
   # they are the result of an emptiness test, not a projection of it.
   signing_secret_set = nonsensitive(var.hook_signing_secret != "")
   compliance_enabled = nonsensitive(var.compliance_key != "")
-  hook_enabled       = local.signing_secret_set
+  # Mirrors the service: no credentials at all leaves the hook on, unsigned.
+  hook_enabled = local.signing_secret_set || !local.compliance_enabled
 
   # The release workflow tags the image with the bare version from
   # anthropic/pyproject.toml: ``anthropic-v0.1.0`` → ``:0.1.0``.

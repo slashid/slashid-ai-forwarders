@@ -23,9 +23,8 @@ exclusion. The tick's Firestore lease is what makes overlap safe.
 ## Capabilities
 
 Which half of the receiver runs is decided by which credentials are
-present, not by a mode flag. At least one is required; the service
-refuses to start with neither, and a `lifecycle` precondition here says
-so before the apply reaches Cloud Run.
+present, not by a mode flag. With neither, the hook runs unsigned;
+a compliance key alone leaves the hook closed.
 
 ### Hook only
 
@@ -155,8 +154,9 @@ The signing secret does not exist until the endpoint is configured, and
 the endpoint does not exist until this module is applied. So it is two
 applies:
 
-1. Apply with a placeholder `hook_signing_secret` (any `whsec_…` value;
-   every frame gets 401 until step 3). Copy the `hook_url` output.
+1. Apply without `hook_signing_secret` (the hook answers unsigned until
+   step 3), or with a placeholder `whsec_…` value if `compliance_key` is
+   set (every frame gets 401 until step 3). Copy the `hook_url` output.
 2. In claude.ai, as an Owner or Primary owner (`organization:manage`),
    configure that URL as the Inference hooks endpoint. It must be
    `https://` on port 443, publicly routable, with a valid public CA
