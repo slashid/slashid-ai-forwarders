@@ -283,3 +283,30 @@ async def test_build_event_parsed_as_defaults_to_unknown() -> None:
         config=_config(),
     )
     assert event.parsed_as == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("fixture", "parsed_as", "tokens"),
+    [
+        ("openai_chat_trivial_mil.json", "openai-chat", (13, 11, 19)),
+        ("openai_chat_large_prompt_repeat_cached_mil.json", "openai-chat", (2, 5, 0)),
+    ],
+)
+async def test_bedrock_envelope_openai_chat_tokens(
+    fixture: str, parsed_as: str, tokens: tuple[int, int, int]
+) -> None:
+    record: dict[str, Any] = json.loads((Path(__file__).parent / "fixtures" / fixture).read_text())
+    await normalize_record(record, config=_config())
+    env = bedrock_envelope(record)
+    assert env is not None
+    assert env.parsed_as == parsed_as
+    assert (env.tokens.input, env.tokens.output, env.tokens.reasoning) == tokens
+
+
+async def test_bedrock_envelope_openai_chat_rejected_request() -> None:
+    path = Path(__file__).parent / "fixtures" / "openai_chat_rejected_mil.json"
+    record: dict[str, Any] = json.loads(path.read_text())
+    await normalize_record(record, config=_config())
+    env = bedrock_envelope(record)
+    assert env is not None
+    assert env.parsed_as == "unknown"

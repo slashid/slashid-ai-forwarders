@@ -6,17 +6,12 @@ Bedrock ``_ToInvocation`` protocol and ignore ``config``.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
 import json
-from typing import Literal
 
 from pydantic import JsonValue
-from pydantic_extra_types.mime_types import MimeType
 
 from ....config_base import BaseConfig
-from ...normalized.media_types import parse_media_type
 from ...normalized.tools import build_tools_declared
 from ...normalized.types import (
     NormalizedContent,
@@ -25,6 +20,8 @@ from ...normalized.types import (
     NormalizedInvocationOutput,
     NormalizedMessage,
 )
+from ..data_url import decode_data_url
+from ..merge import Role, merge_same_role
 from ..stop_reasons import responses_stop_reason
 from ..usage import responses_usage_to_tokens
 from .schema import (
@@ -46,8 +43,6 @@ from .schema import (
     ResponsesWebSearchCall,
     final_response,
 )
-
-_Role = Literal["system", "user", "assistant"]
 
 
 def to_normalized(request: ResponsesRequest, response: Response) -> NormalizedInvocation:
@@ -76,7 +71,7 @@ async def responses_stream_to_normalized_invocation(
 
 
 def _request_to_input(request: ResponsesRequest) -> NormalizedInvocationInput:
-    mapped: list[tuple[_Role, list[NormalizedContent]]] = []
+    mapped: list[tuple[Role, list[NormalizedContent]]] = []
     if request.instructions is not None:
         mapped.append(("system", [NormalizedContent(kind="text", text=request.instructions)]))
     if isinstance(request.input, str):
@@ -88,28 +83,8 @@ def _request_to_input(request: ResponsesRequest) -> NormalizedInvocationInput:
         for t in request.tools
     )
     return NormalizedInvocationInput(
-        messages=_merge(mapped), tools_declared=tools_declared, tool_servers=tool_servers
+        messages=merge_same_role(mapped), tools_declared=tools_declared, tool_servers=tool_servers
     )
-
-
-def _merge(mapped: list[tuple[_Role, list[NormalizedContent]]]) -> list[NormalizedMessage]:
-    """Consecutive same-role items share a message; a compaction is always alone,
-    so it never folds the round before it into its own."""
-    groups: list[tuple[_Role, list[NormalizedContent]]] = []
-    for role, blocks in mapped:
-        if (
-            groups
-            and groups[-1][0] == role
-            and not (_is_compaction(blocks) or _is_compaction(groups[-1][1]))
-        ):
-            groups[-1][1].extend(blocks)
-        else:
-            groups.append((role, list(blocks)))
-    return [NormalizedMessage(role=role, content=blocks) for role, blocks in groups]
-
-
-def _is_compaction(blocks: list[NormalizedContent]) -> bool:
-    return any(b.kind == "compaction" for b in blocks)
 
 
 def _response_to_output(response: Response) -> NormalizedInvocationOutput:
@@ -126,7 +101,7 @@ def _response_to_output(response: Response) -> NormalizedInvocationOutput:
     )
 
 
-def _item(item: ResponsesItem) -> tuple[_Role, list[NormalizedContent]] | None:
+def _item(item: ResponsesItem) -> tuple[Role, list[NormalizedContent]] | None:
     match item:
         case ResponsesMessage():
             blocks = _parts(item.content)
@@ -169,7 +144,7 @@ def _item(item: ResponsesItem) -> tuple[_Role, list[NormalizedContent]] | None:
     return None
 
 
-def _role(role: str) -> _Role:
+def _role(role: str) -> Role:
     match role:
         case "system" | "developer":
             return "system"
@@ -204,21 +179,8 @@ def _parts(content: str | list[ResponsesPart]) -> list[NormalizedContent]:
             case ResponsesInputText() | ResponsesOutputText():
                 out.append(NormalizedContent(kind="text", text=part.text))
             case ResponsesInputImage():
-                media_type, byte_length = _data_url(part.image_url)
+                media_type, byte_length = decode_data_url(part.image_url)
                 out.append(
                     NormalizedContent(kind="image", media_type=media_type, byte_length=byte_length)
                 )
     return out
-
-
-def _data_url(url: str | None) -> tuple[MimeType | None, int | None]:
-    """``(media_type, byte_length)`` of a base64 ``data:`` URL; both ``None`` otherwise."""
-    header, sep, payload = (url or "").partition(",")
-    if not sep or not header.startswith("data:") or not header.endswith(";base64"):
-        return None, None
-    try:
-        data = base64.b64decode(payload, validate=True)
-    except binascii.Error:
-        return None, None
-    media_type = parse_media_type(header.removeprefix("data:").removesuffix(";base64"))
-    return media_type, len(data)

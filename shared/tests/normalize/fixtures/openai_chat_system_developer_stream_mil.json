@@ -1,0 +1,263 @@
+{
+ "timestamp": "2026-10-07T04:37:35Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "dbb8c34f-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.openai.gpt-6-astra",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "us.openai.gpt-6-astra",
+   "messages": [
+    {
+     "role": "developer",
+     "content": "Answer in French."
+    },
+    {
+     "role": "system",
+     "content": "Be terse."
+    },
+    {
+     "role": "user",
+     "content": "What is 2+2?"
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "inputTokenCount": 28,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant",
+       "refusal": null
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopq"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "2"
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcde"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": " +"
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEFG"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": " "
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "ab"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "2"
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghi"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": " ="
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEF"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": " "
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDE"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "4"
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghij"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "."
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwx"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0
+     }
+    ],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdef"
+   },
+   {
+    "choices": [],
+    "created": 1791347855,
+    "id": "chatcmpl-2f6bo2morp4mdkrehxohwiievjcxnqtb5vz7yvpcinqbpkvdmbvq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 12,
+     "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "prompt_tokens": 28,
+     "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+     },
+     "total_tokens": 40
+    },
+    "system_fingerprint": null,
+    "obfuscation": "abcdefghijklmnopqr"
+   }
+  ],
+  "outputTokenCount": 12
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

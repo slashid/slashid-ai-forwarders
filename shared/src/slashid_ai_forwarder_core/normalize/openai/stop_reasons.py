@@ -1,4 +1,5 @@
-"""OpenAI Responses ``status`` + ``incomplete_details.reason`` → canonical ``AIStopReason``.
+"""OpenAI Responses ``status`` + ``incomplete_details.reason`` and Chat
+``finish_reason`` → canonical ``AIStopReason``.
 
 The Responses API has no stop-reason field; a completed response that
 ends in a tool call is ``tool_use``.
@@ -12,6 +13,20 @@ _INCOMPLETE_REASONS: dict[str, AIStopReason] = {
     "max_output_tokens": "max_tokens",
     "content_filter": "content_filtered",
 }
+
+
+def chat_stop_reason(finish_reason: str | None) -> AIStopReason:
+    match finish_reason:
+        case "stop":
+            return "end_turn"
+        case "length":
+            return "max_tokens"
+        case "tool_calls" | "function_call":
+            return "tool_use"
+        case "content_filter":
+            return "content_filtered"
+        case _:
+            return "unknown"
 
 
 def responses_stop_reason(

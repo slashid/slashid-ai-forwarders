@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 from slashid_ai_forwarder_core.config_base import BaseConfig
+from slashid_ai_forwarder_core.events import AIInvocationTokens
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
     extract_stream_usage,
     message_to_normalized_invocation,
@@ -47,6 +48,16 @@ from slashid_ai_forwarder_core.normalize.converse.schema import (
     ConverseResponse,
 )
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedInvocation
+from slashid_ai_forwarder_core.normalize.openai.chat.normalize import (
+    chat_stream_to_normalized_invocation,
+    chat_to_normalized_invocation,
+)
+from slashid_ai_forwarder_core.normalize.openai.chat.schema import (
+    ChatCompletion,
+    ChatRequest,
+    ChatStream,
+    accumulate_stream,
+)
 from slashid_ai_forwarder_core.normalize.openai.responses.normalize import (
     responses_stream_to_normalized_invocation,
     responses_to_normalized_invocation,
@@ -56,10 +67,12 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesRequest,
     ResponseStream,
     ResponseStreamEvent,
-    ResponsesUsage,
     final_response,
 )
-from slashid_ai_forwarder_core.normalize.openai.usage import responses_usage_to_tokens
+from slashid_ai_forwarder_core.normalize.openai.usage import (
+    chat_usage_to_tokens,
+    responses_usage_to_tokens,
+)
 
 log = logging.getLogger(__name__)
 
@@ -122,7 +135,7 @@ def _on_openai_response_parse(
     response: Response,
 ) -> None:
     del request
-    _overwrite_tokens_from_responses_usage(rec, response.usage)
+    _overwrite_tokens(rec, responses_usage_to_tokens(response.usage) if response.usage else None)
 
 
 def _on_openai_stream_parse(
@@ -132,7 +145,28 @@ def _on_openai_stream_parse(
 ) -> None:
     del request
     response = final_response(events)
-    _overwrite_tokens_from_responses_usage(rec, response.usage if response else None)
+    usage = response.usage if response else None
+    _overwrite_tokens(rec, responses_usage_to_tokens(usage) if usage else None)
+
+
+def _on_openai_chat_parse(
+    rec: dict[str, Any],
+    request: ChatRequest,
+    response: ChatCompletion,
+) -> None:
+    del request
+    _overwrite_tokens(rec, chat_usage_to_tokens(response.usage) if response.usage else None)
+
+
+def _on_openai_chat_stream_parse(
+    rec: dict[str, Any],
+    request: ChatRequest,
+    chunks: ChatStream,
+) -> None:
+    del request
+    final = accumulate_stream(chunks)
+    usage = final.usage if final else None
+    _overwrite_tokens(rec, chat_usage_to_tokens(usage) if usage else None)
 
 
 _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOut] pairs
@@ -169,6 +203,20 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
         response_adapter=TypeAdapter(ResponseStream),
         to_invocation=responses_stream_to_normalized_invocation,
         on_parse=_on_openai_stream_parse,
+    ),
+    _Format(
+        name="openai-chat",
+        request_adapter=TypeAdapter(ChatRequest),
+        response_adapter=TypeAdapter(ChatCompletion),
+        to_invocation=chat_to_normalized_invocation,
+        on_parse=_on_openai_chat_parse,
+    ),
+    _Format(
+        name="openai-chat-stream",
+        request_adapter=TypeAdapter(ChatRequest),
+        response_adapter=TypeAdapter(ChatStream),
+        to_invocation=chat_stream_to_normalized_invocation,
+        on_parse=_on_openai_chat_stream_parse,
     ),
 ]
 
@@ -235,15 +283,11 @@ def _backfill_tokens_from_usage(
     _set_if_absent(inp, "cacheWriteInputTokenCount", usage.cache_creation_input_tokens)
 
 
-def _overwrite_tokens_from_responses_usage(
-    record: dict[str, Any],
-    usage: ResponsesUsage | None,
-) -> None:
+def _overwrite_tokens(record: dict[str, Any], tokens: AIInvocationTokens | None) -> None:
     """Replace MIL token counts with the additive split from body.usage."""
-    if usage is None:
+    if tokens is None:
         return
     # MIL copies OpenAI's inclusive totals; the wire model wants them disjoint.
-    tokens = responses_usage_to_tokens(usage)
     inp = record.setdefault("input", {})
     out = record.setdefault("output", {})
     inp["inputTokenCount"] = tokens.input

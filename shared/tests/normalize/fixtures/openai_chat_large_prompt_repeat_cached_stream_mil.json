@@ -1,0 +1,122 @@
+{
+ "timestamp": "2026-10-07T04:38:38Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "97df6983-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.openai.gpt-6-astra",
+ "input": {
+  "inputContentType": "application/json",
+  "inputTokenCount": 2,
+  "cacheReadInputTokenCount": 24316,
+  "cacheWriteInputTokenCount": 0,
+  "inputBodyJson": {
+   "model": "us.openai.gpt-6-astra",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Paragraph 0: The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown f [...]"
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  }
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant",
+       "refusal": null
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347918,
+    "id": "chatcmpl-mypxq4e53pxn52tgm7pxnlhxajifepokt56lwpkkpmh67n6go7gq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "60"
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791347918,
+    "id": "chatcmpl-mypxq4e53pxn52tgm7pxnlhxajifepokt56lwpkkpmh67n6go7gq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0
+     }
+    ],
+    "created": 1791347918,
+    "id": "chatcmpl-mypxq4e53pxn52tgm7pxnlhxajifepokt56lwpkkpmh67n6go7gq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrst"
+   },
+   {
+    "choices": [],
+    "created": 1791347918,
+    "id": "chatcmpl-mypxq4e53pxn52tgm7pxnlhxajifepokt56lwpkkpmh67n6go7gq",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 5,
+     "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+     },
+     "prompt_tokens": 24318,
+     "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cache_write_tokens": 0,
+      "cached_tokens": 24316
+     },
+     "total_tokens": 24323
+    },
+    "system_fingerprint": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEFGH"
+   }
+  ],
+  "outputTokenCount": 5
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

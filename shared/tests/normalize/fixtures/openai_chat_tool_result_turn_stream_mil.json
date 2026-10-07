@@ -1,0 +1,308 @@
+{
+ "timestamp": "2026-10-07T04:38:11Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "39691e54-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Lisbon? Use the tool."
+    },
+    {
+     "role": "assistant",
+     "content": null,
+     "tool_calls": [
+      {
+       "id": "call_1",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Lisbon\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_1",
+     "content": "{\"temp_c\": 22, \"sky\": \"sunny\"}"
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "inputTokenCount": 176,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "LHYEAF36preYDUtaJOo6ccq0YOYHXxnDE4CyilS7hmD6DcAwv5Pm"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "w5IlXwzYx718c5MGKjzb9bSbD9hHJbdnYQGG8T9sPQpEn3HVKbWBfbpsT6zDk8pcHdO6gfZFDHSyXCDFT3InpgcGf502hwznmvB27Deg",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "dvgOVikvlKlJvUf7JgOVptD2BfV9XXidbXkTjicJ7QDmZpwMxHVLiwTPFMOaZ0qbnEchEh4oKP"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "LG9OCBrDKpmc2H8vKeONHjL1x4jwy5OtgqXHRWKQA9RzUE2C",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "AlCSCnfOAPFS5fiSlF9w86yyaHujzgXwZCIlRdJ"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "BRO1b51F2QdUPKavcuW8VYff09lmtqFwQQSYZ2o8CvW5ixSyytqyxTflCfCSXFRoQXy5rFI9GsDhpVfHYo62",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "I3p6VCr9ONCPsc49ZYQzyYTH1MN4paHlt71N4IEdeCcEh4rIAHDbheXUzIW3nJDctWvhM9tK9yw9GO0pg8psUIczkFeZ6W"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "dQ27ZlegTD9DKnzGL3iCFjKGQm7ssEXY6CBPdmM9pA18NrlAzZWcrYV3FXJzgYZei7S8AFwgk5en0XTHdLpg71XTIr8UdB2sbVCPxcPmi2rkhL4QC4EyHmF",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "<reasoning>We need to answer the user's question with the weather info. Provide temperature and sky condition. Possibly include more detail.</reasoning>"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "cpkYtC22MZGSyYbmuZNXY7GhFBw7Pgun1VUk6SGheoRBcWhXlHRFfbvwKKQTRJwVuMr2VmqVNbWpi5a5S985SVVEhKHJLn4khJdFWJ9X1DarrjnIth79seUX65BLrh18"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "ap6tI33JT7Jv66NxnrZv445Qpz1uqFxZPo3AXjbl5Xo5gXExV9kTsBDoq15LtldYsVbDR5YBYaJ0DmLrehUHtROQ2pB1oia1aLdHoUUPnWVof",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "CXNB8uDz41qiG9jDvtY07fU0KJZ5reBQtTDgalWyXMeuAcvUGyMmOrQskplflPv5wcNuSTA46D9QtCVPihUebJV1YShD6KKkWlL"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "M5UBh4G4d0X3REByUCxith5XvUJKlPlHZQM8oRsu3bzcHeKJVv",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "YequYomwf7vRSD1iLoGamNTQHxB2spzDmxo5yniCUrPLs7fzEa7s9wInqkvIk5tBpvg2lMfp1tPYma7buP09WRwZm6d6Pxk4DdH9vCDyNamSY900eO"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "ZmfQ7lqgTSS1bMEn7FoGpq6ePFPPrey3gPUR4SpBc09qHoLInG90bvdp",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "1vQM06zgfnWXUJLhIFCpum8XnqAvAEmWAx3"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "qYARlrlalMBRuQ0WXsA9qAhXr8pnHEAlBomJNURvSB9OmCUJpwWu5CC3X7S37XFfORlEwmNcuXV5CrRtCOGLEQAjMmNjTLOlg4AyiaKlrDaUVT69a7Rb",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "pBfwpBIYAZT36OqZJfNcUVUgDpITzQVmpnq2qEHhQwhECErTLvPRNhFwbdLXuqF6PD8Uws1SPY6y0sOQSMLqcBVMXtv6xe0nu4D8jipQ3eXZh"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "iOThaXce1oJwxIQ5W76JHKIlKiDaaAAXeBkzNoNBK5yxJKIRk2tnR41H9mueT8kmlZVg4FsllW7e",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "qXLGSxAgSkwmkBJb4GbbwciYkSYCrjNyXwYipOqXm5WefCNG51U1874Cv3isJTV1uJ7Mv8SXXG4HZdFDORTUZxqPfZlbFp40FPy8TfqJA5Co56"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "Bb3poyBUp31qnILu8BpOliKiwJefSxpf0rV6JQ0srt3F8bY9DUdFYHhiAP21SMUWHY9UQrETKWhyfUSD51I6wyQbSmcSdW4pJmBcd",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "The current weather in Lisbon is **22\u202f\u00b0C** with **"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "3DmLxbxHX4vYPYiesu6jfcWCe35vNwk6WYRjNYPuRyjhN"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "uZSw2ijhQh7oDKStGocGhfUQeJ6nB7PYS7",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "sunny** skies."
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "lL2ZIilsTsMmUWbXAjnXGpPYwBGSKs0RbpMSJwVpgeJWbO8xgYZbWlZ39tfuGBCpJ6NF94QycC7P08gVaZWRcN0bpCKaGBjIoCDB"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "iAXI4BGBCPSyjdPcqfYUFX4eC82s2s7Nxy5EJCP0GTWfGu0xIdA6U6jDrnkCC0NYF1R0bo5XRuzt",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0,
+      "obfuscation": "wICr3hjzxb8BV1i4vVHcpuUPau2ndWEZF0DX2zfl9GBgFDzdfAGxgSf6m7TucleLl07o3O8TCJvfyDGcRA9k6h5tKZy9wpkY7wpOKIlMpc7kRIDOmE6bive1l"
+     }
+    ],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "NrIB9s2wBElx5p6htCeiNikFmY6rEYTcM",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [],
+    "created": 1791347891,
+    "id": "chatcmpl-dcbeb994-317f-4550-9549-1c0d12e4e256",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "VM0SqEXcBIvMnmKa5iqq3IJtha0N9rAjdHiLhA8FH5sPzu5pMFSO94p9yD3ce4h5m5KfWVLgN0IJUVVKVS9hTo",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 51,
+     "prompt_tokens": 176,
+     "total_tokens": 227
+    }
+   }
+  ],
+  "outputTokenCount": 51
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

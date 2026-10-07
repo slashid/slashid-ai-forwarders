@@ -1,0 +1,365 @@
+{
+ "timestamp": "2026-10-07T04:38:13Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "b3ee5ec8-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "get_time",
+      "description": "Current local time for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather and time in Lisbon and Tokyo."
+    },
+    {
+     "role": "assistant",
+     "content": null,
+     "tool_calls": [
+      {
+       "id": "call_a",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Lisbon\"}"
+       }
+      },
+      {
+       "id": "call_b",
+       "type": "function",
+       "function": {
+        "name": "get_time",
+        "arguments": "{\"city\": \"Lisbon\"}"
+       }
+      },
+      {
+       "id": "call_c",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Tokyo\"}"
+       }
+      },
+      {
+       "id": "call_d",
+       "type": "function",
+       "function": {
+        "name": "get_time",
+        "arguments": "{\"city\": \"Tokyo\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_a",
+     "content": "22C sunny"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_b",
+     "content": "10:00"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_c",
+     "content": "18C rain"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_d",
+     "content": "18:00"
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "inputTokenCount": 287,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "pk69WM5wNlvTbc55JiZiPqwf0CH9bXU2vfvvySkAJloJU6OqBnO2R2pfCOzdwUJvUVBaTYHnFMXPd4bjMchnGm4J8Wob5lBKBGrHRm"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "J2YjgUKwVUlsa5bLMqnMHbXPBbvmzqhPkFexeKJgF3jpZqOUdMLeZ5RDH3TKjQhVAmDJB2RwCcTauw0zwLr5V1dZHYAt6RRIoaAWoGpYn91pQ0TrgJcNvt",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "Al2lCjRbubAaTcykecA4rQG2HbpXtEGR6Pm2s3bOHIwv5N5gLj2nBJMSfi"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "NdaLTqDoM2CIzpk2VR1oB2aUzbr3ThCzwyKHGRZqPI8cvoO59diIdCFZdsNK4U9V90unxAcO1198ZWmgdF87zNHvKcS4Yb",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "WKtOxaAej5dxgjSftDsgZLGLt7rVt4qPJNyrtPIhuMcc47O2AyuSzDIyHDf3V2sKYVFtxK"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "cjLWQOlvI1KxydVND7gu1Znr4qDumDz2WCgg0rutwt6OBnEkhzRYEKnx7czinnGJyupYlxfNUl54S79SNIdiqCvZtLQ7MIyse9",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "HrQ5ZhTDGTvKurtvdcZFhoXM1l60uxqgZbZaPVC2f8VuHqQsI"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "MwZbQDsUJqnAsBNUDS4vNjanYr8eMLLtlCgKZ2OdoAjiXhkcqxkiqU6AyUW",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "<reasoning>We need to present the weather and time for both cities. Provide clear format.</reasoning>"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "TCvX7Fx5PkcsrCWN2Iy3fjAKvORQvBSmRFJ1Ke2sbvzgdeD1rwDIuJSFDIygJdWdtX9icvHhUbHms4G8EVUO51QIvuGTa7VvPNvnKEm2IxkdWB0aeQqQ"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "GzfAznyD0f8ITfBzhmX6gbTCt1yTAannknbsu30wcpuj6UOdpJ2Dnhpi395MN3L4veDSGHaH1QwH4W2ece1aMI75IRUJyoaWgrVKMTzdmU7DutZfEplLMoYED",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "ufRxPKcmIICEKyBnC4HeToqPWgZy5sXFnt2fPAhcZG9fPrBcu3thtlpEqYiqt3knB"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "CdlzlJvrngyevbL2LWJhHEnPvaWeDwF3IcVBtZtHHI7zuplhFBq65ihX50BAahwpFRUgHlFGWY8kkkh4XptSVPVU5jScl1cY80iooM5Fg4qACLKm6JyZPG",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "1ufcQ9IQ44nssTliCivlYGZzq9HhE72pxErLzCqYG"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "YvaRVdLbhAocoMk9of9ffs5APttE4s1MOe0L4cql13wmAeOpmnNPX1BHU5TB7UCVhjRrAhefPJB46JEWdGH7mq3T5q0wwjP",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "nt11CEM2RMrzBhLcfIQU7lDymriFGQkcWm5UjerZV6nLFwb26"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "kj4XTkRvmYVZTq86DXpDGCO1xIjx3bcs10ZGHGzDpr0no7vyDI6SM3CZmFzmx07rJtnY0zrlQI4RRgF",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "J6s1WyVK9XvYIJ5NtTZ5SG1Zg35WY1cXAA5SxwHD1WazJggJUADLQwKlHUMQiwTfbIdqWwyFEbXe6HbScqGy8p2RDSBrd0OEdFAZSCcajvy55o39nfnK"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "715XDP4YcMofQbDrNAsvfLCCYgkIgR0v8g5iQfwdCJTjozw5BpgWEtRyfxH5oZNMkUFGi4xuIyw9PgRMZG1RubG7TRe",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "DedoNDUiTvSdcTJwJyzWhTccKFPSeAcqrzcBDLvZO2W0lDmZpeT1Cl6j0yFJ5y8ssvHniOGrXHIZGG36EqXyaZ71dx5reHrMHSd6mQXAWGdDU6rYuRiE1C098DhR"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "rxQP9iQKqohayn5Zfq0GLXJ0HiSxYvbNuqOd2ZklfQz9",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "**Lisbon (Portugal)**\n- **Current weather"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "2ij2tmSTAin5rZtFMVQ6KsVZ18iKuUp05uoOLfZMSnfhxXXNBf9A5HHfCd6ou8LralnrRdeNCJevLR7s17ifEB4T0bL5zIrIkm5ofcZnfrm0kNyyNhzLyjx"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "zxxn0vWxiPztOMvUEgEqR3hDPHltxRY2uvnkE3XkcoH3r99WwCK78ccbY",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": ":** 22\u202f\u00b0C, sunny  \n- **Local time:** 10:00\u202fAM  \n\n**Tokyo (Japan)**\n- **Current weather:** 18\u202f\u00b0C, rain  \n- **Local time:** 6:00\u202fPM  "
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "CiVQ6UYfzD8raOERNmh42hidX6AliViIDG"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "NPWwSEtQawcOeRAbwuNplmqesJSTw3jvw5CNihEHCrXkC4edkhLWJdlpfIIvLdT3hU7",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0,
+      "obfuscation": "tnFQfbpB0p5A13nRFwx7MuTWJNJU7ineYgpgV"
+     }
+    ],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "xuJkKMMhEPzYDPZ8n4ePMMvelaqQu9mznMxetxkizcWVqbFbESdIIYtxtCTl8U8bX8ZVcxAF55Q495ueFOXjASTnJb",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [],
+    "created": 1791347894,
+    "id": "chatcmpl-93c6cca3-7671-4b76-9fa6-dc147967df0d",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "PsTvZnRDrzz6yhxmhG1O8G9OV6BpQ814dYaOyEIynU9qFoYYOBz5KnGv7xhYD0eAVih7p9eaw5zqv3HpN",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 87,
+     "prompt_tokens": 287,
+     "total_tokens": 374
+    }
+   }
+  ],
+  "outputTokenCount": 87
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

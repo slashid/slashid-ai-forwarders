@@ -1,0 +1,94 @@
+{
+ "timestamp": "2026-10-07T04:38:10Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "ab1a431c-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Lisbon? Use the tool."
+    },
+    {
+     "role": "assistant",
+     "content": null,
+     "tool_calls": [
+      {
+       "id": "call_1",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Lisbon\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_1",
+     "content": "{\"temp_c\": 22, \"sky\": \"sunny\"}"
+    }
+   ],
+   "stream": false
+  },
+  "inputTokenCount": 176
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "finish_reason": "stop",
+     "index": 0,
+     "logprobs": null,
+     "message": {
+      "content": "<reasoning>We need to answer user: weather in Lisbon. Provide info from tool: temp 22\u00b0C, sunny. Provide brief response.</reasoning>The current weather in Lisbon is **22\u202f\u00b0C** and **sunny**.",
+      "refusal": null,
+      "role": "assistant"
+     }
+    }
+   ],
+   "created": 1791347890,
+   "id": "chatcmpl-af363696-cf57-40ac-ace7-cdb9c10848fb",
+   "model": "openai.gpt-oss-120b-1:0",
+   "object": "chat.completion",
+   "service_tier": "default",
+   "usage": {
+    "completion_tokens": 53,
+    "prompt_tokens": 176,
+    "total_tokens": 229
+   }
+  },
+  "outputTokenCount": 53
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

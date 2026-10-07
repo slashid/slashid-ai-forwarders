@@ -1,0 +1,252 @@
+{
+ "timestamp": "2026-10-07T04:37:58Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "9f921a69-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "reasoning_effort": "low",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is 17*23?"
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "inputTokenCount": 74,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "864emtPdXikWM9NRbwE5WMeDqtfZZlxtt2vIJZ6ZXb2PRhwIKCMxN60JNhjVZ2khuOgmgrckT9LZ6xJG1WWXQ4cf0X4VDAJ5bh"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "OzGcnMHk0X4Yo4NyqX9K8hVJpIHfptdbiw03mohvNVEsIKHrj2dHSb",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "QetWgYYriopjNNmVCQxjYPv4eljJ0vsP3SedKisL2LyeR95zylm1M0zE49tyVwr3kOdImunXfyYYSVlwD2KiVOKUwNedZ1N5RaSTWFJ6K8Sl5xc8xEMZ6"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "pF3FLQw4mbPWYyrksS4Uo2lF6RmF7OfbSvOQGuYIY6BrOB6fNwf0KVsMvz4CsLW3uJkVZ0dzyL",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "Dq395OTvrokXuQSKgAwjZi7eTUcfWzBhrpZNclf77zKvrutzqoWy2s0VwV16787wbbKUFOZFMChH9cc19iv"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "YjvZpk0Cu74wM9tcqutPKuPKaBZj2N4jxlmDknZmgFykjQ6anqpoBr5A9NF5M4IMl882MTkGH5IwJPwE4",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "BtXxDX6HLYmiDOClBWLyulkvLx0cdQLTgNMsOmRHanqj"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "bzNm6fE9jxN7t8nDI2aoNsif1vPkwWmYWDYBb2NRGhyUeGco8gDswYInbKr53XylN4heNnfgaH8JcccrH3I1HgIQNIBodSJV9rAn7djW0xCvhfEvbbwOIGDaG0i",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "<reasoning>Simple multiplication. 17*23=391.</reasoning>"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "oLYinaT9NeYWQzRKo4CymeLWJa90WXcOavloDmrnVdkWI6BH5Q5PLWk8tD4G"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "QbrdaOiqvMHGBueBBrBytTW016dKn6XmAnyeIdAdx1t9s1MEM6IunteZcmSTi1wFZIzp1TmzHu0Iibf9Nat0X5nmlLnvPO1ywejIGK6csWHdSN7gZRUvxAN",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "s0DAiaZpfd9XAATc5sKLmUPvnsM4HI7aBKIQVriHeN8G992w0UTKRRSC"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "zcXszUGuyHadgftqrynYfoXX1qFHehU6KHvpZ0nLVrAhlfqsp6j57DCRMJBKiQPUcvY8KS4z3NAYOI23kFESj1x09PnmLU1XhuMwHZff0Jqv9FNE9oKic5sfGj8",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "wX8JFipNWu3mwgI3m4vNX2VrdPqEaSmai"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "UGkfp3SJliELWEqw0jHphyVVt39pqMaAszSSdTTRvCiP5uTmWDzMu1qS2eoK4rgxYFEJBobajHN05JWzvEHDhLNXsqI7pvncio",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "PpuZRPHLsiPBLKBCF7s6OeZXSFn0NFpPXN1jBYJFy1vDqxDRa3njeZBxFjvztmLQjTzr1wvb5P"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "IDSuewbLc3BVQQ5tzhCnWAR6HM4tDqHsMSncIFmPeRMlOzDmN1NFLPKxe",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "ChYCiL0h8I16bFMr2bl4Gqwu2jgZAFPXdwdrNXX5mC0yAeds5HIKlTlZYSgglJRswEcfzVwdgYMu79aXnpUnfUKcdBoushifc0RF2gmhH9HAv1p"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "fFaZWC2bHd3EGJUAMXIYfptMOiR13B8etgLIVNjDpuIzycc",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "NzUyen8NjoOOshkKD6XkRaRsyRmFfPTaobNuvp0UDoNwMHFFj4lO0FQ2m6m5ScOlYCeFxFTBaJsylOhPzBxf9cmvcuEShESB8IuRptu4QHp9fnaQ"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "2aSk8kOtu7IzSbCpj1tsjjhjcxnCrvKPjUw92hMPie4MgFzGJx5TAJmVN4h3Ihyfwk6btPixlFPt1gHqOo",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "\\(17 \\times 23 = 391\\)"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "IwqTy6mSShQXRgmeDdX5JEFieQIjjquuEsR8DBY3Dwf74DCbJDzRi0PmGRcpOWsPydDQ"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "vrs12vgWoJ8Hczu1VNynJ0RxTf900UH8hNh6uLugNa5H3StPh2Mk",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "stop",
+      "index": 0,
+      "obfuscation": "bVLTLAUqfrUzINsxkN0BAOoySfjhv9TYlLPCOu18AINntL9T3oxBi"
+     }
+    ],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "et0xyIuSZrb68BjkEOKbuEuD7zRkIK7Iwr0JZ5zZYhdaTTctm9BQt0Qz7",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [],
+    "created": 1791347878,
+    "id": "chatcmpl-d73ba732-e68b-4b91-bf70-8b13477d1ab9",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "INiZt32U8pYoZ8cg7tWdCmzibV9h5cObjxYEE8ujBarASqhwTHKCMQT5Uz5tF3BrnTzD0cT3OiTOJKUB",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 31,
+     "prompt_tokens": 74,
+     "total_tokens": 105
+    }
+   }
+  ],
+  "outputTokenCount": 31
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

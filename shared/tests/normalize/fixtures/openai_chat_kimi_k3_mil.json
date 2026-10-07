@@ -1,0 +1,69 @@
+{
+ "timestamp": "2026-10-07T05:00:58Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "172c3356-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.moonshotai.kimi-k3",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "us.moonshotai.kimi-k3",
+   "messages": [
+    {
+     "role": "user",
+     "content": "Say hi in 3 words."
+    }
+   ],
+   "stream": false
+  },
+  "inputTokenCount": 92
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "finish_reason": "stop",
+     "index": 0,
+     "message": {
+      "annotations": [],
+      "content": "Hi there, friend! \ud83d\udc4b",
+      "role": "assistant",
+      "refusal": null,
+      "reasoning_content": "The user asked me to say hi in 3 words. This is a simple, playful request. I need to respond with exactly 3 words that constitute a greeting.\n\nSome options:\n- \"Hello, how are you?\" - that's 4 words\n- \"Hi there, friend!\" - 3 words\n- \"Hello, hello, hello!\" - 3 words\n- \"Hi! How's everything?\" - 3 words\n- \"Hey, what's up?\" - 3 words (hey, what's, up)\n- \"Hello, nice to meet you\" - too many words\n\nLet me count carefully:\n- \"Hi there, friend!\" = Hi / there / friend = 3 words \u2713\n- \"Hello, hello, hello!\" = 3 words \u2713\n- \"Hey there, human!\" = 3 words \u2713\n\nI'll go with something friendly and simple. \"Hi there, friend!\" works well."
+     }
+    }
+   ],
+   "created": 1791349258,
+   "id": "chatcmpl-57j3mgg2nopmenqp65z27jwoathv4vco72ctkzpctomyx2toxvlq",
+   "model": "us.moonshotai.kimi-k3",
+   "object": "chat.completion",
+   "service_tier": "default",
+   "usage": {
+    "completion_tokens": 214,
+    "completion_tokens_details": {
+     "accepted_prediction_tokens": 0,
+     "audio_tokens": 0,
+     "reasoning_tokens": 192,
+     "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens": 92,
+    "prompt_tokens_details": {
+     "audio_tokens": 0,
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "total_tokens": 306
+   },
+   "system_fingerprint": null
+  },
+  "outputTokenCount": 214
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

@@ -895,3 +895,102 @@ async def test_non_openai_stream_with_input_request_is_not_responses(
     }
     await normalize_record(record, config=_CONFIG)
     assert record["_parsed_as"] != "openai-responses-stream"
+
+
+# --------------------------------------------------------------------------
+# OpenAI Chat Completions
+# --------------------------------------------------------------------------
+
+_CHAT_FIXTURES = [
+    ("openai_chat_trivial_mil.json", "openai-chat"),
+    ("openai_chat_tool_call_mil.json", "openai-chat"),
+    ("openai_chat_large_prompt_repeat_cached_mil.json", "openai-chat"),
+    ("openai_chat_trivial_stream_mil.json", "openai-chat-stream"),
+    ("openai_chat_tool_call_stream_mil.json", "openai-chat-stream"),
+    ("openai_chat_thinking_high_stream_mil.json", "openai-chat-stream"),
+]
+
+
+@pytest.mark.parametrize("fixture,expected", _CHAT_FIXTURES)
+async def test_openai_chat_sets_parsed_as(fixture: str, expected: str) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == expected
+    assert normalized.output.message is not None
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _CHAT_FIXTURES])
+def test_openai_chat_never_matches_earlier_formats(fixture: str) -> None:
+    record = _fixture(fixture)
+    in_body = record["input"]["inputBodyJson"]
+    out_body = record["output"]["outputBodyJson"]
+    for fmt in _FORMATS:
+        if fmt.name.startswith("openai-chat"):
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(in_body)
+            fmt.response_adapter.validate_python(out_body)
+
+
+@pytest.mark.parametrize(
+    "fixture", ["openai_responses_mil.json", "openai_responses_stream_mil.json"]
+)
+async def test_responses_records_are_not_taken_for_chat(fixture: str) -> None:
+    record = _fixture(fixture)
+    await normalize_record(record, config=_CONFIG)
+    assert not record["_parsed_as"].startswith("openai-chat")
+
+
+async def test_openai_chat_overwrites_tokens_with_additive_split() -> None:
+    record = _fixture("openai_chat_trivial_mil.json")
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 13
+    assert record["input"]["cacheReadInputTokenCount"] == 0
+    assert record["input"]["cacheWriteInputTokenCount"] == 0
+    assert record["output"]["outputTokenCount"] == 11
+    assert record["output"]["reasoningTokenCount"] == 19
+
+
+async def test_openai_chat_stream_overwrites_tokens_from_usage_chunk() -> None:
+    record = _fixture("openai_chat_trivial_stream_mil.json")
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 13
+    assert record["output"]["outputTokenCount"] + record["output"]["reasoningTokenCount"] == 29
+
+
+async def test_openai_chat_cached_prompt_tokens() -> None:
+    record = _fixture("openai_chat_large_prompt_repeat_cached_mil.json")
+    await normalize_record(record, config=_CONFIG)
+    assert record["input"]["inputTokenCount"] == 2
+    assert record["input"]["cacheReadInputTokenCount"] == 24316
+
+
+async def test_openai_chat_rejected_request_stays_unknown() -> None:
+    record = _fixture("openai_chat_rejected_mil.json")
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == "unknown"
+    assert normalized.output.message is None
+
+
+@pytest.mark.parametrize(
+    ("fixture", "name", "media_type"),
+    [
+        ("openai_chat_image_data_url_mil.json", "image.png", "image/png"),
+        ("openai_chat_image_data_url_stream_mil.json", "image.png", "image/png"),
+        ("openai_chat_file_pdf_data_mil.json", "secret.pdf", "application/pdf"),
+    ],
+)
+async def test_openai_chat_inline_attachments_are_hashed(
+    fixture: str, name: str, media_type: str
+) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    (file,) = normalized.accessed_files
+    assert (file.name, file.media_type, file.provenance) == (name, media_type, "attachment")
+    assert set(file.content_hashes or {}) == {"sha256", "sha1", "md5"}
+    assert file.byte_length
+
+
+async def test_openai_chat_without_attachments_reports_no_files() -> None:
+    normalized = await normalize_record(_fixture("openai_chat_trivial_mil.json"), config=_CONFIG)
+    assert normalized.accessed_files == []

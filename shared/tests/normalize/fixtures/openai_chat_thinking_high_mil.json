@@ -1,0 +1,69 @@
+{
+ "timestamp": "2026-10-07T04:37:46Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "754e5453-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.openai.gpt-6-astra",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "us.openai.gpt-6-astra",
+   "reasoning_effort": "high",
+   "messages": [
+    {
+     "role": "user",
+     "content": "A bat and ball cost $1.10; the bat costs $1 more than the ball. Ball price? Think it through."
+    }
+   ],
+   "stream": false
+  },
+  "inputTokenCount": 33
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "finish_reason": "stop",
+     "index": 0,
+     "message": {
+      "annotations": [],
+      "content": "The ball costs **$0.05 (5 cents)**. The bat costs $1.05\u2014exactly $1 more\u2014and together they cost $1.10.",
+      "refusal": null,
+      "role": "assistant"
+     }
+    }
+   ],
+   "created": 1791347866,
+   "id": "chatcmpl-oa7woktplgnwrnwd355ahe7x3u4spkbu5mctwtcq33gpfkajeb2q",
+   "model": "us.openai.gpt-6-astra",
+   "object": "chat.completion",
+   "service_tier": "default",
+   "usage": {
+    "completion_tokens": 138,
+    "completion_tokens_details": {
+     "accepted_prediction_tokens": 0,
+     "audio_tokens": 0,
+     "reasoning_tokens": 97,
+     "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens": 33,
+    "prompt_tokens_details": {
+     "audio_tokens": 0,
+     "cache_write_tokens": 0,
+     "cached_tokens": 0
+    },
+    "total_tokens": 171
+   },
+   "system_fingerprint": null
+  },
+  "outputTokenCount": 138
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

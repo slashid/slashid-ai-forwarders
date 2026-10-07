@@ -1,0 +1,104 @@
+{
+ "timestamp": "2026-10-07T04:44:38Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "d905ce99-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.openai.gpt-6-astra",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "us.openai.gpt-6-astra",
+   "max_completion_tokens": 20,
+   "messages": [
+    {
+     "role": "user",
+     "content": "Write a long story about a dragon."
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "inputTokenCount": 14,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant",
+       "refusal": null
+      },
+      "finish_reason": null,
+      "index": 0
+     }
+    ],
+    "created": 1791348279,
+    "id": "chatcmpl-pedaife2uey46rocsycevwcmn7z4lecdlqvwfldcggocdvq474za",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "length",
+      "index": 0
+     }
+    ],
+    "created": 1791348279,
+    "id": "chatcmpl-pedaife2uey46rocsycevwcmn7z4lecdlqvwfldcggocdvq474za",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "system_fingerprint": null,
+    "usage": null,
+    "obfuscation": "abcdefg"
+   },
+   {
+    "choices": [],
+    "created": 1791348279,
+    "id": "chatcmpl-pedaife2uey46rocsycevwcmn7z4lecdlqvwfldcggocdvq474za",
+    "model": "us.openai.gpt-6-astra",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 20,
+     "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "audio_tokens": 0,
+      "reasoning_tokens": 20,
+      "rejected_prediction_tokens": 0
+     },
+     "prompt_tokens": 14,
+     "prompt_tokens_details": {
+      "audio_tokens": 0,
+      "cache_write_tokens": 0,
+      "cached_tokens": 0
+     },
+     "total_tokens": 34
+    },
+    "system_fingerprint": null,
+    "obfuscation": "abcdefghijklmnopqrstuvwxyzABCDEFG"
+   }
+  ],
+  "outputTokenCount": 20
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}
