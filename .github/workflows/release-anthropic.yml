@@ -3,6 +3,8 @@ name: Release Anthropic
 on:
   push:
     tags: ["anthropic-v*"]
+  # A manual run builds both platforms and publishes nothing.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -21,11 +23,13 @@ jobs:
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#anthropic-v}"
           FILE_VERSION="$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("anthropic/pyproject.toml").read_text())["project"]["version"])')"
-          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
             echo "::error::Tag $GITHUB_REF_NAME expects version $TAG_VERSION but anthropic/pyproject.toml has $FILE_VERSION"
             exit 1
           fi
           echo "VERSION=$FILE_VERSION" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -50,13 +54,15 @@ jobs:
           # both shared/ and anthropic/ from the uv workspace.
           context: .
           file: anthropic/Dockerfile
-          push: true
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
           # One immutable tag per release. Terraform pins by version, so
           # no floating tag exists for a pre-release to move under a
           # customer.
           tags: ghcr.io/slashid/slashid-ai-forwarder-anthropic:${{ env.VERSION }}
 
-      - uses: softprops/action-gh-release@v2
+      - if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ steps.prerelease.outputs.value }}
