@@ -1748,7 +1748,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-ai-forwarder-codex"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "codex" }
 dependencies = [
     { name = "aiosqlite" },

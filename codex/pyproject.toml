@@ -1,8 +1,9 @@
 [project]
 name = "slashid-ai-forwarder-codex"
-version = "0.1.0"
+version = "0.1.1"
 description = "Codex managed hook and per-user daemon: preflight verdicts and rollout events for SlashID NHI"
 requires-python = ">=3.12"
+readme = { file = "PYPI.md", content-type = "text/markdown" }
 license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
@@ -19,6 +20,10 @@ dependencies = [
     "aiosqlite>=0.20",
     "platformdirs>=4.2",
 ]
+
+[project.urls]
+Documentation = "https://console.slashid.com/docs/identity-protection/onboarding/openai/"
+Source = "https://github.com/slashid/slashid-ai-forwarders/tree/main/codex"
 
 [dependency-groups]
 # The core is a workspace member that the wheel carries inside it, so it is a
