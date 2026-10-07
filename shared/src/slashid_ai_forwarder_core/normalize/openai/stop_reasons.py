@@ -15,17 +15,18 @@ _INCOMPLETE_REASONS: dict[str, AIStopReason] = {
 }
 
 
-_FINISH_REASONS: dict[str, AIStopReason] = {
-    "stop": "end_turn",
-    "length": "max_tokens",
-    "tool_calls": "tool_use",
-    "function_call": "tool_use",
-    "content_filter": "content_filtered",
-}
-
-
 def chat_stop_reason(finish_reason: str | None) -> AIStopReason:
-    return _FINISH_REASONS.get(finish_reason or "", "unknown")
+    match finish_reason:
+        case "stop":
+            return "end_turn"
+        case "length":
+            return "max_tokens"
+        case "tool_calls" | "function_call":
+            return "tool_use"
+        case "content_filter":
+            return "content_filtered"
+        case _:
+            return "unknown"
 
 
 def responses_stop_reason(
