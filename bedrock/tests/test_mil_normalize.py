@@ -1050,3 +1050,47 @@ async def test_other_formats_are_not_taken_for_llama(fixture: str) -> None:
     record = _fixture(fixture)
     await normalize_record(record, config=_CONFIG)
     assert not record["_parsed_as"].startswith("llama")
+
+
+# --------------------------------------------------------------------------
+# DeepSeek R1 native
+# --------------------------------------------------------------------------
+
+_DEEPSEEK_FIXTURES = [
+    ("invoke_deepseek_r1_chat_mil.json", "deepseek"),
+    ("invoke_deepseek_r1_prompt_mil.json", "deepseek"),
+    ("invoke_deepseek_r1_chat_stream_mil.json", "deepseek-stream"),
+    ("invoke_deepseek_r1_prompt_stream_mil.json", "deepseek-stream"),
+]
+
+
+@pytest.mark.parametrize("fixture,expected", _DEEPSEEK_FIXTURES)
+async def test_deepseek_sets_parsed_as_and_carries_the_answer(fixture: str, expected: str) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == expected
+    assert normalized.output.message is not None
+    assert normalized.output.stop_reason == "max_tokens"
+
+
+@pytest.mark.parametrize("fixture", [f for f, _ in _DEEPSEEK_FIXTURES])
+def test_deepseek_never_matches_earlier_formats(fixture: str) -> None:
+    record = _fixture(fixture)
+    for fmt in _FORMATS:
+        if fmt.name.startswith("deepseek"):
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(record["input"]["inputBodyJson"])
+            fmt.response_adapter.validate_python(record["output"]["outputBodyJson"])
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [f for f, _ in _CHAT_FIXTURES]
+    + [f for f, _ in _LLAMA_FIXTURES]
+    + ["openai_responses_mil.json"],
+)
+async def test_other_formats_are_not_taken_for_deepseek(fixture: str) -> None:
+    record = _fixture(fixture)
+    await normalize_record(record, config=_CONFIG)
+    assert not record["_parsed_as"].startswith("deepseek")

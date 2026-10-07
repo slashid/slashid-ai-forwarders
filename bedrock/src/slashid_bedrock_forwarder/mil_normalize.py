@@ -47,6 +47,15 @@ from slashid_ai_forwarder_core.normalize.converse.schema import (
     ConverseRequestBody,
     ConverseResponse,
 )
+from slashid_ai_forwarder_core.normalize.deepseek.normalize import (
+    deepseek_stream_to_normalized_invocation,
+    deepseek_to_normalized_invocation,
+)
+from slashid_ai_forwarder_core.normalize.deepseek.schema import (
+    DeepSeekRequest,
+    DeepSeekResponse,
+    DeepSeekStream,
+)
 from slashid_ai_forwarder_core.normalize.llama.normalize import (
     llama_stream_to_normalized_invocation,
     llama_to_normalized_invocation,
@@ -238,6 +247,18 @@ _FORMATS: list[_Format] = [  # type: ignore[type-arg]  # heterogeneous [TIn, TOu
         request_adapter=TypeAdapter(LlamaRequest),
         response_adapter=TypeAdapter(LlamaStream),
         to_invocation=llama_stream_to_normalized_invocation,
+    ),
+    _Format(
+        name="deepseek",
+        request_adapter=TypeAdapter(DeepSeekRequest),
+        response_adapter=TypeAdapter(DeepSeekResponse),
+        to_invocation=deepseek_to_normalized_invocation,
+    ),
+    _Format(
+        name="deepseek-stream",
+        request_adapter=TypeAdapter(DeepSeekRequest),
+        response_adapter=TypeAdapter(DeepSeekStream),
+        to_invocation=deepseek_stream_to_normalized_invocation,
     ),
 ]
 

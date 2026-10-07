@@ -322,3 +322,21 @@ async def test_bedrock_envelope_llama_tokens(fixture: str) -> None:
     assert env is not None
     assert env.parsed_as.startswith("llama")
     assert (env.tokens.input, env.tokens.output) == (17, 5)
+
+
+@pytest.mark.parametrize(
+    ("fixture", "tokens"),
+    [
+        ("invoke_deepseek_r1_chat_mil.json", (12, 60)),
+        ("invoke_deepseek_r1_prompt_stream_mil.json", (7, 60)),
+    ],
+)
+async def test_bedrock_envelope_deepseek_tokens_come_from_mil(
+    fixture: str, tokens: tuple[int, int]
+) -> None:
+    record: dict[str, Any] = json.loads((Path(__file__).parent / "fixtures" / fixture).read_text())
+    await normalize_record(record, config=_config())
+    env = bedrock_envelope(record)
+    assert env is not None
+    assert env.parsed_as.startswith("deepseek")
+    assert (env.tokens.input, env.tokens.output) == tokens
