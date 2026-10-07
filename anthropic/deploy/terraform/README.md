@@ -23,8 +23,9 @@ exclusion. The tick's Firestore lease is what makes overlap safe.
 ## Capabilities
 
 Which half of the receiver runs is decided by which credentials are
-present, not by a mode flag. With neither, the hook runs unsigned;
-a compliance key alone leaves the hook closed.
+present, not by a mode flag. Without a signing secret the
+hook runs unsigned; with a compliance key alone the service is still
+internal-only at the network level.
 
 ### Hook only
 

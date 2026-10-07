@@ -65,7 +65,7 @@ async def test_mode(mode: str, tmp_path: Path, sign: Signer) -> None:
         capture_deny_marker=DENY_MARKER,
         **MODES[mode],
     )
-    assert config.hook_enabled == (mode in HOOK)
+    assert config.hook_verifies_signatures == (mode in HOOK)
     assert config.compliance_enabled == (mode in COMPLIANCE)
     net = Net()
     app = create_app(config, backends=lambda: open_backends(config), client=net.client())
@@ -77,25 +77,23 @@ async def test_mode(mode: str, tmp_path: Path, sign: Signer) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
             forged = {**sign(body, "msg_forged"), "webhook-signature": "v1,AAAA"}
-            assert (await c.post("/", content=body)).status_code == 401
-            assert (await c.post("/", content=body, headers=forged)).status_code == 401
+            if mode in HOOK:
+                assert (await c.post("/", content=body)).status_code == 401
+                assert (await c.post("/", content=body, headers=forged)).status_code == 401
 
             allowed = await c.post("/", content=body, headers=sign(body, "msg_allowed"))
-            if mode in HOOK:
-                assert (allowed.status_code, allowed.json()) == (200, {"action": "allow"})
-                records = _records(tmp_path)
-                assert records
-                assert not any(r.get("awaiting") for r in records)  # a plain frame never waits
+            assert (allowed.status_code, allowed.json()) == (200, {"action": "allow"})
+            records = _records(tmp_path)
+            assert records
+            assert not any(r.get("awaiting") for r in records)  # a plain frame never waits
 
-                denied = await c.post("/", content=marked, headers=sign(marked, "msg_denied"))
-                assert denied.status_code == 200 and denied.json()["action"] != "allow"
-                denial = [r for r in _records(tmp_path) if "msg_denied" in r.get("webhook_ids", [])]
-                assert denial
-                # Only a deployment with readers has anyone to confirm the denial against.
-                waits = any("denial_activity" in r.get("awaiting", []) for r in denial)
-                assert waits == (mode == "hook+compliance")
-            else:
-                assert allowed.status_code == 401  # no secret configured to verify it
+            denied = await c.post("/", content=marked, headers=sign(marked, "msg_denied"))
+            assert denied.status_code == 200 and denied.json()["action"] != "allow"
+            denial = [r for r in _records(tmp_path) if "msg_denied" in r.get("webhook_ids", [])]
+            assert denial
+            # Only a deployment with readers has anyone to confirm the denial against.
+            waits = any("denial_activity" in r.get("awaiting", []) for r in denial)
+            assert waits == (mode in COMPLIANCE)
 
             assert (await c.post("/tick")).status_code == 401
             assert (

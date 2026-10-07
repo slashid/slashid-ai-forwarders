@@ -44,9 +44,7 @@ def test_fail_mode_must_be_allow_or_deny(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_no_credentials_runs_the_hook_unsigned(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    cfg = Config()
-    assert cfg.hook_enabled is True
-    assert cfg.hook_verifies_signatures is False
+    assert Config().hook_verifies_signatures is False
 
 
 def test_compliance_is_off_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,7 +148,6 @@ def test_compliance_only_starts_without_a_signing_secret(
     _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x", SLASHID_ORGANIZATION_UUID="org-1")
     monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
     cfg = Config()
-    assert cfg.hook_enabled is False
     assert cfg.hook_verifies_signatures is False
     assert cfg.compliance_enabled is True
 
@@ -158,7 +155,7 @@ def test_compliance_only_starts_without_a_signing_secret(
 def test_hook_only_needs_no_compliance_key(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     cfg = Config()
-    assert cfg.hook_enabled is True
+    assert cfg.hook_verifies_signatures is True
     assert cfg.compliance_enabled is False
 
 
@@ -218,3 +215,12 @@ def test_local_is_the_default_platform(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SLASHID_PLATFORM")
     monkeypatch.delenv("SLASHID_PROJECT_ID")
     assert Config().platform == "local"
+
+
+def test_a_pasted_compliance_key_is_trimmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(
+        monkeypatch,
+        SLASHID_COMPLIANCE_KEY=" sk-ant-api01-x\n",
+        SLASHID_ORGANIZATION_UUID="org-1",
+    )
+    assert Config().compliance_key == "sk-ant-api01-x"

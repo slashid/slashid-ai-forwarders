@@ -125,13 +125,13 @@ async def test_a_secret_still_rejects_an_unsigned_request_alongside_compliance()
     assert r.status_code == 401
 
 
-async def test_compliance_only_keeps_the_hook_closed() -> None:
+async def test_without_a_secret_compliance_does_not_close_the_hook() -> None:
     config = _config(
         hook_signing_secret="", compliance_key="sk-ant-api01-x", organization_uuid="org-1"
     )
     async with _client(config) as c:
         r = await c.post("/", content=json.dumps(FRAME).encode())
-    assert r.status_code == 401
+    assert (r.status_code, r.json()) == (200, {"action": "allow"})
 
 
 async def test_signed_prompt_frame_is_allowed(sign: Signer) -> None:

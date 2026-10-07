@@ -150,7 +150,7 @@ def create_app(
         # them here is all the opened backends need.
         nonlocal capture, store, lease, cursors, authorize
 
-        if config.hook_enabled and not config.hook_verifies_signatures:
+        if not config.hook_verifies_signatures:
             log.warning("no SLASHID_HOOK_SIGNING_SECRET: the hook accepts unsigned requests")
 
         async def close_client() -> None:
@@ -187,10 +187,7 @@ def create_app(
         if len(body) > config.max_body_bytes:
             return Response(status_code=413)
         headers = {k: v for k, v in request.headers.items()}
-        if config.hook_verifies_signatures:
-            if not verify(config.signing_secrets, headers, body):
-                return Response(status_code=401)
-        elif not config.hook_enabled:
+        if config.hook_verifies_signatures and not verify(config.signing_secrets, headers, body):
             return Response(status_code=401)
         webhook_id = headers.get("webhook-id", "")
 

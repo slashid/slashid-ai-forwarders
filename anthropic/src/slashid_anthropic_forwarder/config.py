@@ -159,7 +159,11 @@ class Config(BaseConfig):
         # deployment left it out, and pydantic-settings does not treat
         # ``""`` as unset. ``capture_bucket`` and ``capture_deny_marker``
         # are not module variables — they are here because a hand-edited
-        # revision can leave them empty just as easily.
+        # revision can leave them empty just as easily. Whitespace goes too:
+        # a stray one in a pasted key is rejected by the HTTP client, which
+        # echoes the whole header value into its error.
+        if isinstance(v, str):
+            v = v.strip()
         return v or None
 
     @property
@@ -177,16 +181,9 @@ class Config(BaseConfig):
         return [s.strip() for s in self.hook_signing_secret.split(",") if s.strip()]
 
     @property
-    def hook_enabled(self) -> bool:
-        """A signing secret enables the hook, and so does having no
-        compliance key: with no credentials at all the hook runs unsigned.
-        A compliance key and no secret is the compliance-only deployment,
-        whose hook route stays closed.
-        """
-        return bool(self.signing_secrets) or not self.compliance_enabled
-
-    @property
     def hook_verifies_signatures(self) -> bool:
+        """A signing secret turns verification on. Without one the hook
+        answers every request, signed or not."""
         return bool(self.signing_secrets)
 
     @model_validator(mode="after")
