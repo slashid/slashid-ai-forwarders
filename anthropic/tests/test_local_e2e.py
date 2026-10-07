@@ -34,7 +34,13 @@ async def test_a_frame_is_pushed_by_the_timer_and_its_record_retired(
     sign: Signer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fast_ticks: None
 ) -> None:
     monkeypatch.setattr(main, "run_readers", _no_readers)
-    config = _config(platform="local", project_id=None, data_dir=str(tmp_path), join_wait_seconds=0)
+    config = _config(
+        platform="local",
+        project_id=None,
+        data_dir=str(tmp_path),
+        join_wait_seconds=0,
+        preflight_enabled=False,
+    )
     sink = Sink()
     app = create_app(config, backends=lambda: open_backends(config), client=sink.client())
     body = json.dumps(TOOL_FRAME).encode()

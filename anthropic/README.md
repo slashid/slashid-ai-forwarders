@@ -327,11 +327,11 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |
 | `SLASHID_COMPLIANCE_KEY` | one capability required | — |
 | `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |
-| `SLASHID_PREFLIGHT_ENABLED` | no | `false` |
+| `SLASHID_PREFLIGHT_ENABLED` | no | `true` |
 | `SLASHID_VERDICT_FAIL_MODE` | no | `allow` |
 | `SLASHID_VERDICT_BUDGET_MS` | no | `3500` |
 | `SLASHID_PUSH_BUDGET_MS` | no | `2000` |
-| `SLASHID_SHADOW_MODE` | no | `true` |
+| `SLASHID_SHADOW_MODE` | no | `false` |
 | `SLASHID_MAX_BODY_BYTES` | no | `33554432` (Cloud Run's HTTP/1 cap) |
 | `SLASHID_DATABASE` | no | `slashid-anthropic` |
 | `SLASHID_PENDING_COLLECTION` | no | `anthropic_pending` |
@@ -373,8 +373,8 @@ quotes it.
 
 Anthropic provides staged rollout server-side — shadow mode, a rollout
 percentage, role exclusions, then enforcement with your choice of fail-open or
-fail-closed. Use it, and ship `SLASHID_SHADOW_MODE=true` so nothing is blocked
-until the customer opts in.
+fail-closed. Use it. The receiver enforces by default; set
+`SLASHID_SHADOW_MODE=true` to observe only.
 
 With a compliance credential present, a low rollout percentage stops being a
 coverage decision and becomes purely an enforcement one: turns the hook never

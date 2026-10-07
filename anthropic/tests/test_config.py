@@ -26,12 +26,12 @@ def test_signing_secrets_split_on_comma(monkeypatch: pytest.MonkeyPatch) -> None
     assert Config().signing_secrets == ["whsec_AAA", "whsec_BBB"]
 
 
-def test_defaults_are_observe_only_and_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_defaults_enforce_and_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     cfg = Config()
-    assert cfg.shadow_mode is True
+    assert cfg.shadow_mode is False
     assert cfg.verdict_fail_mode == "allow"
-    assert cfg.preflight_enabled is False
+    assert cfg.preflight_enabled is True
     assert cfg.capture_bucket is None
 
 

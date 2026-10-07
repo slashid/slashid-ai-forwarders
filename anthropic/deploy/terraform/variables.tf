@@ -57,9 +57,9 @@ variable "organization_uuid" {
 # --- Verdict knobs ---------------------------------------------------------
 
 variable "preflight_enabled" {
-  description = "Call {slashid_endpoint}/ip/nhi/events/ai-invocations/preflight on every prompt: the sensitive-file check and the connection's AI policy."
+  description = "Call {slashid_endpoint}/ip/nhi/events/ai-invocations/preflight on every prompt and tool call: the sensitive-file check and the connection's AI policy."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "verdict_fail_mode" {
@@ -74,9 +74,9 @@ variable "verdict_fail_mode" {
 }
 
 variable "shadow_mode" {
-  description = "Our own shadow mode, named after claude.ai's and independent of it: when either is on, nothing is blocked. True by default so a fresh deployment observes before it enforces."
+  description = "Our own shadow mode, named after claude.ai's and independent of it: when either is on, nothing is blocked. False by default: the receiver enforces."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "verdict_budget_ms" {

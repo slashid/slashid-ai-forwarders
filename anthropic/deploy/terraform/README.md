@@ -170,8 +170,9 @@ applies:
    percentage, role exclusions, and finally enforcement with your choice
    of fail-open or fail-closed.
 
-Leave `shadow_mode = true` here — ours, distinct from claude.ai's, and
-when either is on nothing is blocked — until the customer opts in.
+`shadow_mode` is false by default, so the receiver enforces. It is ours,
+distinct from claude.ai's, and when either is on nothing is blocked; set it to
+`true` to observe only.
 
 ## Firestore
 
