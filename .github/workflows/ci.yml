@@ -10,8 +10,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        subproject: [shared, bedrock, vertex, anthropic]
+        subproject: [shared, bedrock, vertex, anthropic, codex]
+        # 3.12 is the supported floor, 3.14 is what the images and Lambda ship.
+        python: ["3.12", "3.14"]
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,14 +32,17 @@ jobs:
         run: uv sync --all-groups --locked
 
       - name: Ruff (lint)
+        if: matrix.python == '3.14'
         working-directory: ${{ matrix.subproject }}
         run: uv run ruff check .
 
       - name: Ruff (format check)
+        if: matrix.python == '3.14'
         working-directory: ${{ matrix.subproject }}
         run: uv run ruff format --check .
 
       - name: ty (typecheck)
+        if: matrix.python == '3.14'
         working-directory: ${{ matrix.subproject }}
         run: uv run ty check
 

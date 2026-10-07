@@ -2,7 +2,7 @@
 name = "slashid-codex"
 version = "0.1.0"
 description = "Codex managed hook and per-user daemon: preflight verdicts and rollout events for SlashID NHI"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
@@ -31,7 +31,7 @@ packages = ["src/slashid_codex"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

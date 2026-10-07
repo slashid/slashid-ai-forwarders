@@ -2,7 +2,7 @@
 name = "slashid-ai-forwarder-core"
 version = "0.1.0"
 description = "Shared library for SlashID AI-provider forwarders."
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
@@ -51,7 +51,7 @@ packages = ["src/slashid_ai_forwarder_core"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
