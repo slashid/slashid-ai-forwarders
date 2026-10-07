@@ -340,3 +340,13 @@ async def test_bedrock_envelope_deepseek_tokens_come_from_mil(
     assert env is not None
     assert env.parsed_as.startswith("deepseek")
     assert (env.tokens.input, env.tokens.output) == tokens
+
+
+async def test_bedrock_envelope_nova_stream_tokens() -> None:
+    path = Path(__file__).parent / "fixtures" / "invoke_nova_plain_stream_mil.json"
+    record: dict[str, Any] = json.loads(path.read_text())
+    await normalize_record(record, config=_config())
+    env = bedrock_envelope(record)
+    assert env is not None
+    assert env.parsed_as == "bedrock-converse-stream"
+    assert (env.tokens.input, env.tokens.output) == (7, 7)

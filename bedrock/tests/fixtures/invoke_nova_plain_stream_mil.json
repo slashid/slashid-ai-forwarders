@@ -1,0 +1,147 @@
+{
+ "timestamp": "2026-10-07T07:54:38Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "5a7463be-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Say hi in 3 words."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 200
+   }
+  },
+  "inputTokenCount": 7,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "messageStart": {
+     "role": "assistant"
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "Hi"
+     },
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " there"
+     },
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": ","
+     },
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " friend"
+     },
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 4
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "."
+     },
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 5
+    }
+   },
+   {
+    "messageStop": {
+     "stopReason": "end_turn"
+    }
+   },
+   {
+    "metadata": {
+     "usage": {
+      "inputTokens": 7,
+      "outputTokens": 7,
+      "cacheReadInputTokenCount": 0,
+      "cacheWriteInputTokenCount": 0
+     },
+     "metrics": {},
+     "trace": {}
+    },
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 0,
+     "outputTokenCount": 0,
+     "invocationLatency": 460,
+     "firstByteLatency": 352
+    }
+   }
+  ],
+  "outputTokenCount": 7
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

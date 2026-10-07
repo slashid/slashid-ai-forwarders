@@ -1,0 +1,119 @@
+{
+ "timestamp": "2026-10-07T07:51:58Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "f6e5b3fb-0000-4000-8000-000000000000",
+ "operation": "ConverseStream",
+ "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Weather AND local time in Lisbon, using both tools at once."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 300
+   },
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  "inputTokenCount": 623,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "toolUse": {
+        "toolUseId": "tooluse_JIL2WdnnAstIW3DcyJwJ9b",
+        "name": "get_weather",
+        "type": "tool_use",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      },
+      {
+       "toolUse": {
+        "toolUseId": "tooluse_MGp0kJWHiRxWNHiFp9xgxu",
+        "name": "get_time",
+        "type": "tool_use",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "stopReason": "tool_use",
+   "metrics": {
+    "latencyMs": 776
+   },
+   "usage": {
+    "inputTokens": 623,
+    "outputTokens": 94,
+    "totalTokens": 717
+   }
+  },
+  "outputTokenCount": 94
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

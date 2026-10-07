@@ -36,6 +36,7 @@ from .schema import (
     ConverseToolUseBlock,
 )
 from .stop_reasons import STOP_REASONS
+from .stream import ConverseStream, accumulate_stream
 
 
 async def to_normalized_invocation(
@@ -61,6 +62,22 @@ async def to_normalized_invocation(
         output=_to_output(response),
         accessed_files=accessed_files,
     )
+
+
+async def to_stream_normalized_invocation(
+    request: ConverseRequestBody,
+    response: ConverseStream,
+    *,
+    config: BaseConfig,
+) -> NormalizedInvocation:
+    """The same translate for a stream: its events are folded into the response first."""
+    final = accumulate_stream(response)
+    if final is None:
+        return NormalizedInvocation(
+            input=_to_input(request),
+            accessed_files=await extract_attachments(request, config=config),
+        )
+    return await to_normalized_invocation(request, final, config=config)
 
 
 def _to_input(request: ConverseRequestBody) -> NormalizedInvocationInput:

@@ -1,0 +1,121 @@
+{
+ "timestamp": "2026-10-07T07:54:39Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "8ee9d87d-0000-4000-8000-000000000000",
+ "operation": "InvokeModelWithResponseStream",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Write a long story about a dragon."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 12
+   }
+  },
+  "inputTokenCount": 8,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "messageStart": {
+     "role": "assistant"
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": "Once"
+     },
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 0
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " upon a time,"
+     },
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 1
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " in a land"
+     },
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 2
+    }
+   },
+   {
+    "contentBlockDelta": {
+     "delta": {
+      "text": " far, far away"
+     },
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "contentBlockStop": {
+     "contentBlockIndex": 3
+    }
+   },
+   {
+    "messageStop": {
+     "stopReason": "max_tokens"
+    }
+   },
+   {
+    "metadata": {
+     "usage": {
+      "inputTokens": 8,
+      "outputTokens": 12,
+      "cacheReadInputTokenCount": 0,
+      "cacheWriteInputTokenCount": 0
+     },
+     "metrics": {},
+     "trace": {}
+    },
+    "amazon-bedrock-invocationMetrics": {
+     "inputTokenCount": 0,
+     "outputTokenCount": 0,
+     "invocationLatency": 833,
+     "firstByteLatency": 788
+    }
+   }
+  ],
+  "outputTokenCount": 12
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

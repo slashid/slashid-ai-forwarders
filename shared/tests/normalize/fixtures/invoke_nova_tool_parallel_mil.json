@@ -1,0 +1,117 @@
+{
+ "timestamp": "2026-10-07T07:54:39Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "1739438e-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Weather AND local time in Lisbon, using both tools at once."
+      }
+     ]
+    }
+   ],
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   },
+   "inferenceConfig": {
+    "maxTokens": 300
+   }
+  },
+  "inputTokenCount": 439
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "content": [
+      {
+       "text": "<thinking>The User has asked for both the weather and the local time in Lisbon. Both of these can be retrieved using the provided tools. Since both tools require the same input, I can use them together at once.</thinking>\n"
+      },
+      {
+       "toolUse": {
+        "name": "get_weather",
+        "toolUseId": "93bdf8df-f79c-49b4-86b0-45bd717c3226",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      },
+      {
+       "toolUse": {
+        "name": "get_time",
+        "toolUseId": "0e74402f-04fa-42f8-b345-8a04d311c4b6",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      }
+     ],
+     "role": "assistant"
+    }
+   },
+   "stopReason": "tool_use",
+   "usage": {
+    "inputTokens": 439,
+    "outputTokens": 75,
+    "totalTokens": 514,
+    "cacheReadInputTokenCount": 0,
+    "cacheWriteInputTokenCount": 0
+   }
+  },
+  "outputTokenCount": 75
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

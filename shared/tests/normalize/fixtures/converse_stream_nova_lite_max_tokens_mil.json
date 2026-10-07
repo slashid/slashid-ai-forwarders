@@ -1,0 +1,60 @@
+{
+ "timestamp": "2026-10-07T07:51:54Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "c8e2b549-0000-4000-8000-000000000000",
+ "operation": "ConverseStream",
+ "modelId": "us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Write a long story about a dragon."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 12
+   }
+  },
+  "inputTokenCount": 8,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "text": "Once upon a time, in a land far beyond the horizon"
+      }
+     ]
+    }
+   },
+   "stopReason": "max_tokens",
+   "metrics": {
+    "latencyMs": 391
+   },
+   "usage": {
+    "inputTokens": 8,
+    "outputTokens": 12,
+    "totalTokens": 20
+   }
+  },
+  "outputTokenCount": 12
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

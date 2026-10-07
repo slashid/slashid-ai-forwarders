@@ -1094,3 +1094,93 @@ async def test_other_formats_are_not_taken_for_deepseek(fixture: str) -> None:
     record = _fixture(fixture)
     await normalize_record(record, config=_CONFIG)
     assert not record["_parsed_as"].startswith("deepseek")
+
+
+# --------------------------------------------------------------------------
+# Converse streaming
+# --------------------------------------------------------------------------
+
+_NOVA_SCENARIOS = ["plain", "tool_call", "tool_parallel", "thinking_native", "max_tokens"]
+
+
+@pytest.mark.parametrize("scenario", _NOVA_SCENARIOS)
+async def test_nova_native_stream_parses_like_the_plain_record(scenario: str) -> None:
+    plain = _fixture(f"invoke_nova_{scenario}_mil.json")
+    stream = _fixture(f"invoke_nova_{scenario}_stream_mil.json")
+    expected = await normalize_record(plain, config=_CONFIG)
+    streamed = await normalize_record(stream, config=_CONFIG)
+    assert (plain["_parsed_as"], stream["_parsed_as"]) == (
+        "bedrock-converse",
+        "bedrock-converse-stream",
+    )
+    assert streamed.output.message is not None
+    assert expected.output.message is not None
+    assert [b.kind for b in streamed.output.message.content] == [
+        b.kind for b in expected.output.message.content
+    ]
+    assert streamed.output.stop_reason == expected.output.stop_reason
+    assert streamed.input == expected.input
+
+
+@pytest.mark.parametrize("scenario", _NOVA_SCENARIOS)
+def test_converse_stream_never_matches_earlier_formats(scenario: str) -> None:
+    record = _fixture(f"invoke_nova_{scenario}_stream_mil.json")
+    for fmt in _FORMATS:
+        if fmt.name == "bedrock-converse-stream":
+            continue
+        with pytest.raises(ValidationError):
+            fmt.request_adapter.validate_python(record["input"]["inputBodyJson"])
+            fmt.response_adapter.validate_python(record["output"]["outputBodyJson"])
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [f for f, _ in _CHAT_FIXTURES]
+    + [f for f, _ in _LLAMA_FIXTURES]
+    + [f for f, _ in _DEEPSEEK_FIXTURES]
+    + ["openai_responses_stream_mil.json"],
+)
+async def test_other_formats_are_not_taken_for_a_converse_stream(fixture: str) -> None:
+    record = _fixture(fixture)
+    await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] != "bedrock-converse-stream"
+
+
+@pytest.mark.parametrize(
+    ("fixture", "kinds", "stop"),
+    [
+        ("converse_stream_nova_lite_tool_call_mil.json", ["text", "tool_use"], "tool_use"),
+        ("converse_stream_haiku45_tool_parallel_mil.json", ["tool_use", "tool_use"], "tool_use"),
+        ("converse_stream_haiku45_thinking_mil.json", ["reasoning", "text"], "end_turn"),
+        ("converse_stream_deepseek_r1_thinking_mil.json", ["reasoning", "text"], "end_turn"),
+        ("converse_stream_nova_lite_max_tokens_mil.json", ["text"], "max_tokens"),
+    ],
+)
+async def test_converse_stream_api_records_are_reassembled_by_mil(
+    fixture: str, kinds: list[str], stop: str
+) -> None:
+    record = _fixture(fixture)
+    assert record["operation"] == "ConverseStream"
+    normalized = await normalize_record(record, config=_CONFIG)
+    assert record["_parsed_as"] == "bedrock-converse"
+    assert normalized.output.message is not None
+    assert [b.kind for b in normalized.output.message.content] == kinds
+    assert normalized.output.stop_reason == stop
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    ["converse_stream_nova_lite_image_mil.json", "converse_stream_haiku45_document_mil.json"],
+)
+async def test_converse_stream_attachments_are_reported(
+    fixture: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from slashid_ai_forwarder_core.normalize.converse import attachments
+
+    async def no_aws(source: dict[str, Any], *, max_content_size: int) -> None:
+        del source, max_content_size
+
+    monkeypatch.setattr(attachments, "_resolve_s3_attachment", no_aws)
+    normalized = await normalize_record(_fixture(fixture), config=_CONFIG)
+    (file,) = normalized.accessed_files
+    assert file.provenance == "attachment"

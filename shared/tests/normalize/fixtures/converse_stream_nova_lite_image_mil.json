@@ -1,0 +1,68 @@
+{
+ "timestamp": "2026-10-07T07:51:54Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "e69a5df8-0000-4000-8000-000000000000",
+ "operation": "ConverseStream",
+ "modelId": "us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "Name the two colours in this image, left to right."
+      },
+      {
+       "image": {
+        "format": "png",
+        "source": {
+         "s3Uri": "s3://example-mil-bucket/large-volume/AWSLogs/123456789012/BedrockModelInvocationLogs/us-east-2/2026/10/07/07/data/08e15d6e-53c7-47f2-a070-48b91d31d27f_input_media_01.png"
+        }
+       }
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 200
+   }
+  },
+  "inputTokenCount": 542,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "text": "The image consists of two primary colors, red and blue. The red color is on the left side, and the blue color is on the right side. The image is divided into two equal parts, with a straight line in the middle separating the two colors. The red color is a deep, rich shade, while the blue color is a bright, vibrant shade. The image appears to be a simple yet striking design, with the two colors creating a bold contrast. Overall, the image is a great example of how two colors can be used to create a visually appealing and impactful design."
+      }
+     ]
+    }
+   },
+   "stopReason": "end_turn",
+   "metrics": {
+    "latencyMs": 948
+   },
+   "usage": {
+    "inputTokens": 542,
+    "outputTokens": 118,
+    "totalTokens": 660
+   }
+  },
+  "outputTokenCount": 118
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

@@ -1,0 +1,111 @@
+{
+ "timestamp": "2026-10-07T07:51:54Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "72d1e0cd-0000-4000-8000-000000000000",
+ "operation": "ConverseStream",
+ "modelId": "us.amazon.nova-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "What is the weather in Lisbon? Use the tool."
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 300
+   },
+   "toolConfig": {
+    "tools": [
+     {
+      "toolSpec": {
+       "name": "get_weather",
+       "description": "Weather for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     },
+     {
+      "toolSpec": {
+       "name": "get_time",
+       "description": "Local time for a city",
+       "inputSchema": {
+        "json": {
+         "type": "object",
+         "properties": {
+          "city": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "city"
+         ]
+        }
+       }
+      }
+     }
+    ]
+   }
+  },
+  "inputTokenCount": 437,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "role": "assistant",
+     "content": [
+      {
+       "text": "<thinking>The User has asked for the weather in Lisbon. I need to use the 'get_weather' tool to retrieve this information.</thinking>\n"
+      },
+      {
+       "toolUse": {
+        "toolUseId": "tooluse_jGr1jZkJT6NF010LvPs2ZR",
+        "name": "get_weather",
+        "input": {
+         "city": "Lisbon"
+        }
+       }
+      }
+     ]
+    }
+   },
+   "stopReason": "tool_use",
+   "metrics": {
+    "latencyMs": 556
+   },
+   "usage": {
+    "inputTokens": 437,
+    "outputTokens": 49,
+    "totalTokens": 486
+   }
+  },
+  "outputTokenCount": 49
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-west-2",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

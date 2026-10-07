@@ -1,0 +1,68 @@
+{
+ "timestamp": "2026-10-07T07:55:26Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "4829d67d-0000-4000-8000-000000000000",
+ "operation": "InvokeModel",
+ "modelId": "arn:aws:bedrock:us-east-2:123456789012:inference-profile/us.amazon.nova-2-lite-v1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "text": "A bat and ball cost $1.10; the bat costs $1 more. Ball price?"
+      }
+     ]
+    }
+   ],
+   "inferenceConfig": {
+    "maxTokens": 2000
+   },
+   "reasoningConfig": {
+    "type": "enabled",
+    "maxReasoningEffort": "low"
+   }
+  },
+  "inputTokenCount": 116
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "output": {
+    "message": {
+     "content": [
+      {
+       "reasoningContent": {
+        "reasoningText": {
+         "text": "[REDACTED]."
+        }
+       }
+      },
+      {
+       "text": "To solve the problem, let's define the variables and set up an equation:\n\n### Step 1: Define the variables\n- Let **\\( b \\)** be the price of the **ball** (in dollars).\n- The bat costs **$1 more** than the ball, so the bat's price is **\\( b + 1 \\)**.\n\n### Step 2: Use the total cost\nThe combined cost of the bat and ball is **$1.10**.  \nThis gives the equation:  \n\\[\n(b + 1) + b = 1.10\n\\]\n\n### Step 3: Simplify the equation\n\\[\n2b + 1 = 1.10\n\\]\n\n### Step 4: Solve for \\( b \\)\nSubtract 1 from both sides:  \n\\[\n2b = 0.10\n\\]  \nDivide by 2:  \n\\[\nb = 0.05\n\\]\n\n### Step 5: Interpret the result\nThe ball costs **$0.05**, which is **5 cents**.\n\n### Verification\n- Ball: $0.05  \n- Bat: $0.05 + $1.00 = $1.05  \n- Total: $0.05 + $1.05 = **$1.10** \u2705  \n\n**Answer: The ball costs $0.05 (5 cents).**"
+      }
+     ],
+     "role": "assistant"
+    }
+   },
+   "stopReason": "end_turn",
+   "usage": {
+    "inputTokens": 116,
+    "outputTokens": 574,
+    "totalTokens": 690,
+    "cacheReadInputTokenCount": 0,
+    "cacheWriteInputTokenCount": 0
+   }
+  },
+  "outputTokenCount": 574
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "inferenceRegion": "us-east-1",
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}
