@@ -297,6 +297,9 @@ docker run -d --name slashid-anthropic \
   <image>
 ```
 
+A bind mount in place of the named volume must be writable by the image's
+`nonroot` user.
+
 Exposing the container is yours to arrange. Anthropic must reach the webhook
 URL under the same terms as in Prerequisites: public `https://` on 443, a
 valid public CA certificate, no redirects, no reverse tunnels.

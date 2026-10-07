@@ -36,8 +36,6 @@ from tests.fake_firestore import FakeFirestore
 from tests.test_cursors import _cursors
 from tests.test_pending import ADDRESS, Sink, a_store, addresses, fake, seed
 
-NOW_UTC = datetime.now(UTC)
-
 FRAME: dict[str, Any] = {
     "type": "prompt",
     "request_id": "req_test",
@@ -483,7 +481,7 @@ async def test_open_backends_on_the_local_platform_uses_sqlite(tmp_path: Path) -
         assert isinstance(backends.store, SqlitePendingStore)
         assert (tmp_path / "data.sqlite").exists()
         # the platform's own stores share the file
-        assert await backends.cursors.activities.window_age_seconds(now=NOW_UTC) == 0.0
+        assert await backends.cursors.activities.window_age_seconds(now=datetime.now(UTC)) == 0.0
         assert await backends.tick_auth("anything") is False
 
 

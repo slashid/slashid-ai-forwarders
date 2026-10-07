@@ -1,4 +1,4 @@
-"""FastAPI entrypoint: the hook on any path, the flush on /tick.
+"""FastAPI entrypoint: the hook on any path, the flush on /tick or a local timer.
 
 Owns rule 1 of the design: nothing after the verdict is decided — the
 capture, the pending write, the push — may change the response. A non-200
@@ -114,8 +114,8 @@ def create_app(
         if store is None:
             return {"flushed": 0}
         guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
-        async with guard as held:
-            if not held:
+        async with guard as leased:
+            if not leased:
                 # Not an error: the next tick picks the same work up from the store.
                 return {"flushed": 0, "skipped": True}
             counters: dict[str, int] = {}
