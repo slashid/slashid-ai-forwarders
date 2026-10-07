@@ -1,0 +1,56 @@
+{
+ "timestamp": "2026-10-07T04:37:57Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "74481b15-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "reasoning_effort": "low",
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is 17*23?"
+    }
+   ],
+   "stream": false
+  },
+  "inputTokenCount": 74
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "finish_reason": "stop",
+     "index": 0,
+     "logprobs": null,
+     "message": {
+      "content": "<reasoning>Simple multiplication. 17*23 = 391.</reasoning>\\(17 \\times 23 = 391\\)",
+      "refusal": null,
+      "role": "assistant"
+     }
+    }
+   ],
+   "created": 1791347877,
+   "id": "chatcmpl-492fbe96-27e4-4822-8259-ee3de74acdfc",
+   "model": "openai.gpt-oss-120b-1:0",
+   "object": "chat.completion",
+   "service_tier": "default",
+   "usage": {
+    "completion_tokens": 32,
+    "prompt_tokens": 74,
+    "total_tokens": 106
+   }
+  },
+  "outputTokenCount": 32
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

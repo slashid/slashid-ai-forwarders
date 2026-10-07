@@ -5,14 +5,23 @@ from __future__ import annotations
 import pytest
 
 from slashid_ai_forwarder_core.events import AIInvocationTokens, AIStopReason
+from slashid_ai_forwarder_core.normalize.openai.chat.schema import (
+    ChatCompletionTokensDetails,
+    ChatPromptTokensDetails,
+    ChatUsage,
+)
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesInputTokensDetails,
     ResponsesOutputTokensDetails,
     ResponsesUsage,
 )
-from slashid_ai_forwarder_core.normalize.openai.stop_reasons import responses_stop_reason
+from slashid_ai_forwarder_core.normalize.openai.stop_reasons import (
+    chat_stop_reason,
+    responses_stop_reason,
+)
 from slashid_ai_forwarder_core.normalize.openai.usage import (
     additive_tokens,
+    chat_usage_to_tokens,
     responses_usage_to_tokens,
 )
 
@@ -69,3 +78,41 @@ def test_responses_usage_to_tokens() -> None:
 def test_responses_usage_to_tokens_missing() -> None:
     assert responses_usage_to_tokens(None) == AIInvocationTokens()
     assert responses_usage_to_tokens(ResponsesUsage(input_tokens=5)) == AIInvocationTokens(input=5)
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "expected"),
+    [
+        ("stop", "end_turn"),
+        ("length", "max_tokens"),
+        ("tool_calls", "tool_use"),
+        ("function_call", "tool_use"),
+        ("content_filter", "content_filtered"),
+        ("something_new", "unknown"),
+        (None, "unknown"),
+    ],
+)
+def test_chat_stop_reason(finish_reason: str | None, expected: AIStopReason) -> None:
+    assert chat_stop_reason(finish_reason) == expected
+
+
+def test_chat_usage_cache_and_reasoning() -> None:
+    usage = ChatUsage(
+        prompt_tokens=24318,
+        completion_tokens=40,
+        prompt_tokens_details=ChatPromptTokensDetails(cached_tokens=24316),
+        completion_tokens_details=ChatCompletionTokensDetails(reasoning_tokens=30),
+    )
+    assert chat_usage_to_tokens(usage) == AIInvocationTokens(
+        input=2, cache_read=24316, cache_write=0, output=10, reasoning=30
+    )
+
+
+def test_chat_usage_without_details() -> None:
+    assert chat_usage_to_tokens(ChatUsage(prompt_tokens=123, completion_tokens=46)) == (
+        AIInvocationTokens(input=123, output=46)
+    )
+
+
+def test_chat_usage_none() -> None:
+    assert chat_usage_to_tokens(None) == AIInvocationTokens()

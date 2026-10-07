@@ -1,0 +1,151 @@
+{
+ "timestamp": "2026-10-07T04:38:12Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "d95d5f15-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "get_time",
+      "description": "Current local time for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather and time in Lisbon and Tokyo."
+    },
+    {
+     "role": "assistant",
+     "content": null,
+     "tool_calls": [
+      {
+       "id": "call_a",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Lisbon\"}"
+       }
+      },
+      {
+       "id": "call_b",
+       "type": "function",
+       "function": {
+        "name": "get_time",
+        "arguments": "{\"city\": \"Lisbon\"}"
+       }
+      },
+      {
+       "id": "call_c",
+       "type": "function",
+       "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\": \"Tokyo\"}"
+       }
+      },
+      {
+       "id": "call_d",
+       "type": "function",
+       "function": {
+        "name": "get_time",
+        "arguments": "{\"city\": \"Tokyo\"}"
+       }
+      }
+     ]
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_a",
+     "content": "22C sunny"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_b",
+     "content": "10:00"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_c",
+     "content": "18C rain"
+    },
+    {
+     "role": "tool",
+     "tool_call_id": "call_d",
+     "content": "18:00"
+    }
+   ],
+   "stream": false
+  },
+  "inputTokenCount": 287
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "finish_reason": "stop",
+     "index": 0,
+     "logprobs": null,
+     "message": {
+      "content": "<reasoning>We have weather and time for both cities. Need to present nicely. Also note time zones: Lisbon is UTC+0 (maybe DST), Tokyo UTC+9. Provide summary. Possibly also note conversion? Provide answer.</reasoning>**Lisbon (Portugal)**  \n- **Weather:** 22\u202f\u00b0C, sunny  \n- **Local time:** 10:00\u202fAM  \n\n**Tokyo (Japan)**  \n- **Weather:** 18\u202f\u00b0C, rain  \n- **Local time:** 6:00\u202fPM  \n\nSo while it\u2019s a bright, mild morning in Lisbon, Tokyo is experiencing a cooler, rainy evening. If you need a forecast for the next few days or any other details, just let me know!",
+      "refusal": null,
+      "role": "assistant"
+     }
+    }
+   ],
+   "created": 1791347892,
+   "id": "chatcmpl-0bc2b480-3b5e-4a03-a725-6b64852f5796",
+   "model": "openai.gpt-oss-120b-1:0",
+   "object": "chat.completion",
+   "service_tier": "default",
+   "usage": {
+    "completion_tokens": 154,
+    "prompt_tokens": 287,
+    "total_tokens": 441
+   }
+  },
+  "outputTokenCount": 154
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

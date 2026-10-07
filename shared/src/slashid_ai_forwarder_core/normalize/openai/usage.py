@@ -8,6 +8,7 @@ disjoint.
 from __future__ import annotations
 
 from ...events import AIInvocationTokens
+from .chat.schema import ChatUsage
 from .responses.schema import ResponsesUsage
 
 
@@ -34,4 +35,18 @@ def responses_usage_to_tokens(usage: ResponsesUsage | None) -> AIInvocationToken
         cache_write=input_details.cache_write_tokens if input_details else 0,
         output_total=usage.output_tokens,
         reasoning=output_details.reasoning_tokens if output_details else 0,
+    )
+
+
+def chat_usage_to_tokens(usage: ChatUsage | None) -> AIInvocationTokens:
+    if usage is None:
+        return AIInvocationTokens()
+    prompt_details = usage.prompt_tokens_details
+    completion_details = usage.completion_tokens_details
+    return additive_tokens(
+        input_total=usage.prompt_tokens,
+        cached=prompt_details.cached_tokens if prompt_details else 0,
+        cache_write=prompt_details.cache_write_tokens if prompt_details else 0,
+        output_total=usage.completion_tokens,
+        reasoning=completion_details.reasoning_tokens if completion_details else 0,
     )
