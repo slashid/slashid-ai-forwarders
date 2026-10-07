@@ -55,8 +55,7 @@ class Config(BaseConfig):
     # listings reject `organization_uuid`, so the filter runs over the
     # rows a listing returns.
     organization_uuid: str | None = None
-    # How far behind now the `updated_at.gte` bound sits, and the initial
-    # watermark on a cold start — never a full backfill.
+    # How far behind now the `updated_at.gte` bound sits.
     poll_lag_seconds: int = 120
     # Bounds one tick against the 600 rpm shared with the sync adapter.
     # The local-session listing cannot be ordered, so a tick that hits

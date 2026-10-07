@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from slashid_ai_forwarder_core.platform import Checkpoint
+
 from slashid_anthropic_forwarder.address import deny_address
 from slashid_anthropic_forwarder.compliance.checkpoint import Cursors, FeedCursor
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient
@@ -31,16 +33,13 @@ def the_denial() -> Activity:
     )
 
 
-def a_reader() -> tuple[ComplianceClient, Cursors]:
+def a_reader(saved: datetime | None = None) -> tuple[ComplianceClient, Cursors]:
     client, _ = transport()
+    feeds = {f: FakeCheckpoints() for f in ("activities", "chats", "sessions")}
+    feeds["activities"].value = Checkpoint(saved, None)
     return (
         ComplianceClient(client, api_key="k"),
-        Cursors(
-            **{
-                f: FeedCursor(FakeCheckpoints(), name=f, poll_lag_seconds=LAG)
-                for f in ("activities", "chats", "sessions")
-            }
-        ),
+        Cursors(**{f: FeedCursor(store, name=f) for f, store in feeds.items()}),
     )
 
 
@@ -51,8 +50,9 @@ async def run(
     models: dict[str, str] | None = None,
     organization_uuid: str = ORG,
     now: datetime = NOW,
+    saved: datetime | None = None,
 ) -> DenialCounters:
-    client, cursors = a_reader()
+    client, cursors = a_reader(saved)
     return await read_denials(
         client,
         store=store,
@@ -147,7 +147,12 @@ async def test_the_watermark_advances_to_the_newest_row_seen() -> None:
     newest = max(row["created_at"] for row in body("activities.json")["data"])
     # A tick whose window opens before the newest recorded row: the
     # watermark lands on that row.
-    counters = await run(a_store(), Sink(), now=datetime.fromisoformat(newest) + MINUTE)
+    counters = await run(
+        a_store(),
+        Sink(),
+        now=datetime.fromisoformat(newest) + MINUTE,
+        saved=datetime.fromisoformat(newest) - MINUTE,
+    )
     assert counters.newest is not None
     assert counters.newest.isoformat().startswith(newest[:19])
 
@@ -157,5 +162,5 @@ async def test_the_watermark_never_moves_backwards() -> None:
     # start of that window is the floor: a feed with nothing new in it
     # must not drag the watermark back to whatever the last row happened
     # to be, which would re-read the same rows for ever.
-    counters = await run(a_store(), Sink())
+    counters = await run(a_store(), Sink(), saved=NOW - timedelta(seconds=LAG))
     assert counters.newest == NOW - timedelta(seconds=LAG)

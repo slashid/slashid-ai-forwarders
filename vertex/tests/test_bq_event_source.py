@@ -68,10 +68,14 @@ class _FakeBqClient:
 
 
 class _FakeCheckpointStore:
-    """In-memory ``CheckpointStore`` double for source-level tests."""
+    """In-memory ``CheckpointStore`` double for source-level tests.
+
+    Starts before every fixture row, as a source that has already run would;
+    pass ``Checkpoint(None, None)`` for a cold start.
+    """
 
     def __init__(self, initial: Checkpoint | None = None) -> None:
-        self._value: Checkpoint = initial or Checkpoint(None, None)
+        self._value: Checkpoint = initial or Checkpoint(datetime(2020, 1, 1, tzinfo=UTC), "")
         self.saves: list[Checkpoint] = []
 
     async def load(self) -> Checkpoint:
@@ -209,14 +213,16 @@ async def test_fetch_reads_wildcard_table_pattern() -> None:
     assert expected in client.calls[0].query
 
 
-async def test_fetch_no_checkpoint_omits_where_clause() -> None:
-    src, client, _ = _source(rows=[])
+async def test_fetch_cold_start_pins_the_checkpoint_to_now_and_saves_it() -> None:
+    # No backfill: the first tick reads nothing before itself, and saves the
+    # start so a tick that finds nothing does not slide it forward.
+    src, client, store = _source(rows=[], checkpoint=Checkpoint(None, None))
+    before = datetime.now(UTC)
     await src.fetch()
-    q = client.calls[0].query
-    assert "WHERE" not in q
-    # limit parameter always emitted.
-    param_names = {p.name for p in client.calls[0].parameters}
-    assert "limit" in param_names
+    assert "WHERE (logging_time > @cp_ts" in client.calls[0].query
+    [saved] = store.saves
+    assert saved.id == ""
+    assert saved.timestamp is not None and before <= saved.timestamp <= datetime.now(UTC)
 
 
 async def test_fetch_with_checkpoint_binds_where_params() -> None:

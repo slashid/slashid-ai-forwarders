@@ -34,16 +34,26 @@ class _FakeStore:
 def _cursors() -> tuple[Cursors, dict[str, _FakeStore]]:
     stores = {feed: _FakeStore() for feed in (ACTIVITIES, CHATS, SESSIONS)}
     cursors = Cursors(
-        activities=FeedCursor(stores[ACTIVITIES], name=ACTIVITIES, poll_lag_seconds=LAG),
-        chats=FeedCursor(stores[CHATS], name=CHATS, poll_lag_seconds=LAG),
-        sessions=FeedCursor(stores[SESSIONS], name=SESSIONS, poll_lag_seconds=LAG),
+        activities=FeedCursor(stores[ACTIVITIES], name=ACTIVITIES),
+        chats=FeedCursor(stores[CHATS], name=CHATS),
+        sessions=FeedCursor(stores[SESSIONS], name=SESSIONS),
     )
     return cursors, stores
 
 
-async def test_a_cold_start_is_the_lag_window_not_a_backfill() -> None:
-    cursors, _ = _cursors()
-    assert await cursors.sessions.window_start(now=NOW) == NOW - timedelta(seconds=LAG)
+async def test_a_cold_start_is_now_and_is_saved() -> None:
+    cursors, stores = _cursors()
+    assert await cursors.sessions.window_start(now=NOW) == NOW
+    assert stores[SESSIONS].saves == [Checkpoint(timestamp=NOW, id=None)]
+    assert await cursors.sessions.window_start(now=NOW + timedelta(minutes=5)) == NOW
+
+
+async def test_advance_never_moves_the_watermark_back_past_the_start() -> None:
+    cursors, stores = _cursors()
+    await cursors.sessions.window_start(now=NOW)
+    await cursors.sessions.advance(timestamp=NOW - timedelta(seconds=LAG), drained=True)
+    assert await cursors.sessions.window_start(now=NOW) == NOW
+    assert len(stores[SESSIONS].saves) == 1
 
 
 async def test_a_saved_watermark_is_resumed_verbatim() -> None:
@@ -65,7 +75,7 @@ async def test_a_truncated_drain_does_not_advance_the_watermark() -> None:
     cursors, stores = _cursors()
     before = await cursors.sessions.window_start(now=NOW)
     await cursors.sessions.advance(timestamp=NOW, drained=False)
-    assert stores[SESSIONS].saves == []
+    assert stores[SESSIONS].saves == [Checkpoint(timestamp=NOW, id=None)]
     assert await cursors.sessions.window_start(now=NOW + timedelta(minutes=5)) >= before
 
 

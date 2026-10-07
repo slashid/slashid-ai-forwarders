@@ -33,7 +33,7 @@ from slashid_ai_forwarder_core.normalize.gemini.schema import (
     GeminiRequestBody,
     GeminiResponse,
 )
-from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
+from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore, load_or_start
 
 from .audit_source import AuditEntry, _credential_chain
 
@@ -335,7 +335,8 @@ class BqEventSource:
         The BigQuery and Cloud Logging calls block, so they run in a worker
         thread; the Gemini normalize/finalize/build_event half is async.
         """
-        checkpoint = await self._checkpoint_store.load()
+        # An empty id: ``_build_query`` only applies a checkpoint that has one.
+        checkpoint = await load_or_start(self._checkpoint_store, now=datetime.now(UTC), id="")
         scan = await asyncio.to_thread(self._read_payload_rows, checkpoint)
         if scan.raw_seen == 0:
             return [], None

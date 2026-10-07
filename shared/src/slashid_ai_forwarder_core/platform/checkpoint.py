@@ -16,11 +16,9 @@ class Checkpoint:
     """The polling watermark — ``(timestamp, id)`` of the last processed
     entry. Universal across event sources.
 
-    ``timestamp = None`` means "no entries seen yet". What a source does
-    with that is the source's decision, and the two in this repo differ:
-    Vertex fetches every entry up to its batch bound, while the Anthropic
-    compliance readers start at ``now - POLL_LAG`` instead, because a
-    backfill there would re-emit the whole retention window.
+    ``timestamp = None`` means "no entries seen yet". A source resolves it
+    with ``load_or_start``, which pins the checkpoint to the first tick's
+    time: nothing before install is read, so there is no backfill.
 
     Always a timestamp, **never a feed's page token**: those are
     documented as format-unstable, and they paginate within one tick and
@@ -35,9 +33,25 @@ class CheckpointStore(Protocol):
     """Load/save the polling watermark; both are awaited.
 
     ``load`` returns an empty ``Checkpoint(None, None)`` on the very
-    first tick (before any prior save) — the source then fetches every
-    entry up to the batch bound.
+    first tick (before any prior save).
     """
 
     async def load(self) -> Checkpoint: ...
     async def save(self, checkpoint: Checkpoint) -> None: ...
+
+
+async def load_or_start(
+    store: CheckpointStore, *, now: datetime, id: str | None = None
+) -> Checkpoint:
+    """The saved checkpoint, or on a cold start one pinned to ``now`` and saved.
+
+    Saved at once, not on the first drain: a tick that finds nothing
+    commits nothing, and an unsaved start would slide forward with the clock
+    and drop what arrived between ticks.
+    """
+    saved = await store.load()
+    if saved.timestamp is not None:
+        return saved
+    start = Checkpoint(timestamp=now, id=id)
+    await store.save(start)
+    return start
