@@ -9,6 +9,7 @@ circuit breaker and disable enforcement entirely.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -36,6 +37,8 @@ from .platform import Backends, open_backends
 from .store import PendingStore
 
 log = logging.getLogger(__name__)
+
+_sleep = asyncio.sleep
 
 
 async def _capture_safely(capture: BlobSink, request_id: str, headers: dict, body: bytes) -> None:
@@ -107,6 +110,35 @@ def create_app(
             held["client"] = httpx.AsyncClient(timeout=config.request_timeout_seconds)
         return held["client"]
 
+    async def run_tick() -> dict[str, Any]:
+        if store is None:
+            return {"flushed": 0}
+        guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
+        async with guard as held:
+            if not held:
+                # Not an error: the next tick picks the same work up from the store.
+                return {"flushed": 0, "skipped": True}
+            counters: dict[str, int] = {}
+            # Readers first: a `complete` here can make a record ready,
+            # and it should go out on this tick rather than the next.
+            try:
+                counters = await run_readers(
+                    store=store, config=config, http=http(), cursors=cursors
+                )
+            except Exception:
+                # Never a failed tick: the next one re-runs the pass from its watermark.
+                log.exception("tick: the reader pass failed; flushing anyway")
+            flushed = await flush_due(store, config=config, client=http())
+        return {"flushed": flushed, **counters}
+
+    async def tick_forever() -> None:
+        while True:
+            await _sleep(config.tick_interval_seconds)
+            try:
+                await run_tick()
+            except Exception:
+                log.exception("tick failed")
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The routes read these names when a request arrives, so rebinding
@@ -130,6 +162,14 @@ def create_app(
             # Registered last, so it closes first: before the platform, and
             # even if the platform's exit raises.
             stack.push_async_callback(close_client)
+            if config.platform == "local":
+                ticker = asyncio.create_task(tick_forever())
+
+                async def stop_ticker() -> None:
+                    ticker.cancel()
+                    await asyncio.gather(ticker, return_exceptions=True)
+
+                stack.push_async_callback(stop_ticker)
             yield
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -209,28 +249,7 @@ def create_app(
         if token is None or not await authorize(token):
             log.warning("tick refused: no acceptable scheduler token")
             return Response(status_code=401)
-        if store is None:
-            return JSONResponse({"flushed": 0})
-        guard = lease.hold(TICK_LEASE) if lease is not None else contextlib.nullcontext(True)
-        async with guard as held:
-            if not held:
-                # Not an error. Cloud Scheduler retries nothing, and the
-                # next fire picks the same work up from the store.
-                return JSONResponse({"flushed": 0, "skipped": True})
-            counters: dict[str, int] = {}
-            # Readers first: a `complete` here can make a record ready,
-            # and it should go out on this tick rather than the next.
-            try:
-                counters = await run_readers(
-                    store=store, config=config, http=http(), cursors=cursors
-                )
-            except Exception:
-                # Never a failed tick. The scheduler does not retry
-                # (retry_count = 0); the next cron fire re-runs the pass
-                # from its watermark.
-                log.exception("tick: the reader pass failed; flushing anyway")
-            flushed = await flush_due(store, config=config, client=http())
-        return JSONResponse({"flushed": flushed, **counters})
+        return JSONResponse(await run_tick())
 
     @app.post("/{path:path}")
     async def hook(request: Request, background: BackgroundTasks) -> Response:

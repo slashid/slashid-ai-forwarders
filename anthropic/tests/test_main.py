@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -9,7 +10,7 @@ import pathlib
 import re
 import subprocess
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -535,3 +536,121 @@ def test_local_mode_loads_no_google_module(tmp_path: Path) -> None:
     }
     done = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+@pytest.fixture
+def fast_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = asyncio.sleep
+
+    async def quick(_seconds: float) -> None:
+        await real(0.005)
+
+    monkeypatch.setattr(main, "_sleep", quick)
+
+
+async def _until(done: Callable[[], bool], *, seconds: float = 5.0) -> None:
+    async with asyncio.timeout(seconds):
+        while not done():
+            await asyncio.sleep(0.005)
+
+
+def _opened(
+    store: FirestorePendingStore,
+) -> Callable[[], contextlib.AbstractAsyncContextManager[Backends]]:
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        yield Backends(
+            store=store,
+            lease=_RecordingLease(),
+            cursors=_cursors()[0],
+            tick_auth=_accepts_the_scheduler,
+            capture=None,
+        )
+
+    return opened
+
+
+async def _no_readers(**_: Any) -> dict[str, int]:
+    return {}
+
+
+async def test_a_local_platform_drives_its_own_ticks(
+    monkeypatch: pytest.MonkeyPatch, fast_ticks: None
+) -> None:
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    store = a_store(join_wait=timedelta(seconds=-1))
+    await seed(store)
+    sink = Sink()
+    app = create_app(_config(platform="local"), backends=_opened(store), client=sink.client())
+    async with app.router.lifespan_context(app):
+        await _until(lambda: sink.request_ids == [ADDRESS])
+
+
+async def test_a_failed_tick_does_not_stop_the_next(
+    monkeypatch: pytest.MonkeyPatch, fast_ticks: None
+) -> None:
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    real_flush = main.flush_due
+    calls: list[int] = []
+
+    async def flaky(store: Any, **kwargs: Any) -> int:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("sink down")
+        return await real_flush(store, **kwargs)
+
+    monkeypatch.setattr(main, "flush_due", flaky)
+    store = a_store(join_wait=timedelta(seconds=-1))
+    await seed(store)
+    sink = Sink()
+    app = create_app(_config(platform="local"), backends=_opened(store), client=sink.client())
+    async with app.router.lifespan_context(app):
+        await _until(lambda: sink.request_ids == [ADDRESS])
+    assert len(calls) >= 2
+
+
+async def test_the_timer_is_stopped_before_the_platform_closes(
+    monkeypatch: pytest.MonkeyPatch, fast_ticks: None
+) -> None:
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    ticks: list[int] = []
+    closed: list[int] = []
+
+    async def counting(store: Any, **_: Any) -> int:
+        ticks.append(len(closed))
+        return 0
+
+    monkeypatch.setattr(main, "flush_due", counting)
+
+    @contextlib.asynccontextmanager
+    async def opened() -> AsyncIterator[Backends]:
+        yield Backends(
+            store=a_store(),
+            lease=_RecordingLease(),
+            cursors=_cursors()[0],
+            tick_auth=_accepts_the_scheduler,
+            capture=None,
+        )
+        closed.append(1)
+        await asyncio.sleep(0.05)  # a live timer would tick here, after the close
+
+    app = create_app(_config(platform="local"), backends=opened, client=Sink().client())
+    async with app.router.lifespan_context(app):
+        await _until(lambda: len(ticks) >= 2)
+    settled = len(ticks)
+    await asyncio.sleep(0.05)
+    assert len(ticks) == settled
+    assert set(ticks) == {0}  # no tick ran after the platform closed
+
+
+async def test_gcp_starts_no_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    slept: list[float] = []
+
+    async def counting(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(main, "_sleep", counting)
+    app = create_app(_config(), backends=_opened(a_store()), client=Sink().client())
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.05)
+    assert slept == []
