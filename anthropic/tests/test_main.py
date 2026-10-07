@@ -9,6 +9,7 @@ import logging
 import os
 import pathlib
 import re
+import sqlite3
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Callable
@@ -597,6 +598,37 @@ async def test_a_failed_tick_does_not_stop_the_next(
     async with app.router.lifespan_context(app):
         await _until(lambda: sink.request_ids == [ADDRESS])
     assert len(calls) >= 2
+
+
+def _lease_expiry(data_dir: Path) -> int | None:
+    db = sqlite3.connect(f"file:{data_dir / 'data.sqlite'}?mode=ro", uri=True)
+    try:
+        return db.execute("select expires_us from leases").fetchone()[0]
+    finally:
+        db.close()
+
+
+async def test_a_shutdown_in_the_middle_of_a_tick_releases_the_lease(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fast_ticks: None
+) -> None:
+    """A clean stop must not leave the next process skipping ticks until the
+    lease lapses."""
+    monkeypatch.setattr(main, "run_readers", _no_readers)
+    started = asyncio.Event()
+
+    async def hangs(store: Any, **_: Any) -> int:
+        started.set()
+        await asyncio.Event().wait()
+        return 0
+
+    monkeypatch.setattr(main, "flush_due", hangs)
+    config = _config(platform="local", project_id=None, data_dir=str(tmp_path))
+    app = create_app(config, backends=lambda: open_backends(config), client=Sink().client())
+    async with app.router.lifespan_context(app):
+        async with asyncio.timeout(5):
+            await started.wait()
+        assert _lease_expiry(tmp_path) is not None  # held mid-tick
+    assert _lease_expiry(tmp_path) is None
 
 
 async def test_the_timer_is_stopped_before_the_platform_closes(
