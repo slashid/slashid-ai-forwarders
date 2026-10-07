@@ -3,7 +3,15 @@ name: Release Codex
 on:
   push:
     tags: ["codex-v*"]
-  # A manual run builds and checks the wheel and publishes nothing.
+  # The wheel carries the shared core, so a change to either can break it.
+  # A pull request or a manual run builds and checks the wheel and publishes
+  # nothing.
+  pull_request:
+    paths:
+      - ".github/workflows/release-codex.yml"
+      - "codex/**"
+      - "shared/src/**"
+      - "uv.lock"
   workflow_dispatch:
 
 permissions:
