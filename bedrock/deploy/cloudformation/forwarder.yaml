@@ -134,7 +134,7 @@ Resources:
     DependsOn: ForwarderLogGroup
     Properties:
       FunctionName: !Sub ${AWS::StackName}-forwarder
-      Runtime: python3.12
+      Runtime: python3.14
       Handler: slashid_bedrock_forwarder.handler.lambda_handler
       Role: !GetAtt ForwarderRole.Arn
       MemorySize: !Ref LambdaMemoryMB
