@@ -20,11 +20,12 @@ Bedrock call ──→ MIL ──→ CloudWatch Logs ──┐
 
 On terminal failure, the Lambda exhausts AWS's two built-in async-invoke retries and CloudWatch's `Errors` metric increments — set an alarm on it. (No SQS DLQ is wired up in v1; add `DeadLetterConfig` to `forwarder.yaml` if you want replay-capable durability.)
 
-Record bodies are parsed as `anthropic-message`, `anthropic-stream`, `bedrock-converse`, `openai-responses` or `openai-responses-stream` and reported in `parsed_as` (`unknown` when none match).
+Record bodies are parsed as `anthropic-message`, `anthropic-stream`, `bedrock-converse`, `openai-responses`, `openai-responses-stream`, `openai-chat` or `openai-chat-stream` and reported in `parsed_as` (`unknown` when none match).
 
 ## Known limitations
 
 - `bedrock-mantle` (`bedrock-mantle.<region>.api.aws`, the OpenAI-compatible Chat Completions/Responses endpoint) is not recorded by Model Invocation Logging, so calls through it are invisible to the forwarder.
+- gpt-oss on `/openai/v1/chat/completions` inlines its reasoning in the message text as `<reasoning>…</reasoning>`; it is recorded as a reasoning block, but its `usage` has no reasoning token count, so those tokens are counted as output.
 
 ## Install
 

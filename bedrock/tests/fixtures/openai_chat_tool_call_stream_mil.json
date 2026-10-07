@@ -1,0 +1,451 @@
+{
+ "timestamp": "2026-10-07T04:38:04Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "08341b94-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Lisbon? Use the tool."
+    }
+   ],
+   "stream": true,
+   "stream_options": {
+    "include_usage": true
+   }
+  },
+  "inputTokenCount": 130,
+  "cacheReadInputTokenCount": 0,
+  "cacheWriteInputTokenCount": 0
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": [
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "",
+       "role": "assistant"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "KjWQgI5ISBNwfiSEF531fH46fDrLFeAn08Y804yp19OC6wx8sYvEwnb0brHszgTzEwQdIHTTfcCaUYUyK9c"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "BU7mot5cq7s7jqWTYTKNqdVjy1GGFz1G5nwOnyIk2PDPw2ojHvRaNGNIYtbLpXr0pL0rgGynXkE4iQ1QoATAj5yDeClGCthX7VbsUjJ0",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "8qWKnTYZGd7lrdluxEcP8mbBx8zGOW84RwKEzeEB5FQPGRML0gmwGsmoN64FarFdAE9nUuwfI80Hg6HICP26mqx4GcFfsPRNOc5MXtb"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "MsCyU3cND89nv9OXwIoRrNLtAYwyxlUR7UfuqbUveek7BFrfHch5CBZmNk2IQZhRoC17iz4bIcqGTRBnbfwY1LH7OqEc8cleR9rZGIGGl7bzbwnTjT5LhADWexR3",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "JMH4dFPjcdbwyJoOPCPbPhcLyGj9E1KnUxbzId6fFvlbJbGap9NbMJpadVy7bE4M6F5z6jGwdTcgaqS3cvwVYSp7uus0o8yex50a4MBdI55HSV3q7qTQlvOM"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "zuuHyfJv8OiP73sHlvCSCNtwtquENkE0fZft8opAWiuJZEZDEqPgIGodLWacvjcX3OI7lBDtSzm",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "c01N5NXs1Hd4L9YQlUKFkJiHOX9coh0fzHthm4EUKK7FEN0l6baH4hPFVXiQpIx2zeDPzxp7ZaLeDDYaHIq0PySkc9t2XgL2K"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "sc2GXzNWxz88SuUd8PvEZyW3QKItw9l7GuU3cVO28EwmE4dramby",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "content": "<reasoning>We need to use the get_weather tool with city \"Lisbon\". Then respond with the weather info.</reasoning>"
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "gpyRCYvSiSr8POcOwoAk9LLyE1fgdAMDo"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "XDb6KWTlrCHjPrReSPN9ngfT8xpPkxnME6f2Jnu4vXGfxFpdAw6qXxVYCkuiOveTk2dEGxkW5ARNISJu5wQLg6b7GnNEpAxCoCdXPw6iotkjZ",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "3omCZyEcH52VJDyxsWTX8tenH1zQJG89MihcKjl3EUFq2OZwK2dASQGlOdYIl2E0BETxCCYBJHUR29jecpAGJX6WOhphA3NV0Zp3Q6cIc2aCPCYKZBYiOZ"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "cb7waXPVbrCpiJ98cWo1o9P54PoqMDXV9QXodyVqKBGRacJgeLM99mUVfKk6BeBPwWLCcaOZklUqiGW7UihDc0ClbvIFmnH9Opq1uWxAcqPpvfpYQdhgbc75",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "7FW7QNyzsDAHQ2QIm7pnr9ZoKa3B2fR9lum78Iixl8CZAsDM4v5ZLhLTAIYCTBW3v9E1Fikd3GZuJScIoVJSxsX2YjFsNkyZVSOiHRf2gpHY"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "2xQz02YjK2hjRLrrDRbMmD9kyJKztpGViVlNOkKdOXdMvLJZO9mOTh895y3ScDrMJv9VXHv7moma3vxh9FvdvV",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "XClKHnM6krBSHbATnqMxjNsUiwNCOScot0snFWRrSuJOkHcl1QpE4tCR8OKBiJmwPk1ur5qMD8SVH4vb5C0r1OxkuHIKF4YXXZQrWozfJyHeTJE92gTZoeJP3MF"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "rq4xFwuo7tgaoMpEK7mj1gXaiJaS8ovh7rM5dMesRuj",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "rThyDqEfUeVYZ3OUqqlb8S2vCcBaJ4R11MuazCFxmvXrkbHplNp9DNEUCcsHorLi6h4zI8YDENgMqItOAiy4WMsP0qy"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "9fdZKAVhaJxQlZgR9ht0AOJZQcXkeObNptVegUn7qzlOSFNUQGMxdHP5UHdLVDOJUGWM5fVokBrGn1BbojQOkqcW680",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "OcPmdisl5zYo7mpKdjqanZmLiDXgMizz9Cr4J0VPLidJbHQf1gpj6xX6GSVPozHbA4xHObqhbEDn2yRQ9MkTP4d1sElr9kFRX449Jh"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "bwOlpGi275pXthujHPUnNTp0YlOIbpHzs4gwXyOYSq3f7h9UXNh779xWF",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "Qh0rF82LRb9jALA2BrFgpMoTTEc5oTxXE7V31TFtpR4RfTsBbiz5ezv9DeN6Y5WJ1VQcTkHvjScAQvagFIJ0jD163USp1UeqgRyal7hkOm"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "VJWSW9FANQucnIHL17TyKi8DoRNSVKk0v5Uap8DrQXnzKeNNIsUOIKzrx2uNCdhUwnmHIYnWyF8INznGnZFTX",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "EDnovkIZrDKKP6hATOzhhYEQ1pF8xFViP6Y4RoEJqBJ"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "stjRi550o3OTdaUvxfH44r0iQJmePMgpHMUwOQkQM",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "eOPYlq7IOcGgQWp3gr6ZphbHKFLUoXf3DJstkJBMvVGGUNqmjp7opDCI51NactsxHP4TVCCuu90GFwVkLK3ldNpVmcxTRkjpmcAVijWunTSWPeeQXuOcoTSXCLRK8"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "o8OyfD9ZTUcQNeIkljHiPl0fsRJlzphpifU6VgV9By9fj24ojV5Eo7MtBXBoVLmrgxAUrteuWCGyzh8qXG3X3b5DbBwbit6vyzQLWNYt7oW6mFFJOH",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "z8SVUfVqQdhW6OBsYj2PteldcJPyGPQ3NwMJ2fYbIYRN8FEsyWLbt5AXhyaowHhbHkm2ZgDqgAPAsaPnH5GXJAGX7lpcukbkO8EChwR0aqD6GidqkLVWO78uJI"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "BkMsWs5mwfzhPsYI42kjIyDSnrkyEi8PFThdr5J7flE4q8VQxJzAeBc7TwmqLVwgWhvmosg5grG0MI9",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "XQZ0fHIa6ala5y8CxudiJXkRAmLHdHJhTok9iJfHcn2PsY1KLu3Z"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "gXeC1aOgHNCwT4hDfTW0lVslbwxMyoEjZk5zeUQT2a74mYmql0ZLgLz",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "54Xss65JKATHAE1FrGo5mfruBqMNSunxPIANF1IbUCpPp6mx7H0cAOOH5G0vnbGOF"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "07myno6HdRgazeozWBDZ0BSnI1sTyEcPA3497ghpCOLpA3kJasVX1KoS3bWtYAuGsGWjxbgI6M9zzmy",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "IoOSjeWAFNkejkPTJDdxuCJjaQHnmgj6eWCpBRbmIXhNw"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "eGYN4FSZGIEG86aWNfH5NweCjTFuOVET5NRmZMZSePj1zk4iAbteVg6PeF0wDhhiyilvKxjRwu8UZI9erYe8MjzjalsB",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "sz5bPvVvCyAHk9VWlcLHujH13wgDZyn4fsE7KRxvO8xWqbz8HTtabijdiEXDirW9XoDKpQOxxxc9KauW3zgITQWUVh4"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "PPiPWc2QtBRmVFtIPDTvn07fjKnq3HVT",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "7hmAf3vNfE2nFjV4BjVkGwmQZ42LMT2INIeQwakgy"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "JO7aVWg0eQGW4qoz6EwbRQ5JkTu7da9a9M6sHsnoybXzhaYnANgivlQZUydHKsFW2rUsGBLQchM8kJzvOoNEtLv1g6fIQQzAiC1xnA8j0nqqxh121CNh5nw9Le",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "tool_calls": [
+        {
+         "function": {
+          "arguments": "{\n  \"city\": \"Lis",
+          "name": "get_weather"
+         },
+         "id": "chatcmpl-tool-a719ec3747ffe9d5",
+         "index": 0,
+         "type": "function"
+        }
+       ]
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "IgR8BnFWk7lYeiSuP5wkmYEE8QwZshx2iDTY1aOY2JQ5f2cSdkNTJ5ZGN30xj4f0fd8TLqUyE3gi2iAOKsrxwszgE6MS93hAwMBQXzcK4Mm"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "wWs3MsQIMPcMzOWIASUcPEyTRQwLqxtWwxqHkUBdT2uvWpVfzGuYFExPfXpRqLPrKzNcoM",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {
+       "tool_calls": [
+        {
+         "function": {
+          "arguments": "bon\"\n}"
+         },
+         "index": 0,
+         "type": "function"
+        }
+       ]
+      },
+      "finish_reason": null,
+      "index": 0,
+      "obfuscation": "yTd8BSacp4Km5zoxUcLk1ioGLSYeXOXAiB1RvBvoZfVJcxznuOSgn2A9ZcMq1d6n4fmCXMbvq8IkKGSD6xKbV3fA91PXGZnOjag6wwaIJ"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "2RSOSa6x1WXteKlaToLQfwYOkKoDB0qExhEH0mc9zy37cgkLu93fmdMnkxAmOvntUlPoOUhsPItwQeFxRiyFpDdMIFDkE92Y",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [
+     {
+      "delta": {},
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "obfuscation": "n0ICIMmexLK9DvZgy1LLuqSwjJt5PkpT4Qm3CH7NP1epOeZ"
+     }
+    ],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "h8wAccLyhZJjsIpXL15GR3Yh2wfZ8Aa9ZICWetiyzj9PPN3fgSGWmVZp1KcyxamjSUZwqj8GodnHBkkXsMWAUjL4GKx",
+    "object": "chat.completion.chunk",
+    "service_tier": "default"
+   },
+   {
+    "choices": [],
+    "created": 1791347884,
+    "id": "chatcmpl-3e99367a-6ec5-4f01-81e5-c52e921a4e37",
+    "model": "openai.gpt-oss-120b-1:0",
+    "obfuscation": "I4SKwKNqBpGwlecUjrTdFxci5YEx5pxg0K9xv3wNypGZJ8LJNxb",
+    "object": "chat.completion.chunk",
+    "service_tier": "default",
+    "usage": {
+     "completion_tokens": 50,
+     "prompt_tokens": 130,
+     "total_tokens": 180
+    }
+   }
+  ],
+  "outputTokenCount": 50
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}

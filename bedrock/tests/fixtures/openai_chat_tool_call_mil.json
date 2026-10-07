@@ -1,0 +1,85 @@
+{
+ "timestamp": "2026-10-07T04:38:03Z",
+ "accountId": "123456789012",
+ "region": "us-east-2",
+ "requestId": "33856fc2-0000-4000-8000-000000000000",
+ "operation": "ChatCompletions",
+ "modelId": "openai.gpt-oss-120b-1:0",
+ "input": {
+  "inputContentType": "application/json",
+  "inputBodyJson": {
+   "model": "openai.gpt-oss-120b-1:0",
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "What is the weather in Lisbon? Use the tool."
+    }
+   ],
+   "stream": false
+  },
+  "inputTokenCount": 130
+ },
+ "output": {
+  "outputContentType": "application/json",
+  "outputBodyJson": {
+   "choices": [
+    {
+     "finish_reason": "tool_calls",
+     "index": 0,
+     "logprobs": null,
+     "message": {
+      "content": "<reasoning>We need to call get_weather with city Lisbon.</reasoning>",
+      "refusal": null,
+      "role": "assistant",
+      "tool_calls": [
+       {
+        "function": {
+         "arguments": "{\n  \"city\": \"Lisbon\"\n}",
+         "name": "get_weather"
+        },
+        "id": "chatcmpl-tool-84e4cff31f056f81",
+        "type": "function"
+       }
+      ]
+     }
+    }
+   ],
+   "created": 1791347883,
+   "id": "chatcmpl-437794a1-2b10-4228-a24a-50d79704335c",
+   "model": "openai.gpt-oss-120b-1:0",
+   "object": "chat.completion",
+   "service_tier": "default",
+   "usage": {
+    "completion_tokens": 39,
+    "prompt_tokens": 130,
+    "total_tokens": 169
+   }
+  },
+  "outputTokenCount": 39
+ },
+ "identity": {
+  "arn": "arn:aws:iam::123456789012:user/test-user"
+ },
+ "schemaType": "ModelInvocationLog",
+ "schemaVersion": "1.0"
+}
