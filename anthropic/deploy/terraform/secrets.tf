@@ -2,7 +2,7 @@
 # configured. The push token is unconditional: both capabilities push.
 
 resource "google_secret_manager_secret" "push_token" {
-  secret_id = "slashid_anthropic_push_token"
+  secret_id = "${var.secret_prefix}_push_token"
 
   replication {
     auto {}
@@ -24,7 +24,7 @@ resource "google_secret_manager_secret_version" "push_token" {
 
 resource "google_secret_manager_secret" "signing_secret" {
   count     = local.signing_secret_set ? 1 : 0
-  secret_id = "slashid_anthropic_signing_secret"
+  secret_id = "${var.secret_prefix}_signing_secret"
 
   replication {
     auto {}
@@ -47,7 +47,7 @@ resource "google_secret_manager_secret_version" "signing_secret" {
 
 resource "google_secret_manager_secret" "compliance_key" {
   count     = local.compliance_enabled ? 1 : 0
-  secret_id = "slashid_anthropic_compliance_key"
+  secret_id = "${var.secret_prefix}_compliance_key"
 
   replication {
     auto {}
@@ -70,7 +70,7 @@ resource "google_secret_manager_secret_version" "compliance_key" {
 
 resource "google_secret_manager_secret" "ghcr_token" {
   count     = var.ghcr_username == "" ? 0 : 1
-  secret_id = "slashid_anthropic_ghcr_token"
+  secret_id = "${var.secret_prefix}_ghcr_token"
 
   replication {
     auto {}
