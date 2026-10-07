@@ -1,7 +1,7 @@
 """OpenAI Chat Completions → NormalizedInvocation.
 
 ``to_normalized`` is the pure walk; the async entry points match the
-Bedrock ``_ToInvocation`` protocol and ignore ``config``. Models served
+Bedrock ``_ToInvocation`` protocol and add the attachments, which may need S3. Models served
 through Bedrock's OpenAI endpoint (gpt-oss) inline their reasoning as a
 leading ``<reasoning>…</reasoning>`` span of the assistant text.
 """
@@ -25,6 +25,7 @@ from ..data_url import decode_data_url
 from ..merge import Role, merge_same_role
 from ..stop_reasons import chat_stop_reason
 from ..usage import chat_usage_to_tokens
+from .attachments import extract_attachments
 from .schema import (
     ChatCompletion,
     ChatFilePart,
@@ -57,18 +58,22 @@ def to_normalized(request: ChatRequest, response: ChatCompletion) -> NormalizedI
 async def chat_to_normalized_invocation(
     request: ChatRequest, response: ChatCompletion, *, config: BaseConfig
 ) -> NormalizedInvocation:
-    del config
-    return to_normalized(request, response)
+    normalized = to_normalized(request, response)
+    normalized.accessed_files = await extract_attachments(request, config=config)
+    return normalized
 
 
 async def chat_stream_to_normalized_invocation(
     request: ChatRequest, response: ChatStream, *, config: BaseConfig
 ) -> NormalizedInvocation:
-    del config
     final = accumulate_stream(response)
-    if final is None:
-        return NormalizedInvocation(input=_request_to_input(request))
-    return to_normalized(request, final)
+    normalized = (
+        NormalizedInvocation(input=_request_to_input(request))
+        if final is None
+        else to_normalized(request, final)
+    )
+    normalized.accessed_files = await extract_attachments(request, config=config)
+    return normalized
 
 
 def _request_to_input(request: ChatRequest) -> NormalizedInvocationInput:

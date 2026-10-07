@@ -970,3 +970,27 @@ async def test_openai_chat_rejected_request_stays_unknown() -> None:
     normalized = await normalize_record(record, config=_CONFIG)
     assert record["_parsed_as"] == "unknown"
     assert normalized.output.message is None
+
+
+@pytest.mark.parametrize(
+    ("fixture", "name", "media_type"),
+    [
+        ("openai_chat_image_data_url_mil.json", "image.png", "image/png"),
+        ("openai_chat_image_data_url_stream_mil.json", "image.png", "image/png"),
+        ("openai_chat_file_pdf_data_mil.json", "secret.pdf", "application/pdf"),
+    ],
+)
+async def test_openai_chat_inline_attachments_are_hashed(
+    fixture: str, name: str, media_type: str
+) -> None:
+    record = _fixture(fixture)
+    normalized = await normalize_record(record, config=_CONFIG)
+    (file,) = normalized.accessed_files
+    assert (file.name, file.media_type, file.provenance) == (name, media_type, "attachment")
+    assert set(file.content_hashes or {}) == {"sha256", "sha1", "md5"}
+    assert file.byte_length
+
+
+async def test_openai_chat_without_attachments_reports_no_files() -> None:
+    normalized = await normalize_record(_fixture("openai_chat_trivial_mil.json"), config=_CONFIG)
+    assert normalized.accessed_files == []

@@ -27,6 +27,7 @@ Record bodies are parsed as `anthropic-message`, `anthropic-stream`, `bedrock-co
 - `bedrock-mantle` (`bedrock-mantle.<region>.api.aws`, the OpenAI-compatible Chat Completions/Responses endpoint) is not recorded by Model Invocation Logging, so calls through it are invisible to the forwarder.
 - gpt-oss on `/openai/v1/chat/completions` inlines its reasoning in the message text as `<reasoning>…</reasoning>`; it is recorded as a reasoning block, but its `usage` has no reasoning token count, so those tokens are counted as output.
 - Some Chat Completions models (Gemma, Magistral, Kimi K2 Thinking) write tool calls as plain text instead of `tool_calls`; those are not recorded as tool uses.
+- Chat Completions images and files given as `s3://` references (the only persisted source the endpoint takes) are hashed only if the Lambda role can read the object, which needs `s3:GetObject` on that bucket beyond the offload bucket; otherwise they are recorded by name with no hashes. Inline `data:` attachments are always hashed.
 
 ## Install
 
