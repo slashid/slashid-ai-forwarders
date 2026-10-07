@@ -13,7 +13,7 @@ from typing import cast
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 
 from fake_firestore import FakeFirestore
-from slashid_ai_forwarder_core.platform import Checkpoint
+from slashid_ai_forwarder_core.platform import Checkpoint, load_or_start
 from slashid_ai_forwarder_core.platform.gcp.firestore import FirestoreCheckpointStore
 
 
@@ -77,3 +77,33 @@ async def test_save_null_checkpoint_round_trips_as_empty() -> None:
     await store.save(Checkpoint(None, None))
     cp = await store.load()
     assert cp == Checkpoint(None, None)
+
+
+class _Memory:
+    def __init__(self, value: Checkpoint) -> None:
+        self.value = value
+        self.saves: list[Checkpoint] = []
+
+    async def load(self) -> Checkpoint:
+        return self.value
+
+    async def save(self, checkpoint: Checkpoint) -> None:
+        self.value = checkpoint
+        self.saves.append(checkpoint)
+
+
+async def test_load_or_start_pins_and_saves_a_cold_start() -> None:
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    store = _Memory(Checkpoint(None, None))
+    assert await load_or_start(store, now=now, id="") == Checkpoint(now, "")
+    assert store.saves == [Checkpoint(now, "")]
+    later = datetime(2026, 10, 8, tzinfo=UTC)
+    assert await load_or_start(store, now=later, id="") == Checkpoint(now, "")
+    assert len(store.saves) == 1
+
+
+async def test_load_or_start_resumes_a_saved_checkpoint_untouched() -> None:
+    saved = Checkpoint(datetime(2026, 10, 1, tzinfo=UTC), "x")
+    store = _Memory(saved)
+    assert await load_or_start(store, now=datetime(2026, 10, 7, tzinfo=UTC)) == saved
+    assert store.saves == []

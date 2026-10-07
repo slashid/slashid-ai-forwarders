@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
+from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore, load_or_start
 
 log = logging.getLogger(__name__)
 
@@ -36,27 +36,24 @@ class FeedCursor:
     class serves the Firestore-backed deployment and the tests.
     """
 
-    def __init__(self, store: CheckpointStore, *, name: str, poll_lag_seconds: int) -> None:
+    def __init__(self, store: CheckpointStore, *, name: str) -> None:
         self._store = store
         self._name = name
-        self._lag = timedelta(seconds=poll_lag_seconds)
 
     async def window_start(self, *, now: datetime) -> datetime:
         """The lower bound for this tick.
 
         An empty checkpoint means the credential was just added, and the
-        answer is **not** Vertex's "fetch everything": a compliance
-        backfill would re-emit the whole retention window as standalone
-        events. Start one lag window back and let a backfill be an
+        answer is ``now``, saved: a compliance backfill would re-emit the
+        whole retention window as standalone events, so it has to be an
         explicit decision someone makes on purpose.
         """
-        saved = await self._store.load()
-        if saved.timestamp is None:
-            return now - self._lag
-        return saved.timestamp
+        return (await load_or_start(self._store, now=now)).timestamp or now
 
     async def advance(self, *, timestamp: datetime, id: str | None = None, drained: bool) -> None:
-        """Move the watermark, but only after a drain that finished."""
+        """Move the watermark, but only after a drain that finished, and never
+        back past where it started: ``now - lag`` on the first tick is older
+        than the install."""
         if not drained:
             saved = await self._store.load()
             log.warning(
@@ -65,6 +62,9 @@ class FeedCursor:
                 saved.timestamp,
                 await self.window_age_seconds(now=timestamp),
             )
+            return
+        saved = await self._store.load()
+        if saved.timestamp is not None and timestamp < saved.timestamp:
             return
         await self._store.save(Checkpoint(timestamp=timestamp, id=id))
 

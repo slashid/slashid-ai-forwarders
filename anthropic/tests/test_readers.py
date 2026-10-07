@@ -20,10 +20,7 @@ ORG = "11111111-1111-1111-1111-111111111111"
 
 def cursors() -> Cursors:
     return Cursors(
-        **{
-            f: FeedCursor(FakeCheckpoints(), name=f, poll_lag_seconds=120)
-            for f in ("activities", "chats", "sessions")
-        }
+        **{f: FeedCursor(FakeCheckpoints(), name=f) for f in ("activities", "chats", "sessions")}
     )
 
 

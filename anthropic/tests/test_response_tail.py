@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from slashid_ai_forwarder_core.platform import Checkpoint
 
 from slashid_anthropic_forwarder.compliance.client import ComplianceClient, TranscriptTooLong
 from slashid_anthropic_forwarder.compliance.responses import read_responses
@@ -145,7 +146,9 @@ async def test_the_budget_stops_the_reader_and_holds_its_watermarks() -> None:
     )
     assert asyncio.get_running_loop().time() - started < 2
     assert counters.budget_exhausted
-    assert sessions.saves == [] and chats.saves == []
+    # Only the cold start is saved; no drain finished, so nothing advances it.
+    assert sessions.saves == [Checkpoint(AFTER_CORPUS, None)]
+    assert chats.saves in ([], [Checkpoint(AFTER_CORPUS, None)])
 
 
 async def test_a_transcript_over_the_cap_stops_being_read() -> None:

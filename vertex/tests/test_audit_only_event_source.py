@@ -160,7 +160,10 @@ def _fake_log_entry(
 
 class _FakeCheckpointStore:
     def __init__(self, initial: Checkpoint | None = None) -> None:
-        self._value = initial if initial is not None else Checkpoint(None, None)
+        # Before every fixture entry, as a source that has already run would.
+        self._value = (
+            initial if initial is not None else Checkpoint(datetime(2020, 1, 1, tzinfo=UTC), "")
+        )
         self.saves: list[Checkpoint] = []
 
     async def load(self) -> Checkpoint:
@@ -477,3 +480,24 @@ async def test_fetch_propagates_user_agent_to_wire_event() -> None:
     events, _ = await source.fetch()
     assert len(events) == 1
     assert events[0].user_agent == "google-cloud-sdk/1.2.3"
+
+
+async def test_fetch_cold_start_pins_the_checkpoint_to_now_and_saves_it() -> None:
+    from slashid_vertex_forwarder.audit_only_source import AuditOnlyEventSource
+
+    store = _FakeCheckpointStore(Checkpoint(None, None))
+    fake_client = _FakeLoggingClient([])
+    source = AuditOnlyEventSource(
+        logging_client=cast(LoggingClient, fake_client),
+        checkpoint_store=store,
+        project_id="p",
+        regions=["r"],
+        observed_models=[],
+        max_entries_per_tick=100,
+        config=_config(),
+    )
+    before = datetime.now(UTC)
+    await source.fetch()
+    [saved] = store.saves
+    assert saved.timestamp is not None and before <= saved.timestamp <= datetime.now(UTC)
+    assert f'timestamp>="{saved.timestamp.isoformat()}"' in fake_client.calls[0]["filter_"]

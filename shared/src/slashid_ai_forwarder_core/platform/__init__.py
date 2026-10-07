@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
-from .checkpoint import Checkpoint, CheckpointStore
+from .checkpoint import Checkpoint, CheckpointStore, load_or_start
 from .lease import TickLease
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     "SchedulerAuth",
     "TickLease",
     "get",
+    "load_or_start",
 ]
 
 # Whether a bearer token presented to a tick route belongs to the

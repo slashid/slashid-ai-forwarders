@@ -34,13 +34,14 @@ import asyncio
 import json
 import logging
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from slashid_ai_forwarder_core.events import (
     AIInvocationObservedV1,
     EventEnvelope,
 )
-from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore
+from slashid_ai_forwarder_core.platform import Checkpoint, CheckpointStore, load_or_start
 
 from .audit_source import AuditEntry
 
@@ -179,7 +180,7 @@ class AuditOnlyEventSource:
         """
         from .event_envelope import _parse_model_path, vertex_audit_only_envelope
 
-        checkpoint = await self._checkpoint_store.load()
+        checkpoint = await load_or_start(self._checkpoint_store, now=datetime.now(UTC), id="")
         raw = await asyncio.to_thread(
             query_audit_only_entries,
             client=self._logging_client,

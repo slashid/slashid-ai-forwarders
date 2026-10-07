@@ -55,7 +55,6 @@ async def _backends(platform: Platform, config: Config) -> Backends:
         return FeedCursor(
             platform.checkpoint_store(collection=config.checkpoint_collection, document=feed),
             name=feed,
-            poll_lag_seconds=config.poll_lag_seconds,
         )
 
     store = await _pending_store(platform, config)
