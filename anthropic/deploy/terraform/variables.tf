@@ -205,7 +205,7 @@ variable "memory" {
 }
 
 variable "min_instances" {
-  description = "Applies only when the hook is enabled: a cold start inside Anthropic's verdict timeout risks a webhook failure, and enough of those trip its circuit breaker. A compliance-only deployment pins this to 0 regardless."
+  description = "A cold start inside Anthropic's verdict timeout risks a webhook failure, and enough of those trip its circuit breaker. Set 0 only for a deployment that takes no hook traffic."
   type        = number
   default     = 1
 }

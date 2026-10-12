@@ -112,6 +112,26 @@ async def test_unsigned_request_is_rejected() -> None:
     assert r.status_code == 401
 
 
+async def test_the_push_token_replaces_a_signature() -> None:
+    body = json.dumps(FRAME).encode()
+    async with _client(_config()) as c:
+        ok = await c.post("/", content=body, headers={"authorization": "Bearer tok"})
+        wrong = await c.post("/", content=body, headers={"authorization": "Bearer nope"})
+        scheme = await c.post("/", content=body, headers={"authorization": "Basic tok"})
+    assert (ok.status_code, ok.json()) == (200, {"action": "allow"})
+    assert wrong.status_code == scheme.status_code == 401
+
+
+async def test_without_a_secret_only_the_push_token_gets_in(sign: Signer) -> None:
+    body = json.dumps(FRAME).encode()
+    async with _client(_config(hook_signing_secret="")) as c:
+        unsigned = await c.post("/", content=body)
+        signed = await c.post("/", content=body, headers=sign(body, "req_test"))
+        ok = await c.post("/", content=body, headers={"authorization": "Bearer tok"})
+    assert unsigned.status_code == signed.status_code == 401
+    assert ok.status_code == 200
+
+
 async def test_signed_prompt_frame_is_allowed(sign: Signer) -> None:
     body = json.dumps(FRAME).encode()
     async with _client(_config()) as c:

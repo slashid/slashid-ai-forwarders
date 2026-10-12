@@ -9,10 +9,10 @@ Deployed via `deploy/terraform/`; `deploy/dev-deploy.sh` is the iteration path
 against a test tenant. Each observed invocation is normalized into an
 `AIInvocationObservedV1` event and pushed to the SlashID NHI subgraph.
 
-**Capabilities follow the credentials.** `SLASHID_HOOK_SIGNING_SECRET` enables
-the hook, `SLASHID_COMPLIANCE_KEY` enables the readers, at least one is
-required, and hook-only, compliance-only and both are configurations of one
-image. Neither capability pushes from the request path: both write to a
+**The hook is always on; the readers follow the credentials.** A request is
+accepted when its signature matches `SLASHID_HOOK_SIGNING_SECRET` or it carries
+`Authorization: Bearer <SLASHID_PUSH_TOKEN>`, which is what SlashID presents when
+it forwards a request. `SLASHID_COMPLIANCE_KEY` enables the readers. Neither capability pushes from the request path: both write to a
 Firestore pending store addressed by content, and a claim decides who pushes.
 
 ## Scope
@@ -324,8 +324,8 @@ All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
 | `SLASHID_PLATFORM` | no | `local` (the Terraform module sets `gcp`) |
 | `SLASHID_PROJECT_ID` | with `gcp` | — |
 | `SLASHID_DATA_DIR` | no | user data directory (`/data` in the image) — local platform only |
-| `SLASHID_HOOK_SIGNING_SECRET` | one capability required | — (comma-separated; any number live during a rotation) |
-| `SLASHID_COMPLIANCE_KEY` | one capability required | — |
+| `SLASHID_HOOK_SIGNING_SECRET` | no | — (comma-separated; any number live during a rotation; without it only the push token is accepted) |
+| `SLASHID_COMPLIANCE_KEY` | no | — |
 | `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |
 | `SLASHID_PREFLIGHT_ENABLED` | no | `true` |
 | `SLASHID_VERDICT_FAIL_MODE` | no | `allow` |

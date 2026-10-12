@@ -15,7 +15,7 @@ resource "google_cloud_run_v2_service" "receiver" {
   # A hook deployment must be reachable from Anthropic's network. A
   # compliance-only one needs no public endpoint and no certificate:
   # Cloud Scheduler in the same project counts as internal traffic.
-  ingress = local.hook_enabled ? "INGRESS_TRAFFIC_ALL" : "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   # Provider 6 defaults this to true, which makes ``terraform destroy``
   # fail until it is flipped. The durable state is in Firestore, which
@@ -32,7 +32,7 @@ resource "google_cloud_run_v2_service" "receiver" {
       # Only the hook needs a warm instance: a cold start inside
       # Anthropic's verdict timeout risks a webhook failure, and enough
       # of those trip its circuit breaker. A scheduled reader can wait.
-      min_instance_count = local.hook_enabled ? var.min_instances : 0
+      min_instance_count = var.min_instances
       max_instance_count = var.max_instances
     }
 
@@ -221,11 +221,6 @@ resource "google_cloud_run_v2_service" "receiver" {
   }
 
   lifecycle {
-    precondition {
-      condition     = local.hook_enabled || local.compliance_enabled
-      error_message = "Set hook_signing_secret for the hook, compliance_key for the readers, or both. The service refuses to start with neither."
-    }
-
     precondition {
       condition     = var.tombstone_ttl_seconds > var.join_wait_seconds + var.poll_lag_seconds + var.tick_interval_seconds
       error_message = "tombstone_ttl_seconds must exceed join_wait_seconds + poll_lag_seconds + tick_interval_seconds: a reader arriving after its own tombstone expired re-emits the invocation. The service asserts the same inequality at startup."

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import os
@@ -87,6 +88,17 @@ async def _refuse(_token: str) -> bool:
     """The default when nothing was injected. Fail closed: a tick route
     that authenticates nobody is one anybody can drive."""
     return False
+
+
+def _bearer_matches(headers: dict[str, str], push_token: str) -> bool:
+    """``Authorization: Bearer <push token>``: the credential SlashID itself
+    presents when it forwards a request, accepted in place of a signature."""
+    scheme, _, credential = headers.get("authorization", "").partition(" ")
+    return (
+        bool(push_token)
+        and scheme.lower() == "bearer"
+        and hmac.compare_digest(credential.strip().encode(), push_token.encode())
+    )
 
 
 def create_app(
@@ -184,7 +196,10 @@ def create_app(
         if len(body) > config.max_body_bytes:
             return Response(status_code=413)
         headers = {k: v for k, v in request.headers.items()}
-        if not verify(config.signing_secrets, headers, body):
+        if not (
+            _bearer_matches(headers, config.push_token)
+            or verify(config.signing_secrets, headers, body)
+        ):
             return Response(status_code=401)
         webhook_id = headers.get("webhook-id", "")
 

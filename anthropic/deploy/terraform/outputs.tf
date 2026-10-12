@@ -1,6 +1,6 @@
 output "hook_url" {
-  description = "Configure this as the Inference hooks endpoint in claude.ai. Empty when the hook is disabled."
-  value       = local.hook_enabled ? "${google_cloud_run_v2_service.receiver.uri}${var.hook_path}" : ""
+  description = "Configure this as the Inference hooks endpoint in claude.ai."
+  value       = "${google_cloud_run_v2_service.receiver.uri}${var.hook_path}"
 }
 
 output "service_uri" {
@@ -36,7 +36,7 @@ output "database" {
 output "capabilities" {
   description = "Which halves this deployment runs."
   value = {
-    hook       = local.hook_enabled
+    hook       = true
     compliance = local.compliance_enabled
   }
 }

@@ -65,7 +65,6 @@ async def test_mode(mode: str, tmp_path: Path, sign: Signer) -> None:
         capture_deny_marker=DENY_MARKER,
         **MODES[mode],
     )
-    assert config.hook_enabled == (mode in HOOK)
     assert config.compliance_enabled == (mode in COMPLIANCE)
     net = Net()
     app = create_app(config, backends=lambda: open_backends(config), client=net.client())
@@ -96,6 +95,13 @@ async def test_mode(mode: str, tmp_path: Path, sign: Signer) -> None:
                 assert waits == (mode == "hook+compliance")
             else:
                 assert allowed.status_code == 401  # no secret configured to verify it
+
+            # The push token is accepted in place of a signature in every mode,
+            # and unlocks nothing but the hook.
+            bearer = {"authorization": "Bearer t"}
+            via_token = await c.post("/", content=body, headers=bearer)
+            assert (via_token.status_code, via_token.json()) == (200, {"action": "allow"})
+            assert (await c.post("/tick", headers=bearer)).status_code == 401
 
             assert (await c.post("/tick")).status_code == 401
             assert (
