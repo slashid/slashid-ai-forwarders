@@ -1702,7 +1702,7 @@ wheels = [
 
 [[package]]
 name = "slashid-ai-forwarder-anthropic"
-version = "0.1.8"
+version = "0.1.9"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
