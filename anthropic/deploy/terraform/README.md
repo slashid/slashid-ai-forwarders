@@ -22,9 +22,10 @@ exclusion. The tick's Firestore lease is what makes overlap safe.
 
 ## Capabilities
 
-The hook endpoint is always on and public: a request passes with a
-matching signature (`hook_signing_secret`) or with `Authorization: Bearer`
-the push token. The readers run when `compliance_key` is set.
+The hook endpoint is always on and public: without an
+`Authorization` header a request needs a valid signature
+(`hook_signing_secret`); with one it must be `Bearer` the push token and, when a
+secret is set, also validly signed. The readers run when `compliance_key` is set.
 
 ### Hook only
 

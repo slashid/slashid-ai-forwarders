@@ -96,10 +96,14 @@ async def test_mode(mode: str, tmp_path: Path, sign: Signer) -> None:
             else:
                 assert allowed.status_code == 401  # no secret configured to verify it
 
-            # The push token is accepted in place of a signature in every mode,
-            # and unlocks nothing but the hook.
+            # Where a secret is configured the push token comes with a signature;
+            # where none is, it stands alone. It unlocks nothing but the hook.
             bearer = {"authorization": "Bearer t"}
-            via_token = await c.post("/", content=body, headers=bearer)
+            via_token = await c.post(
+                "/",
+                content=body,
+                headers={**sign(body, "msg_bearer"), **bearer} if mode in HOOK else bearer,
+            )
             assert (via_token.status_code, via_token.json()) == (200, {"action": "allow"})
             assert (await c.post("/tick", headers=bearer)).status_code == 401
 

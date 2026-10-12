@@ -112,24 +112,35 @@ async def test_unsigned_request_is_rejected() -> None:
     assert r.status_code == 401
 
 
-async def test_the_push_token_replaces_a_signature() -> None:
+@pytest.mark.parametrize(
+    ("configured", "signed", "auth", "status"),
+    [
+        (True, True, None, 200),
+        (True, True, "Bearer tok", 200),
+        (True, True, "Bearer nope", 401),
+        (True, True, "Basic tok", 401),
+        (True, False, None, 401),
+        (True, False, "Bearer tok", 401),
+        (False, False, "Bearer tok", 200),
+        (False, False, None, 401),
+        (False, False, "Bearer nope", 401),
+        (False, True, None, 401),
+    ],
+)
+async def test_hook_authorization(
+    sign: Signer, configured: bool, signed: bool, auth: str | None, status: int
+) -> None:
+    """No ``Authorization``: the signature must verify. With one: it must be
+    the push token, and the signature must verify too unless no secret is
+    configured."""
     body = json.dumps(FRAME).encode()
-    async with _client(_config()) as c:
-        ok = await c.post("/", content=body, headers={"authorization": "Bearer tok"})
-        wrong = await c.post("/", content=body, headers={"authorization": "Bearer nope"})
-        scheme = await c.post("/", content=body, headers={"authorization": "Basic tok"})
-    assert (ok.status_code, ok.json()) == (200, {"action": "allow"})
-    assert wrong.status_code == scheme.status_code == 401
-
-
-async def test_without_a_secret_only_the_push_token_gets_in(sign: Signer) -> None:
-    body = json.dumps(FRAME).encode()
-    async with _client(_config(hook_signing_secret="")) as c:
-        unsigned = await c.post("/", content=body)
-        signed = await c.post("/", content=body, headers=sign(body, "req_test"))
-        ok = await c.post("/", content=body, headers={"authorization": "Bearer tok"})
-    assert unsigned.status_code == signed.status_code == 401
-    assert ok.status_code == 200
+    headers = sign(body, "req_test") if signed else {}
+    if auth is not None:
+        headers["authorization"] = auth
+    config = _config(hook_signing_secret=SECRET if configured else "")
+    async with _client(config) as c:
+        r = await c.post("/", content=body, headers=headers)
+    assert r.status_code == status
 
 
 async def test_signed_prompt_frame_is_allowed(sign: Signer) -> None:
