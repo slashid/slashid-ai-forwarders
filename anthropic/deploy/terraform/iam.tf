@@ -69,7 +69,6 @@ resource "google_cloud_run_v2_service_iam_member" "scheduler_invoker" {
 # and emits only what the next tick would have emitted — which is worth
 # knowing before pointing a rate limiter at this service.
 resource "google_cloud_run_v2_service_iam_member" "public" {
-  count    = local.hook_enabled ? 1 : 0
   project  = var.project_id
   location = google_cloud_run_v2_service.receiver.location
   name     = google_cloud_run_v2_service.receiver.name

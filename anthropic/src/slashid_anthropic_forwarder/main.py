@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 import os
@@ -87,6 +88,27 @@ async def _refuse(_token: str) -> bool:
     """The default when nothing was injected. Fail closed: a tick route
     that authenticates nobody is one anybody can drive."""
     return False
+
+
+def _bearer_matches(headers: dict[str, str], push_token: str) -> bool:
+    """``Authorization: Bearer <push token>``: the credential SlashID itself
+    presents when it forwards a request."""
+    scheme, _, credential = headers.get("authorization", "").partition(" ")
+    return (
+        bool(push_token)
+        and scheme.lower() == "bearer"
+        and hmac.compare_digest(credential.strip().encode(), push_token.encode())
+    )
+
+
+def _authorized(config: Config, headers: dict[str, str], body: bytes) -> bool:
+    """Without an ``Authorization`` header the signature must verify. With one,
+    it must carry the push token, and the signature must also verify unless no
+    secret is configured: then the token alone is enough."""
+    signed = bool(config.signing_secrets) and verify(config.signing_secrets, headers, body)
+    if "authorization" not in headers:
+        return signed
+    return _bearer_matches(headers, config.push_token) and (signed or not config.signing_secrets)
 
 
 def create_app(
@@ -184,7 +206,7 @@ def create_app(
         if len(body) > config.max_body_bytes:
             return Response(status_code=413)
         headers = {k: v for k, v in request.headers.items()}
-        if not verify(config.signing_secrets, headers, body):
+        if not _authorized(config, headers, body):
             return Response(status_code=401)
         webhook_id = headers.get("webhook-id", "")
 

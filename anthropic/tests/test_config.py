@@ -41,11 +41,15 @@ def test_fail_mode_must_be_allow_or_deny(monkeypatch: pytest.MonkeyPatch) -> Non
         Config()
 
 
-def test_a_capability_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_credentials_besides_the_push_token_still_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inbound is always on: the push token authenticates it."""
     _env(monkeypatch)
     monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    with pytest.raises(ValidationError, match="no capability configured"):
-        Config()
+    cfg = Config()
+    assert cfg.signing_secrets == []
+    assert cfg.compliance_enabled is False
 
 
 def test_compliance_is_off_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,22 +153,13 @@ def test_compliance_only_starts_without_a_signing_secret(
     _env(monkeypatch, SLASHID_COMPLIANCE_KEY="sk-ant-api01-x", SLASHID_ORGANIZATION_UUID="org-1")
     monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
     cfg = Config()
-    assert cfg.hook_enabled is False
     assert cfg.compliance_enabled is True
 
 
 def test_hook_only_needs_no_compliance_key(monkeypatch: pytest.MonkeyPatch) -> None:
     _env(monkeypatch)
     cfg = Config()
-    assert cfg.hook_enabled is True
     assert cfg.compliance_enabled is False
-
-
-def test_no_credential_at_all_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    _env(monkeypatch)
-    monkeypatch.delenv("SLASHID_HOOK_SIGNING_SECRET")
-    with pytest.raises(ValidationError, match="no capability configured"):
-        Config()
 
 
 def test_compliance_key_requires_an_organization_uuid(

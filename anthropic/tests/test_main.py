@@ -112,6 +112,37 @@ async def test_unsigned_request_is_rejected() -> None:
     assert r.status_code == 401
 
 
+@pytest.mark.parametrize(
+    ("configured", "signed", "auth", "status"),
+    [
+        (True, True, None, 200),
+        (True, True, "Bearer tok", 200),
+        (True, True, "Bearer nope", 401),
+        (True, True, "Basic tok", 401),
+        (True, False, None, 401),
+        (True, False, "Bearer tok", 401),
+        (False, False, "Bearer tok", 200),
+        (False, False, None, 401),
+        (False, False, "Bearer nope", 401),
+        (False, True, None, 401),
+    ],
+)
+async def test_hook_authorization(
+    sign: Signer, configured: bool, signed: bool, auth: str | None, status: int
+) -> None:
+    """No ``Authorization``: the signature must verify. With one: it must be
+    the push token, and the signature must verify too unless no secret is
+    configured."""
+    body = json.dumps(FRAME).encode()
+    headers = sign(body, "req_test") if signed else {}
+    if auth is not None:
+        headers["authorization"] = auth
+    config = _config(hook_signing_secret=SECRET if configured else "")
+    async with _client(config) as c:
+        r = await c.post("/", content=body, headers=headers)
+    assert r.status_code == status
+
+
 async def test_signed_prompt_frame_is_allowed(sign: Signer) -> None:
     body = json.dumps(FRAME).encode()
     async with _client(_config()) as c:
