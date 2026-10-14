@@ -286,8 +286,7 @@ class Preflight:
         hasher = self._hasher(hash_until)
         paths = get_files_read_by_tool(hook.tool_name, hook.tool_input, workdir, expand_home=True)
         files = [hasher(path, "tool_result") for path in paths]
-        if not files:
-            files = [connector_stub(cf) for cf in connector_refs(hook.tool_name, hook.tool_input)]
+        files += [connector_stub(cf) for cf in connector_refs(hook.tool_name, hook.tool_input)]
         if files:
             self._store(
                 lambda: self._records.put_call(
