@@ -122,18 +122,13 @@ def test_failed_calls_include_failed_commands() -> None:
     assert failed_calls([command]) == {"exec-5"}
 
 
-def test_file_change_pair_is_an_apply_patch_with_a_rebuilt_patch() -> None:
+def test_file_change_pair_is_an_apply_patch_with_the_changes() -> None:
     item = FileChange.model_validate(
         {
             "type": "FileChange",
             "id": "exec-6",
             "changes": {
-                "/w/new.txt": {"type": "add", "content": "hi\nthere\n"},
-                "/w/hello.txt": {
-                    "type": "update",
-                    "unified_diff": "@@ -1,2 +1,2 @@\n hi\n-line2\n+LINE-TWO\n",
-                    "move_path": None,
-                },
+                "/w/new.txt": {"type": "add", "content": "hi\n"},
                 "/w/old.txt": {
                     "type": "update",
                     "unified_diff": "@@ -1 +1 @@\n-m\n+n\n",
@@ -147,26 +142,17 @@ def test_file_change_pair_is_an_apply_patch_with_a_rebuilt_patch() -> None:
     )
     [call], [output] = pairs([item])
     assert (call.call_id, call.name) == ("exec-6", "apply_patch")
-    assert json.loads(call.arguments)["command"] == "\n".join(
-        [
-            "*** Begin Patch",
-            "*** Add File: /w/new.txt",
-            "+hi",
-            "+there",
-            "*** Update File: /w/hello.txt",
-            "@@",
-            " hi",
-            "-line2",
-            "+LINE-TWO",
-            "*** Update File: /w/old.txt",
-            "*** Move to: /w/renamed.txt",
-            "@@",
-            "-m",
-            "+n",
-            "*** Delete File: /w/gone.txt",
-            "*** End Patch",
-        ]
-    )
+    assert json.loads(call.arguments) == {
+        "changes": {
+            "/w/new.txt": {"type": "add", "content": "hi\n"},
+            "/w/old.txt": {
+                "type": "update",
+                "unified_diff": "@@ -1 +1 @@\n-m\n+n\n",
+                "move_path": "/w/renamed.txt",
+            },
+            "/w/gone.txt": {"type": "delete"},
+        }
+    }
     assert "secret" not in call.arguments
     assert output.output[0].text.startswith("Success.")  # ty: ignore[unresolved-attribute]
 

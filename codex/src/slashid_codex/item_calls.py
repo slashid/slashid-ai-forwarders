@@ -24,7 +24,6 @@ from .rollout import (
     CodexItem,
     CommandExecution,
     FileChange,
-    FileEdit,
     ImageView,
     McpToolCall,
     WebSearch,
@@ -74,30 +73,15 @@ def _command(argv: list[str]) -> str:
     return shlex.join(argv)
 
 
-def _hunks(unified_diff: str | None) -> list[str]:
-    """A unified diff's lines as ``apply_patch`` writes them: ``@@`` alone, the rest as is."""
-    return ["@@" if line.startswith("@@") else line for line in (unified_diff or "").splitlines()]
-
-
-def _edit_lines(path: str, edit: FileEdit) -> list[str]:
-    match edit.type:
-        case "add":
-            return [
-                f"*** Add File: {path}",
-                *(f"+{line}" for line in (edit.content or "").splitlines()),
-            ]
-        case "delete":
-            return [f"*** Delete File: {path}"]
-    move = [f"*** Move to: {edit.move_path}"] if edit.move_path else []
-    return [f"*** Update File: {path}", *move, *_hunks(edit.unified_diff)]
-
-
-def _patch(item: FileChange) -> str:
-    """The patch the call applied, as the hook's ``command`` would hold it. Rebuilt from
-    the changes: paths are absolute, and a deleted file's text, which the model never
-    sent, is left out."""
-    body = [line for path, edit in item.changes.items() for line in _edit_lines(path, edit)]
-    return "\n".join(["*** Begin Patch", *body, "*** End Patch"])
+def _changes(item: FileChange) -> dict[str, dict[str, str | None]]:
+    """``changes`` as the call's argument. A deleted file's text is left out: the model
+    never sent it."""
+    return {
+        path: edit.model_dump(
+            exclude_none=True, exclude={"content"} if edit.type == "delete" else None
+        )
+        for path, edit in item.changes.items()
+    }
 
 
 def _call(item_id: str, name: str, arguments: object) -> ResponsesFunctionCall:
@@ -128,7 +112,7 @@ def _pair(item: CallItem) -> tuple[ResponsesFunctionCall, ResponsesFunctionCallO
                 arguments["workdir"] = _file_path(item.cwd)
             return _call(item.id, BASH, arguments), _output(item.id, item.formatted_output)
         case FileChange():
-            return _call(item.id, _APPLY_PATCH, {"command": _patch(item)}), _output(
+            return _call(item.id, _APPLY_PATCH, {"changes": _changes(item)}), _output(
                 item.id, item.stdout
             )
         case WebSearch():
