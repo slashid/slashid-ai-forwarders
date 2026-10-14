@@ -348,10 +348,8 @@ class RolloutCursor:
         else:
             consumed, carried = self.pending, []
         round_items = [p.item for p in consumed]
-        joined, scripted = self._join(round_items)
-        # The scripts' MCP calls: calls before the round's first output, outputs
-        # after its last, so ``after_last_assistant`` keeps every output.
-        history = _splice(round_items, *pairs(scripted))
+        joined = self._join(round_items)
+        history = _with_mcp_pairs(round_items, joined)
         request = ResponsesRequest.model_construct(
             instructions=self.base_instructions, input=[*self.committed, *history], tools=[]
         )
@@ -387,19 +385,12 @@ class RolloutCursor:
         if not held.inherited and held.index > self._skip_through:
             self._ready.append(invocation)
 
-    def _join(
-        self, round_items: list[ResponsesItem]
-    ) -> tuple[tuple[CodexItem, ...], list[McpToolCall]]:
-        """The round's items, and among them the script-mode MCP calls (a
-        function-mode item shares its call's id and needs no pair)."""
+    def _join(self, round_items: list[ResponsesItem]) -> tuple[CodexItem, ...]:
         joined: list[CodexItem] = []
-        scripted: list[McpToolCall] = []
         for call_id in _output_call_ids(round_items):
             if (item := self._items.pop(call_id, None)) is not None:
                 joined.append(item)
-            script_items = self._script_items.pop(call_id, [])
-            joined.extend(script_items)
-            scripted.extend(i for i in script_items if isinstance(i, McpToolCall))
+            joined.extend(self._script_items.pop(call_id, []))
             self._function_calls.discard(call_id)
             self._custom_calls.discard(call_id)
             if self._script_call == call_id:
@@ -409,7 +400,7 @@ class RolloutCursor:
         self._items = {k: v for k, v in self._items.items() if k in open_calls}
         self._script_items = {k: v for k, v in self._script_items.items() if k in open_calls}
         self._renamed &= open_calls
-        return tuple(joined), scripted
+        return tuple(joined)
 
 
 def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
@@ -423,6 +414,17 @@ def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
 
 
 _OUTPUTS = (ResponsesFunctionCallOutput, ResponsesCustomToolCallOutput)
+
+
+def _with_mcp_pairs(
+    round_items: list[ResponsesItem], joined: tuple[CodexItem, ...]
+) -> list[ResponsesItem]:
+    """``round_items`` with a call pair for each script-mode MCP item: a
+    function-mode item's id is an output's ``call_id`` in the round and needs
+    no pair, a script-mode one (``exec-<uuid>``) is not."""
+    answered = set(_output_call_ids(round_items))
+    scripted = [i for i in joined if isinstance(i, McpToolCall) and i.id not in answered]
+    return _splice(round_items, *pairs(scripted))
 
 
 def _splice(
