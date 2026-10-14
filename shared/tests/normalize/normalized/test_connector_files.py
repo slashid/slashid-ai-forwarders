@@ -5,15 +5,25 @@ The shapes are those captured from live claude.ai and Codex sessions, with the i
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 
 import pytest
 from pydantic import JsonValue
 
+from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import (
     ConnectorFile,
     connector_files,
     connector_refs,
+)
+from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
+    connector_stub,
+    extract_tool_result_files,
+)
+from slashid_ai_forwarder_core.normalize.normalized.types import (
+    NormalizedContent,
+    NormalizedMessage,
 )
 
 
@@ -232,3 +242,80 @@ def test_codex_sharepoint_search_and_get_drive_item() -> None:
         _envelope({"name": "b.md"}),
     )
     assert _got(item) == [(f"m365/item/{DRIVE}/{ITEM}", "b.md", None)]
+
+
+# ----------------------------------------------------------------------------
+# Through the extractor
+# ----------------------------------------------------------------------------
+
+
+def _exchange(
+    tool: str, args: JsonValue, output: JsonValue, *, is_error: bool = False
+) -> list[NormalizedMessage]:
+    use = NormalizedContent(kind="tool_use", tool_use_id="t1", tool_name=tool, tool_input=args)
+    result = NormalizedContent(
+        kind="tool_result", tool_use_id="t1", tool_output=output, tool_is_error=is_error
+    )
+    return [
+        NormalizedMessage(role="assistant", content=[use]),
+        NormalizedMessage(role="user", content=[result]),
+    ]
+
+
+def _download(content: str) -> str:
+    return json.dumps({"content": content, "id": "ID1", "title": "banana-bread.md"})
+
+
+CONFIG = BaseConfig(endpoint="http://test", push_token="test")
+
+
+def test_a_download_becomes_a_hashed_file_with_its_ref() -> None:
+    messages = _exchange(
+        _claude("download_file_content"), {"fileId": "ID1"}, _download(_b64(b"# Bread\n"))
+    )
+    [file] = extract_tool_result_files(messages, config=CONFIG)
+    assert (file.name, file.file_ref, file.media_type) == (
+        "banana-bread.md",
+        "google/ID1",
+        "text/markdown",
+    )
+    assert file.provenance == "tool_result"
+    assert file.byte_length == len(b"# Bread\n")
+    assert file.content_hashes is not None
+    assert file.content_hashes["sha256"] == hashlib.sha256(b"# Bread\n").hexdigest()
+    assert file.redacted_content is None
+
+
+def test_other_reads_have_a_ref_and_no_hash() -> None:
+    messages = _exchange(
+        _claude("read_file_content"), {"fileId": "ID1"}, json.dumps({"title": "banana-bread.md"})
+    )
+    [file] = extract_tool_result_files(messages, config=CONFIG)
+    assert (file.file_ref, file.content_hashes) == ("google/ID1", None)
+    bad = _exchange(_claude("download_file_content"), {"fileId": "ID1"}, _download("!!!"))
+    [stub] = extract_tool_result_files(bad, config=CONFIG)
+    assert (stub.file_ref, stub.content_hashes) == ("google/ID1", None)
+
+
+def test_a_failed_call_names_nothing() -> None:
+    messages = _exchange(
+        _claude("download_file_content"), {"fileId": "ID1"}, "denied", is_error=True
+    )
+    assert extract_tool_result_files(messages, config=CONFIG) == []
+
+
+def test_an_earlier_result_was_already_reported() -> None:
+    messages = _exchange(_claude("get_file_metadata"), {"fileId": "ID1"}, "{}")
+    messages.append(NormalizedMessage(role="assistant", content=[_text("done")]))
+    assert extract_tool_result_files(messages, config=CONFIG) == []
+
+
+def _text(text: str) -> NormalizedContent:
+    return NormalizedContent(kind="text", text=text)
+
+
+def test_a_stub_is_the_ref_without_content() -> None:
+    stub = connector_stub(ConnectorFile(ref="google/ID1", name="a.md"))
+    assert (stub.name, stub.file_ref, stub.media_type) == ("a.md", "google/ID1", "text/markdown")
+    assert (stub.provenance, stub.content_hashes) == ("tool_result", None)
+    assert connector_stub(ConnectorFile(ref="google/ID2")).name is None
