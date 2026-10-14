@@ -77,6 +77,8 @@ class RolloutInvocation(BaseModel):
     consumed_items: tuple[CodexItem, ...] = ()
     # Turns whose ``task_complete``/``turn_aborted`` was read up to this response.
     finished_turn_ids: tuple[str, ...] = ()
+    # Call ids of every MCP pair synthesized so far: not in what Codex sends.
+    synthetic_call_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,7 @@ class RolloutCursor:
         self._script_items: dict[str, list[CodexItem]] = {}
         self._script_call: str | None = None
         self._renamed: set[str] = set()
+        self._synthetic: set[str] = set()
 
     @property
     def history_truncated(self) -> bool:
@@ -349,7 +352,8 @@ class RolloutCursor:
             consumed, carried = self.pending, []
         round_items = [p.item for p in consumed]
         joined = self._join(round_items)
-        history = _with_mcp_pairs(round_items, joined)
+        history, synthesized = _with_mcp_pairs(round_items, joined)
+        self._synthetic |= synthesized
         request = ResponsesRequest.model_construct(
             instructions=self.base_instructions, input=[*self.committed, *history], tools=[]
         )
@@ -377,6 +381,7 @@ class RolloutCursor:
             consumed_call_ids=tuple(_output_call_ids(round_items)),
             consumed_items=joined,
             finished_turn_ids=tuple(self._finished),
+            synthetic_call_ids=frozenset(self._synthetic),
         )
         self._finished = []
         self.committed.extend(history)
@@ -418,13 +423,14 @@ _OUTPUTS = (ResponsesFunctionCallOutput, ResponsesCustomToolCallOutput)
 
 def _with_mcp_pairs(
     round_items: list[ResponsesItem], joined: tuple[CodexItem, ...]
-) -> list[ResponsesItem]:
-    """``round_items`` with a call pair for each script-mode MCP item: a
-    function-mode item's id is an output's ``call_id`` in the round and needs
-    no pair, a script-mode one (``exec-<uuid>``) is not."""
+) -> tuple[list[ResponsesItem], set[str]]:
+    """``round_items`` with a call pair for each script-mode MCP item, and the
+    pairs' call ids. A function-mode item's id is an output's ``call_id`` in
+    the round and needs no pair, a script-mode one (``exec-<uuid>``) is not."""
     answered = set(_output_call_ids(round_items))
     scripted = [i for i in joined if isinstance(i, McpToolCall) and i.id not in answered]
-    return _splice(round_items, *pairs(scripted))
+    calls, outputs = pairs(scripted)
+    return _splice(round_items, calls, outputs), {c.call_id for c in calls}
 
 
 def _splice(

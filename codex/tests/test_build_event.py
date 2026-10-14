@@ -204,3 +204,9 @@ async def test_mcp_script_is_a_used_tool(builder: Builder, tmp_path: Path) -> No
     assert mcp.tool_use_id == "exec-a"
     assert mcp.is_error is True
     assert server.id in {s.id for s in event.available_tool_servers or []}
+
+
+async def test_mcp_pairs_do_not_break_round_hashes(builder: Builder, tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a")])
+    first, second = await builder.events(path)
+    assert first.round_hash in (second.recent_round_hashes or [])

@@ -18,7 +18,7 @@ from slashid_ai_forwarder_core.normalize.openai.responses.normalize import to_no
 
 from .config import CodexConfig
 from .cursor import RolloutInvocation
-from .envelope import declared_from_calls, failed_calls, mark_errors, wire_time
+from .envelope import declared_from_calls, failed_calls, mark_errors, mark_synthetic, wire_time
 from .state import FileRecordStore
 from .usage import codex_usage_to_tokens
 
@@ -60,6 +60,7 @@ async def build_event(
 ) -> AIInvocationObservedV1:
     normalized = to_normalized(invocation.request, invocation.response)
     messages = mark_errors(normalized.input.messages, failed_calls(invocation.consumed_items))
+    messages = mark_synthetic(messages, invocation.synthetic_call_ids)
     answer = normalized.output.message
     tools, servers = declared_from_calls([*messages, *([answer] if answer else [])])
     known = {s.id for s in servers}

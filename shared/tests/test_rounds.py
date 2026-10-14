@@ -354,3 +354,23 @@ def test_two_compactions_never_hash_alike() -> None:
 def test_truncated_flag_forces_the_marker() -> None:
     _, hashes = round_links([_user("q"), _assistant("a")], depth=10, truncated=True)
     assert hashes[-1] == TRUNCATED
+
+
+def test_synthetic_blocks_are_not_part_of_the_round_hash() -> None:
+    call = NormalizedContent(kind="tool_use", tool_use_id="c1", tool_name="exec", tool_input={})
+    out = NormalizedContent(kind="tool_result", tool_use_id="c1", tool_output="ok")
+    synthetic_call = NormalizedContent(
+        kind="tool_use", tool_use_id="exec-1", tool_name="mcp__s__t", synthetic=True
+    )
+    synthetic_out = NormalizedContent(
+        kind="tool_result", tool_use_id="exec-1", tool_output="ok", synthetic=True
+    )
+    plain = [
+        NormalizedMessage(role="assistant", content=[call]),
+        NormalizedMessage(role="user", content=[out]),
+    ]
+    extended = [
+        NormalizedMessage(role="assistant", content=[call, synthetic_call]),
+        NormalizedMessage(role="user", content=[out, synthetic_out]),
+    ]
+    assert _dump(extended) == _dump(plain)
