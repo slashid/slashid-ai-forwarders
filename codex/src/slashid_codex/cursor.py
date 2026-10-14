@@ -44,7 +44,7 @@ from .rollout import (
     TurnContext,
     UserMessageItem,
 )
-from .shell_calls import SCRIPT_TOOL, map_custom_call, map_function_call
+from .shell_calls import SCRIPT_TOOL, map_function_call
 from .usage import CodexUsage
 
 # ``item_completed`` types that are not tool executions.
@@ -155,7 +155,6 @@ class RolloutCursor:
         self._items: dict[str, CodexItem] = {}
         self._script_items: dict[str, list[CodexItem]] = {}
         self._script_call: str | None = None
-        self._renamed: set[str] = set()
 
     @property
     def history_truncated(self) -> bool:
@@ -295,13 +294,6 @@ class RolloutCursor:
                 if item.name == SCRIPT_TOOL:
                     # Parallel ``exec`` calls: their items all join the last one.
                     self._script_call = item.call_id
-                if (mapped := map_custom_call(item)) is not None:
-                    self._renamed.add(item.call_id)
-                    item = mapped
-            case ResponsesCustomToolCallOutput() if item.call_id in self._renamed:
-                item = ResponsesFunctionCallOutput(
-                    type="function_call_output", call_id=item.call_id, output=item.output
-                )
         self.pending.append(_Pending(item, _is_model_output(item), self.turn_id))
 
     def _on_item(self, item: CodexItem) -> None:
@@ -398,7 +390,6 @@ class RolloutCursor:
         open_calls = self._function_calls | self._custom_calls
         self._items = {k: v for k, v in self._items.items() if k in open_calls}
         self._script_items = {k: v for k, v in self._script_items.items() if k in open_calls}
-        self._renamed &= open_calls
         return tuple(joined)
 
 

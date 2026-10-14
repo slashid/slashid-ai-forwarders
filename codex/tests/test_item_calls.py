@@ -7,7 +7,7 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from slashid_codex.envelope import failed_calls
 from slashid_codex.item_calls import failed, pairs, tool_name
-from slashid_codex.rollout import CommandExecution, ImageView, McpToolCall
+from slashid_codex.rollout import CommandExecution, FileChange, ImageView, McpToolCall
 
 
 def _item(**fields: object) -> McpToolCall:
@@ -120,3 +120,59 @@ def test_failed_calls_include_failed_commands() -> None:
         {"type": "CommandExecution", "id": "exec-5", "exit_code": 1}
     )
     assert failed_calls([command]) == {"exec-5"}
+
+
+def test_file_change_pair_is_an_apply_patch_with_a_rebuilt_patch() -> None:
+    item = FileChange.model_validate(
+        {
+            "type": "FileChange",
+            "id": "exec-6",
+            "changes": {
+                "/w/new.txt": {"type": "add", "content": "hi\nthere\n"},
+                "/w/hello.txt": {
+                    "type": "update",
+                    "unified_diff": "@@ -1,2 +1,2 @@\n hi\n-line2\n+LINE-TWO\n",
+                    "move_path": None,
+                },
+                "/w/old.txt": {
+                    "type": "update",
+                    "unified_diff": "@@ -1 +1 @@\n-m\n+n\n",
+                    "move_path": "/w/renamed.txt",
+                },
+                "/w/gone.txt": {"type": "delete", "content": "secret\n"},
+            },
+            "status": "completed",
+            "stdout": "Success. Updated the following files:\nA new.txt\n",
+        }
+    )
+    [call], [output] = pairs([item])
+    assert (call.call_id, call.name) == ("exec-6", "apply_patch")
+    assert json.loads(call.arguments)["command"] == "\n".join(
+        [
+            "*** Begin Patch",
+            "*** Add File: /w/new.txt",
+            "+hi",
+            "+there",
+            "*** Update File: /w/hello.txt",
+            "@@",
+            " hi",
+            "-line2",
+            "+LINE-TWO",
+            "*** Update File: /w/old.txt",
+            "*** Move to: /w/renamed.txt",
+            "@@",
+            "-m",
+            "+n",
+            "*** Delete File: /w/gone.txt",
+            "*** End Patch",
+        ]
+    )
+    assert "secret" not in call.arguments
+    assert output.output[0].text.startswith("Success.")  # ty: ignore[unresolved-attribute]
+
+
+def test_failed_calls_include_a_failed_patch() -> None:
+    item = FileChange.model_validate(
+        {"type": "FileChange", "id": "exec-7", "changes": {}, "status": "failed"}
+    )
+    assert failed_calls([item]) == {"exec-7"}

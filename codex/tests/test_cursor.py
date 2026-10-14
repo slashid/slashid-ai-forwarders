@@ -304,7 +304,6 @@ def test_join_maps_drop_consumed_entries(tmp_path: Path, name: str) -> None:
     cursor.advance_to_end()
     assert cursor._items == {}
     assert cursor._script_items == {}
-    assert cursor._renamed == set()
     assert cursor._function_calls == set()
 
 
@@ -453,3 +452,16 @@ def test_image_views_and_other_servers_get_calls_too(tmp_path: Path) -> None:
         ("exec-i", "view_image"),
         ("exec-m", "mcp__paulo__web_fetch"),
     ]
+
+
+def test_patches_get_a_call(tmp_path: Path) -> None:
+    item = {
+        "type": "FileChange",
+        "id": "exec-p",
+        "changes": {"/w/a.txt": {"type": "add", "content": "x\n"}},
+        "status": "completed",
+        "stdout": "Success.\n",
+    }
+    _, second = _drain(RolloutCursor(_open(write_mcp_rollout(tmp_path, [item]))))
+    [call] = _calls(_inputs(second))
+    assert (call.call_id, call.name) == ("exec-p", "apply_patch")

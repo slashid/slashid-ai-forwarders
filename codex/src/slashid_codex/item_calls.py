@@ -20,10 +20,11 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesPart,
 )
 
-from .rollout import CodexItem, CommandExecution, ImageView, McpToolCall
+from .rollout import CodexItem, CommandExecution, FileChange, FileEdit, ImageView, McpToolCall
+from .shell_calls import BASH
 
-CallItem = McpToolCall | CommandExecution | ImageView
-_SHELL = "Bash"
+CallItem = McpToolCall | CommandExecution | ImageView | FileChange
+_APPLY_PATCH = "apply_patch"
 _VIEW_IMAGE = "view_image"
 _SHELL_FLAGS = frozenset({"-c", "-lc"})
 
@@ -32,11 +33,11 @@ def tool_name(item: McpToolCall) -> str:
     return f"mcp__{item.server}__{item.tool.replace('.', '__')}"
 
 
-def failed(item: McpToolCall) -> bool:
-    """Any status but ``completed`` (the only one captured), or ``isError``."""
+def failed(item: McpToolCall | FileChange) -> bool:
+    """Any status but ``completed`` (the only one captured), or an MCP ``isError``."""
     if item.status not in (None, "completed"):
         return True
-    return item.result is not None and item.result.is_error
+    return isinstance(item, McpToolCall) and item.result is not None and item.result.is_error
 
 
 def _result_json(item: McpToolCall) -> str:
@@ -54,6 +55,32 @@ def _command(argv: list[str]) -> str:
     if len(argv) == 3 and argv[1] in _SHELL_FLAGS:
         return argv[2]
     return shlex.join(argv)
+
+
+def _hunks(unified_diff: str | None) -> list[str]:
+    """A unified diff's lines as ``apply_patch`` writes them: ``@@`` alone, the rest as is."""
+    return ["@@" if line.startswith("@@") else line for line in (unified_diff or "").splitlines()]
+
+
+def _edit_lines(path: str, edit: FileEdit) -> list[str]:
+    match edit.type:
+        case "add":
+            return [
+                f"*** Add File: {path}",
+                *(f"+{line}" for line in (edit.content or "").splitlines()),
+            ]
+        case "delete":
+            return [f"*** Delete File: {path}"]
+    move = [f"*** Move to: {edit.move_path}"] if edit.move_path else []
+    return [f"*** Update File: {path}", *move, *_hunks(edit.unified_diff)]
+
+
+def _patch(item: FileChange) -> str:
+    """The patch the call applied, as the hook's ``command`` would hold it. Rebuilt from
+    the changes: paths are absolute, and a deleted file's text, which the model never
+    sent, is left out."""
+    body = [line for path, edit in item.changes.items() for line in _edit_lines(path, edit)]
+    return "\n".join(["*** Begin Patch", *body, "*** End Patch"])
 
 
 def _call(item_id: str, name: str, arguments: object) -> ResponsesFunctionCall:
@@ -82,7 +109,11 @@ def _pair(item: CallItem) -> tuple[ResponsesFunctionCall, ResponsesFunctionCallO
             arguments = {"command": _command(item.command)}
             if item.cwd:
                 arguments["workdir"] = _file_path(item.cwd)
-            return _call(item.id, _SHELL, arguments), _output(item.id, item.formatted_output)
+            return _call(item.id, BASH, arguments), _output(item.id, item.formatted_output)
+        case FileChange():
+            return _call(item.id, _APPLY_PATCH, {"command": _patch(item)}), _output(
+                item.id, item.stdout
+            )
         case ImageView():
             return _call(item.id, _VIEW_IMAGE, {"path": _file_path(item.path)}), _output(
                 item.id, None
@@ -96,7 +127,7 @@ def pairs(
     calls: list[ResponsesFunctionCall] = []
     outputs: list[ResponsesFunctionCallOutput] = []
     for item in items:
-        if isinstance(item, McpToolCall | CommandExecution | ImageView):
+        if isinstance(item, CallItem):
             call, output = _pair(item)
             calls.append(call)
             outputs.append(output)

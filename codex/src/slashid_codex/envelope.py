@@ -10,7 +10,7 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import build_tools_dec
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedMessage
 
 from .item_calls import failed
-from .rollout import CodexItem, CommandExecution, McpToolCall
+from .rollout import CodexItem, CommandExecution, FileChange, McpToolCall
 
 
 def wire_time(ts: datetime) -> str:
@@ -20,7 +20,7 @@ def wire_time(ts: datetime) -> str:
 
 
 def failed_calls(items: Iterable[CodexItem]) -> set[str]:
-    """Ids of calls that failed: commands and MCP items. An item's id is its
+    """Ids of calls that failed: commands, MCP calls and patches. An item's id is its
     call's: the real ``call_id`` in function mode, the synthesized call's in
     script mode."""
     return {
@@ -30,7 +30,7 @@ def failed_calls(items: Iterable[CodexItem]) -> set[str]:
             isinstance(item, CommandExecution)
             and (item.status == "failed" or item.exit_code not in (None, 0))
         )
-        or (isinstance(item, McpToolCall) and failed(item))
+        or (isinstance(item, McpToolCall | FileChange) and failed(item))
     }
 
 

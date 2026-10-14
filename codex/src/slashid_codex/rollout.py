@@ -120,6 +120,26 @@ class McpToolCall(_Frozen):
     result: McpResult | None = None
 
 
+class FileEdit(_Frozen):
+    # ``add`` (``content``), ``update`` (``unified_diff``, ``move_path``) or
+    # ``delete`` (``content``: the file's last text).
+    type: str
+    content: str | None = None
+    unified_diff: str | None = None
+    move_path: str | None = None
+
+
+class FileChange(_Frozen):
+    """An ``apply_patch`` call."""
+
+    type: Literal["FileChange"]
+    id: str
+    # Absolute path → edit.
+    changes: dict[str, FileEdit] = Field(default_factory=dict)
+    status: str | None = None
+    stdout: str | None = None
+
+
 class UserMessagePart(_Frozen):
     # ``text`` or ``local_image``.
     type: str
@@ -139,7 +159,7 @@ class OtherItem(_Frozen):
 
 
 CodexItem = Annotated[
-    CommandExecution | ImageView | UserMessageItem | McpToolCall | OtherItem,
+    CommandExecution | ImageView | UserMessageItem | McpToolCall | FileChange | OtherItem,
     Field(union_mode="left_to_right"),
 ]
 
