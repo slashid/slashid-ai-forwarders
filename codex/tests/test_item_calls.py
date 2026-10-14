@@ -6,8 +6,8 @@ import pytest
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from slashid_codex.envelope import failed_calls
-from slashid_codex.mcp_calls import failed, pairs, tool_name
-from slashid_codex.rollout import McpToolCall
+from slashid_codex.item_calls import failed, pairs, tool_name
+from slashid_codex.rollout import CommandExecution, ImageView, McpToolCall
 
 
 def _item(**fields: object) -> McpToolCall:
@@ -49,8 +49,53 @@ def test_a_failed_call_without_a_result_says_so() -> None:
     assert json.loads(output.output[0].text) == {"isError": True}  # ty: ignore[unresolved-attribute]
 
 
-def test_other_servers_get_no_pair() -> None:
-    assert pairs([_item(server="payroll")]) == ([], [])
+def test_other_servers_get_a_pair_too() -> None:
+    [call], _ = pairs([_item(server="paulo", tool="web_fetch")])
+    assert call.name == "mcp__paulo__web_fetch"
+
+
+def test_pairs_are_synthetic() -> None:
+    [call], _ = pairs([_item()])
+    assert call.synthetic is True
+
+
+def test_shell_command_pair_is_the_hooks_bash() -> None:
+    item = CommandExecution.model_validate(
+        {
+            "type": "CommandExecution",
+            "id": "exec-2",
+            "command": ["/bin/bash", "-lc", "cat my note.txt"],
+            "cwd": "file:///home/user/my%20work",
+            "formatted_output": "line one\n",
+            "exit_code": 0,
+        }
+    )
+    [call], [output] = pairs([item])
+    assert (call.call_id, call.name) == ("exec-2", "Bash")
+    assert json.loads(call.arguments) == {
+        "command": "cat my note.txt",
+        "workdir": "/home/user/my work",
+    }
+    assert output.call_id == "exec-2"
+    assert output.output[0].text == "line one\n"  # ty: ignore[unresolved-attribute]
+
+
+def test_shell_command_with_another_argv_is_joined() -> None:
+    item = CommandExecution.model_validate(
+        {"type": "CommandExecution", "id": "exec-3", "command": ["ls", "-la", "my dir"]}
+    )
+    [call], _ = pairs([item])
+    assert json.loads(call.arguments) == {"command": "ls -la 'my dir'"}
+
+
+def test_image_view_pair_is_view_image() -> None:
+    item = ImageView.model_validate(
+        {"type": "ImageView", "id": "exec-4", "path": "file:///home/user/image%201.png"}
+    )
+    [call], [output] = pairs([item])
+    assert (call.call_id, call.name) == ("exec-4", "view_image")
+    assert json.loads(call.arguments) == {"path": "/home/user/image 1.png"}
+    assert output.output == []
 
 
 @pytest.mark.parametrize(
@@ -68,3 +113,10 @@ def test_failed(fields: dict[str, object], expected: bool) -> None:
 
 def test_failed_calls_include_failed_mcp_items() -> None:
     assert failed_calls([_item(status="failed"), _item(id="exec-2")]) == {"exec-1"}
+
+
+def test_failed_calls_include_failed_commands() -> None:
+    command = CommandExecution.model_validate(
+        {"type": "CommandExecution", "id": "exec-5", "exit_code": 1}
+    )
+    assert failed_calls([command]) == {"exec-5"}

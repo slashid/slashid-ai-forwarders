@@ -9,7 +9,7 @@ from slashid_ai_forwarder_core.events import AITool, AIToolServer, AIToolUse
 from slashid_ai_forwarder_core.normalize.normalized.tools import build_tools_declared
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedMessage
 
-from .mcp_calls import failed
+from .item_calls import failed
 from .rollout import CodexItem, CommandExecution, McpToolCall
 
 
@@ -20,9 +20,9 @@ def wire_time(ts: datetime) -> str:
 
 
 def failed_calls(items: Iterable[CodexItem]) -> set[str]:
-    """Ids of calls that failed: commands and MCP items. Only a function-mode
-    command shares its call's id, so script-mode commands stay successful; a
-    script-mode MCP item's id is its synthesized call's."""
+    """Ids of calls that failed: commands and MCP items. An item's id is its
+    call's: the real ``call_id`` in function mode, the synthesized call's in
+    script mode."""
     return {
         item.id
         for item in items

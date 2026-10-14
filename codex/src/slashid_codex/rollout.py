@@ -87,6 +87,8 @@ class CommandExecution(_Frozen):
     parsed_cmd: list[ParsedCmd] = Field(default_factory=list)
     exit_code: int | None = None
     status: str | None = None
+    # The output as the model gets it.
+    formatted_output: str | None = None
 
 
 class ImageView(_Frozen):

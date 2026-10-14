@@ -20,6 +20,7 @@ ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 FIXTURES = Path(__file__).parent / "fixtures"
 READ_CONTENT = "line one\nline two\n"
 BASH = resolve_tool("Bash")
+EXEC = resolve_tool("exec")
 
 
 def _invocations(name: str | Path) -> tuple[list[RolloutInvocation], RolloutCursor]:
@@ -83,12 +84,12 @@ async def test_script_mode(builder: Builder) -> None:
     assert first.tokens.input == 3
     assert first.used_tools is None
     assert first.requested_tool_uses is not None
-    assert [u.tool_id for u in first.requested_tool_uses] == [BASH[0].id]
+    # The model called ``exec``; the command it ran is a tool use of its own.
+    assert [u.tool_id for u in first.requested_tool_uses] == [EXEC[0].id]
     assert second.used_tools is not None
-    [used] = second.used_tools
-    assert used.tool_id == BASH[0].id
-    assert used.is_error is False
-    assert second.available_tools == [BASH[0]]
+    assert {u.tool_id for u in second.used_tools} == {EXEC[0].id, BASH[0].id}
+    assert [u.is_error for u in second.used_tools] == [False, False]
+    assert {t.id for t in second.available_tools or []} == {EXEC[0].id, BASH[0].id}
 
 
 async def test_function_mode(builder: Builder, tmp_path: Path) -> None:

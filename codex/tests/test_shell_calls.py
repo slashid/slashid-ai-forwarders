@@ -53,54 +53,16 @@ def test_other_function_calls_unchanged(name: str, arguments: str) -> None:
     assert map_function_call(call) is call
 
 
-@pytest.mark.parametrize(
-    "script",
-    [
-        'text(await tools.exec_command({cmd:"cat note.txt",max_output_tokens:10000}));\n',
-        'await tools.exec_command({cmd: "cat note.txt"})',
-        'tools.exec_command({"cmd": "cat note.txt"});',
-        '// @exec: {"yield_time_ms": 1000, "max_output_tokens": 500}\n'
-        'text(await tools.exec_command({cmd:"cat note.txt"}));',
-    ],
-)
-def test_single_exec_command_script_becomes_bash(script: str) -> None:
-    call = map_custom_call(_exec(script), cwd="/home/user/work")
-    assert call is not None
-    assert call.name == "Bash"
-    assert call.call_id == "call_2"
-    assert json.loads(call.arguments) == {"command": "cat note.txt", "workdir": "/home/user/work"}
-
-
-def test_script_without_cwd_omits_workdir() -> None:
-    call = map_custom_call(_exec('text(await tools.exec_command({cmd:"ls"}));'), cwd=None)
-    assert call is not None
-    assert json.loads(call.arguments) == {"command": "ls"}
-
-
-def test_script_workdir_wins_over_cwd() -> None:
-    script = 'text(await tools.exec_command({cmd:"ls", workdir:"/srv"}));'
-    call = map_custom_call(_exec(script), cwd="/home/user/work")
-    assert call is not None
-    assert json.loads(call.arguments) == {"command": "ls", "workdir": "/srv"}
-
-
 def test_other_tools_keep_their_arguments() -> None:
-    call = map_custom_call(
-        _exec('text(await tools.mcp__payroll__read({employee_id: "e-1", "full": true}));'),
-        cwd="/w",
-    )
+    call = map_custom_call(_exec('text(await tools.update_plan({steps: ["a"], "full": true}));'))
     assert call is not None
-    assert call.name == "mcp__payroll__read"
-    assert json.loads(call.arguments) == {"employee_id": "e-1", "full": True}
-
-    view = map_custom_call(_exec('await tools.view_image({path:"/x.png",detail:"high"})'), cwd="/w")
-    assert view is not None
-    assert view.name == "view_image"
-    assert json.loads(view.arguments) == {"path": "/x.png", "detail": "high"}
+    assert call.name == "update_plan"
+    assert call.call_id == "call_2"
+    assert json.loads(call.arguments) == {"steps": ["a"], "full": True}
 
 
 def test_string_argument() -> None:
-    call = map_custom_call(_exec('text(await tools.apply_patch("*** Begin Patch\\n"));'), cwd="/w")
+    call = map_custom_call(_exec('text(await tools.apply_patch("*** Begin Patch\\n"));'))
     assert call is not None
     assert call.name == "apply_patch"
     assert call.arguments == "*** Begin Patch\n"
@@ -109,16 +71,28 @@ def test_string_argument() -> None:
 @pytest.mark.parametrize(
     "script",
     [
-        'text(await tools.exec_command({cmd:"a"})); text(await tools.exec_command({cmd:"b"}));',
-        'const r = await tools.exec_command({cmd:"ls"}); text(r);',
-        "text(await tools.exec_command({cmd: `ls`}));",
-        "text(await tools.exec_command());",
-        'text(await tools.exec_command("ls"));',
+        'text(await tools.exec_command({cmd:"cat note.txt"}));',
+        'const r = await tools.view_image({path:"/abs/img.png"}); image(r.image_url);\n',
+        'text(await tools.mcp__payroll__read({employee_id: "e-1"}));',
+        'text(await tools.mcp__codex_apps__google_drive_fetch({url: "u"}));',
+    ],
+)
+def test_calls_with_items_are_left_to_them(script: str) -> None:
+    assert map_custom_call(_exec(script)) is None
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'text(await tools.update_plan({a:"a"})); text(await tools.update_plan({a:"b"}));',
+        'const r = await tools.update_plan({a:"a"}); text(r);',
+        "text(await tools.update_plan({a: `a`}));",
+        "text(await tools.update_plan());",
         'text("hello");',
     ],
 )
 def test_other_scripts_do_not_match(script: str) -> None:
-    assert map_custom_call(_exec(script), cwd="/w") is None
+    assert map_custom_call(_exec(script)) is None
 
 
 def test_quoting_ignores_keys_inside_strings() -> None:
@@ -132,38 +106,4 @@ def test_non_exec_custom_tool_not_mapped() -> None:
     call = ResponsesCustomToolCall(
         type="custom_tool_call", call_id="c", name="apply_patch", input="tools.x({})"
     )
-    assert map_custom_call(call, cwd="/w") is None
-
-
-@pytest.mark.parametrize(
-    "script",
-    [
-        'const r = await tools.view_image({path:"/abs/img.png"}); image(r.image_url);\n',
-        'let img=await tools.view_image({path:"/abs/img.png"})\nimage( img.image_url );',
-        '// @exec: {"yield_time_ms": 1000}\n'
-        'const r = await tools.view_image({path:"/abs/img.png"});\nimage(r.image_url)\n',
-    ],
-)
-def test_view_image_idiom_maps_to_its_call(script: str) -> None:
-    call = map_custom_call(_exec(script), cwd="/w")
-    assert call is not None
-    assert call.name == "view_image"
-    assert json.loads(call.arguments) == {"path": "/abs/img.png"}
-
-
-@pytest.mark.parametrize(
-    "script",
-    [
-        'const r = await tools.view_image({path:"/a.png"}); image(s.image_url);',
-        'const r = await tools.view_image({path:"/a.png"}); image(r.url);',
-        'var r = await tools.view_image({path:"/a.png"}); image(r.image_url);',
-        'const r = await tools.view_image({path:"/a.png"}); image(r.image_url); text("x");',
-    ],
-)
-def test_image_idiom_variants_do_not_match(script: str) -> None:
-    assert map_custom_call(_exec(script), cwd="/w") is None
-
-
-def test_codex_apps_scripts_are_left_to_their_items() -> None:
-    script = 'text(await tools.mcp__codex_apps__google_drive_fetch({url: "u"}));'
-    assert map_custom_call(_exec(script), cwd="/w") is None
+    assert map_custom_call(call) is None

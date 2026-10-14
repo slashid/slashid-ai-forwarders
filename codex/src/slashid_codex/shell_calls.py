@@ -1,7 +1,9 @@
-"""Codex's shell calls as the hooks name them: ``Bash`` with ``{command, workdir}``.
+"""Codex's function-mode shell calls as the hooks name them: ``Bash`` with
+``{command, workdir}``, and the other tools a script calls once.
 
-Function mode calls ``exec_command``; script mode calls ``exec`` with
-JavaScript whose ``tools.NAME(ARG)`` is function mode's ``NAME``.
+Script mode calls ``exec`` with JavaScript whose ``tools.NAME(ARG)`` is function
+mode's ``NAME``. Shell commands, image views and MCP calls of a script come
+from their ``item_completed`` items instead (``item_calls.py``).
 """
 
 from __future__ import annotations
@@ -16,10 +18,9 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesFunctionCall,
 )
 
-from .mcp_calls import APPS_PREFIX
-
 SHELL_TOOL = "exec_command"
 SCRIPT_TOOL = "exec"
+_FROM_ITEMS = frozenset({SHELL_TOOL, "view_image"})
 BASH = "Bash"
 
 _PRAGMA = re.compile(r"\A\s*//\s*@exec:[^\n]*\n")
@@ -27,12 +28,6 @@ _ID = r"[A-Za-z_$][\w$]*"
 _NAME = rf"({_ID})"
 _WRAPPED = re.compile(rf"\Atext\(\s*await\s+tools\.{_NAME}\((.*)\)\s*\)\s*;?\s*\Z", re.S)
 _BARE = re.compile(rf"\A(?:await\s+)?tools\.{_NAME}\((.*)\)\s*;?\s*\Z", re.S)
-# ``view_image``'s script-mode idiom: ``const r = await tools.NAME(ARG); image(r.image_url);``
-_IMAGE = re.compile(
-    rf"\A(?:const|let)\s+(?P<var>{_ID})\s*=\s*await\s+tools\.{_NAME}\((.*)\)\s*;?"
-    r"\s*image\(\s*(?P=var)\s*\.\s*image_url\s*\)\s*;?\s*\Z",
-    re.S,
-)
 _IDENTIFIER = re.compile(_ID)
 
 
@@ -64,23 +59,16 @@ def map_function_call(call: ResponsesFunctionCall) -> ResponsesFunctionCall:
     return _bash(call.call_id, args.cmd, args.workdir)
 
 
-def map_custom_call(call: ResponsesCustomToolCall, cwd: str | None) -> ResponsesFunctionCall | None:
+def map_custom_call(call: ResponsesCustomToolCall) -> ResponsesFunctionCall | None:
     """An ``exec`` script that is a single ``tools.NAME(ARG)`` call (see
-    ``parse_script``) → that call;
-    ``None`` for any other script, and for a ``codex_apps`` MCP call, which
-    the cursor builds from its ``McpToolCall`` item. ``cwd`` (the turn's)
-    stands in for a missing ``workdir``."""
+    ``parse_script``) → that call; ``None`` for any other script, and for the
+    tools whose ``item_completed`` items give the call: shell commands, image
+    views and MCP tools (``item_calls.py``)."""
     if call.name != SCRIPT_TOOL or (parsed := parse_script(call.input)) is None:
         return None
     name, arg = parsed
-    if name.startswith(APPS_PREFIX):
+    if name in _FROM_ITEMS or name.startswith("mcp__"):
         return None
-    if name == SHELL_TOOL:
-        try:
-            args = _ExecCommandArgs.model_validate(arg)
-        except ValidationError:
-            return None
-        return _bash(call.call_id, args.cmd, args.workdir or cwd)
     arguments = arg if isinstance(arg, str) else json.dumps(arg)
     return ResponsesFunctionCall(
         type="function_call", call_id=call.call_id, name=name, arguments=arguments
@@ -88,14 +76,12 @@ def map_custom_call(call: ResponsesCustomToolCall, cwd: str | None) -> Responses
 
 
 def parse_script(script: str) -> tuple[str, JsonValue] | None:
-    """``(NAME, ARG)`` of a script that is one ``tools.NAME(ARG)`` call, bare,
-    in ``text(await …)`` or in the ``image()`` idiom, after an optional
-    ``// @exec:`` line. ``ARG`` is a string or an object literal."""
+    """``(NAME, ARG)`` of a script that is one ``tools.NAME(ARG)`` call, bare or
+    in ``text(await …)``, after an optional ``// @exec:`` line. ``ARG`` is a
+    string or an object literal."""
     body = _PRAGMA.sub("", script, count=1).strip()
     if match := _WRAPPED.match(body) or _BARE.match(body):
         name, arg = match.group(1), match.group(2)
-    elif match := _IMAGE.match(body):
-        name, arg = match.group(2), match.group(3)
     else:
         return None
     value = _argument(arg.strip())

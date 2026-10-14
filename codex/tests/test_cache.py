@@ -109,7 +109,10 @@ def test_refresh_advances_the_head(tmp_path: Path) -> None:
         f.write(b"".join(raw[10:]))
     assert session.refresh() > 0
     assert session.head.at_end
-    assert session.head.pending_call("call_Y6yRs2JecdOylBbDtr6XaqwV") is not None
+    assert any(
+        getattr(item, "call_id", None) == "call_Y6yRs2JecdOylBbDtr6XaqwV"
+        for item in session.head.committed
+    )
 
 
 def test_fork_parent_located_under_codex_home(tmp_path: Path) -> None:

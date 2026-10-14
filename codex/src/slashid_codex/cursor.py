@@ -29,13 +29,12 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
 )
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
+from .item_calls import CallItem, pairs
 from .log import SessionLog
-from .mcp_calls import pairs
 from .rollout import (
     CodexItem,
     Compacted,
     ItemCompleted,
-    McpToolCall,
     OtherItem,
     SessionMeta,
     TaskComplete,
@@ -296,7 +295,7 @@ class RolloutCursor:
                 if item.name == SCRIPT_TOOL:
                     # Parallel ``exec`` calls: their items all join the last one.
                     self._script_call = item.call_id
-                if (mapped := map_custom_call(item, self.cwd)) is not None:
+                if (mapped := map_custom_call(item)) is not None:
                     self._renamed.add(item.call_id)
                     item = mapped
             case ResponsesCustomToolCallOutput() if item.call_id in self._renamed:
@@ -349,7 +348,7 @@ class RolloutCursor:
             consumed, carried = self.pending, []
         round_items = [p.item for p in consumed]
         joined = self._join(round_items)
-        history = _with_mcp_pairs(round_items, joined)
+        history = _with_item_pairs(round_items, joined)
         request = ResponsesRequest.model_construct(
             instructions=self.base_instructions, input=[*self.committed, *history], tools=[]
         )
@@ -416,14 +415,15 @@ def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
 _OUTPUTS = (ResponsesFunctionCallOutput, ResponsesCustomToolCallOutput)
 
 
-def _with_mcp_pairs(
+def _with_item_pairs(
     round_items: list[ResponsesItem], joined: tuple[CodexItem, ...]
 ) -> list[ResponsesItem]:
-    """``round_items`` with a call pair for each script-mode MCP item. A
-    function-mode item's id is an output's ``call_id`` in the round and needs
-    no pair, a script-mode one (``exec-<uuid>``) is not."""
+    """``round_items`` with a call pair for each script-mode tool item (MCP
+    call, shell command, image view). A function-mode item's id is an output's
+    ``call_id`` in the round and needs no pair, a script-mode one
+    (``exec-<uuid>``) is not."""
     answered = set(_output_call_ids(round_items))
-    scripted = [i for i in joined if isinstance(i, McpToolCall) and i.id not in answered]
+    scripted = [i for i in joined if isinstance(i, CallItem) and i.id not in answered]
     return _splice(round_items, *pairs(scripted))
 
 

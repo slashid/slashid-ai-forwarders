@@ -92,16 +92,23 @@ def test_script_mode(tmp_path: Path) -> None:
     assert first.usage.cache_write_input_tokens == 15186
     assert first.response.usage is not None
     assert first.response.usage.input_tokens == 15189
-    [call] = _calls(first.response.output)
-    assert call.name == "Bash"
-    assert json.loads(call.arguments) == {"command": "cat note.txt", "workdir": "/home/user/work"}
+    # The script is the model's call; the command it ran comes from the item.
+    [script] = [i for i in first.response.output if isinstance(i, ResponsesCustomToolCall)]
+    assert script.name == "exec"
     # The exec item precedes the output; it joins the round that consumes the output.
     assert first.consumed_items == ()
     [item] = second.consumed_items
     assert isinstance(item, CommandExecution)
     assert item.id.startswith("exec-")
-    outputs = [i for i in _inputs(second) if isinstance(i, ResponsesFunctionCallOutput)]
-    assert [o.call_id for o in outputs] == [call.call_id]
+    [call] = _calls(_inputs(second))
+    assert (call.call_id, call.name, call.synthetic) == (item.id, "Bash", True)
+    assert json.loads(call.arguments) == {"command": "cat note.txt", "workdir": "/home/user/work"}
+    outputs = [
+        i
+        for i in _inputs(second)
+        if isinstance(i, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
+    ]
+    assert [o.call_id for o in outputs] == [script.call_id, item.id]
     assert second.finished_turn_ids == ()
 
 
@@ -399,7 +406,7 @@ def test_function_mode_mcp_item_gets_no_pair(tmp_path: Path) -> None:
 
 def test_splice_puts_calls_before_the_first_output_and_outputs_after_the_last() -> None:
     from slashid_codex.cursor import _splice
-    from slashid_codex.mcp_calls import pairs
+    from slashid_codex.item_calls import pairs
 
     exec_call = ResponsesCustomToolCall(
         type="custom_tool_call", call_id="c1", name="exec", input="x"
@@ -414,3 +421,35 @@ def test_splice_puts_calls_before_the_first_output_and_outputs_after_the_last() 
     spliced = _splice([exec_call, out, prompt], calls, outputs)
     assert spliced == [exec_call, *calls, out, *outputs, prompt]
     assert _splice([prompt], calls, outputs) == [prompt]
+
+
+def _command_item(item_id: str, command: str) -> dict:
+    return {
+        "type": "CommandExecution",
+        "id": item_id,
+        "command": ["/bin/bash", "-lc", command],
+        "cwd": "file:///home/user/work",
+        "status": "completed",
+        "exit_code": 0,
+        "formatted_output": "ok\n",
+    }
+
+
+def test_script_with_several_commands_gets_a_call_for_each(tmp_path: Path) -> None:
+    items = [_command_item("exec-a", "echo one"), _command_item("exec-b", "echo two")]
+    _, second = _drain(RolloutCursor(_open(write_mcp_rollout(tmp_path, items))))
+    calls = _calls(_inputs(second))
+    assert [(c.call_id, c.name) for c in calls] == [("exec-a", "Bash"), ("exec-b", "Bash")]
+    assert [json.loads(c.arguments)["command"] for c in calls] == ["echo one", "echo two"]
+
+
+def test_image_views_and_other_servers_get_calls_too(tmp_path: Path) -> None:
+    items = [
+        {"type": "ImageView", "id": "exec-i", "path": "file:///home/user/a.png"},
+        mcp_item("exec-m") | {"server": "paulo", "tool": "web_fetch"},
+    ]
+    _, second = _drain(RolloutCursor(_open(write_mcp_rollout(tmp_path, items))))
+    assert [(c.call_id, c.name) for c in _calls(_inputs(second))] == [
+        ("exec-i", "view_image"),
+        ("exec-m", "mcp__paulo__web_fetch"),
+    ]
