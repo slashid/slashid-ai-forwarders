@@ -15,7 +15,7 @@ import binascii
 import re
 from collections.abc import Callable
 from typing import Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
@@ -23,6 +23,14 @@ _CLAUDE = re.compile(r"mcp__claude_ai_(Google_Drive|Microsoft_365)__(\w+)")
 _CODEX = re.compile(r"mcp__codex_apps__(google_drive|microsoft_sharepoint)__(\w+)")
 _DRIVE_HOSTS = frozenset({"drive.google.com", "docs.google.com"})
 _DRIVE_ID = re.compile(r"/d/([A-Za-z0-9_-]+)")
+# A drive item's id, as opposed to a path segment.
+_ITEM_ID = re.compile(r"01[A-Z2-7]{30,}")
+_GRAPH_ITEM = re.compile(r"/drives/([^/]+)/items/([^/?#]+)")
+_GUID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+# What reading a folder returns: ``<name> (file|folder, N bytes) file:///…`` per child.
+_LISTING = re.compile(r"\((?:file|folder), \d+ bytes\) file:///")
+# When a call names a file several ways, the first of these kinds is kept.
+_KIND_ORDER = ("m365/item/", "m365/guid/", "m365/path/")
 
 Source = Literal["claude", "codex"]
 Family = Literal["drive", "m365"]
@@ -54,6 +62,36 @@ class _Envelope(_Lenient):
     """Codex's result: ``{content, structuredContent, isError}``."""
 
     structuredContent: JsonValue = None
+
+
+class _UriArgs(_Lenient):
+    uri: str
+
+
+class _ItemArgs(_Lenient):
+    drive_id: str
+    item_id: str
+
+
+class _FolderHit(_Lenient):
+    """One block of claude.ai's ``sharepoint_folder_search``."""
+
+    driveId: str | None = None
+    id: str | None = None
+    name: str | None = None
+
+
+class _SharepointFile(_Lenient):
+    title: str | None = None
+    name: str | None = None
+    document_id: str | None = None
+    web_link: str | None = None
+    drive_id: str | None = None
+    item_id: str | None = None
+
+
+class _SharepointFiles(_Lenient):
+    results: list[_SharepointFile] = []
 
 
 class _DriveFile(_Lenient):
@@ -220,7 +258,89 @@ def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> 
     return []
 
 
-def _no_m365(action: str, tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
+# ----------------------------------------------------------------------------
+# Microsoft 365
+# ----------------------------------------------------------------------------
+
+
+def _item(drive_id: str, item_id: str) -> str:
+    return f"m365/item/{drive_id}/{item_id}"
+
+
+def _url_refs(url: str) -> list[str]:
+    """The item a Graph URL names and the GUID a ``sourcedoc`` link carries."""
+    parts = urlparse(url)
+    refs: list[str] = []
+    if parts.hostname == "graph.microsoft.com" and (match := _GRAPH_ITEM.search(parts.path)):
+        refs.append(_item(unquote(match.group(1)), unquote(match.group(2))))
+    for value in parse_qs(parts.query).get("sourcedoc", []):
+        if _GUID.fullmatch(guid := value.strip("{}")):
+            refs.append(f"m365/guid/{guid.upper()}")
+    return refs
+
+
+def _best(refs: list[str]) -> str:
+    return min(
+        refs, key=lambda ref: next(i for i, kind in enumerate(_KIND_ORDER) if ref.startswith(kind))
+    )
+
+
+def _read_resource(tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
+    args = _args(_UriArgs, tool_input)
+    if args is None or not args.uri.startswith("file:///"):
+        return []
+    # A folder's result lists its children; a file's is its text.
+    if any(_LISTING.search(text) for text in _texts(tool_output)):
+        return []
+    drive_id, sep, tail = args.uri.removeprefix("file:///").partition("/")
+    rest = unquote(tail).strip("/")
+    if not drive_id or not sep or not rest:
+        return []
+    if "/" not in rest and _ITEM_ID.fullmatch(rest):
+        return [ConnectorFile(ref=_item(drive_id, rest))]
+    return [ConnectorFile(ref=f"m365/path/{drive_id}/{rest}", name=rest.rsplit("/", 1)[-1])]
+
+
+def _claude_m365(action: str, tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
+    if action == "read_resource":
+        return _read_resource(tool_input, tool_output)
+    if action == "sharepoint_folder_search":
+        hits = (_json(_FolderHit, text) for text in _texts(tool_output))
+        return [
+            ConnectorFile(ref=_item(hit.driveId, hit.id), name=hit.name)
+            for hit in hits
+            if hit and hit.driveId and hit.id
+        ]
+    return []
+
+
+def _codex_sharepoint(
+    action: str, tool_input: JsonValue, tool_output: JsonValue
+) -> list[ConnectorFile]:
+    if action == "search":
+        found = _payload(_SharepointFiles, tool_output)
+        return [
+            ConnectorFile(ref=_item(f.drive_id, f.item_id), name=f.title)
+            for f in (found.results if found else [])
+            if f.drive_id and f.item_id
+        ]
+    if action == "get_drive_item":
+        args = _args(_ItemArgs, tool_input)
+        file = _payload(_SharepointFile, tool_output)
+        if args is None:
+            return []
+        return [
+            ConnectorFile(ref=_item(args.drive_id, args.item_id), name=file.name if file else None)
+        ]
+    if action == "fetch":
+        file = _payload(_SharepointFile, tool_output)
+        url = _args(_UrlArgs, tool_input)
+        refs = _url_refs(url.url) if url else []
+        for link in (file.document_id, file.web_link) if file else ():
+            refs += _url_refs(link) if link else []
+        if not refs:
+            return []
+        return [ConnectorFile(ref=_best(refs), name=file.title if file else None)]
     return []
 
 
@@ -228,6 +348,6 @@ _Handler = Callable[[str, JsonValue, JsonValue], list[ConnectorFile]]
 _HANDLERS: dict[tuple[Source, Family], _Handler] = {
     ("claude", "drive"): _claude_drive,
     ("codex", "drive"): _codex_drive,
-    ("claude", "m365"): _no_m365,
-    ("codex", "m365"): _no_m365,
+    ("claude", "m365"): _claude_m365,
+    ("codex", "m365"): _codex_sharepoint,
 }
