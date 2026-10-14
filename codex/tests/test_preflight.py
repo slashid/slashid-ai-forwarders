@@ -280,6 +280,56 @@ async def test_tool_read_expands_home(env: Env, monkeypatch: pytest.MonkeyPatch)
     assert entry.content_hashes is not None
 
 
+def _connector_ptu(tool_name: str, tool_input: dict[str, object], tool_use_id: str, cwd: Path):
+    return PreToolUseHook.model_validate(
+        {
+            "session_id": SESSION,
+            "turn_id": TURN,
+            "cwd": str(cwd),
+            "hook_event_name": "PreToolUse",
+            "model": "gpt-5.5",
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "tool_use_id": tool_use_id,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "ref"),
+    [
+        (
+            "mcp__codex_apps__google_drive__fetch",
+            {"url": "https://drive.google.com/file/d/ID2/view"},
+            "google/ID2",
+        ),
+        (
+            "mcp__codex_apps__microsoft_sharepoint__fetch",
+            {"url": "https://graph.microsoft.com/v1.0/drives/b!d/items/01ITEM"},
+            "m365/item/b!d/01ITEM",
+        ),
+    ],
+)
+async def test_connector_call_names_its_file_by_ref(
+    env: Env, tool: str, args: dict[str, object], ref: str
+) -> None:
+    await env.preflight.pre_tool_use(_connector_ptu(tool, args, "exec-3", env.tmp_path))
+    assert env.sent.accessed_files is not None
+    [entry] = env.sent.accessed_files
+    assert (entry.file_ref, entry.name, entry.content_hashes) == (ref, None, None)
+    assert entry.provenance == "tool_result"
+    assert env.store.for_round(SESSION, [], ["exec-3"]) == [entry]
+
+
+async def test_connector_call_without_a_ref_names_no_file(env: Env) -> None:
+    hook = _connector_ptu(
+        "mcp__codex_apps__microsoft_sharepoint__search", {"query": "q"}, "exec-4", env.tmp_path
+    )
+    await env.preflight.pre_tool_use(hook)
+    assert env.sent.accessed_files is None
+    assert env.store.for_round(SESSION, [], ["exec-4"]) == []
+
+
 async def test_tool_without_read(env: Env) -> None:
     await env.preflight.pre_tool_use(_ptu("ls -la", cwd=env.tmp_path))
     assert env.sent.accessed_files is None
