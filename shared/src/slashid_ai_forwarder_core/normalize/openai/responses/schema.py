@@ -65,7 +65,6 @@ class ResponsesFunctionCallOutput(_LenientModel):
     type: Literal["function_call_output"]
     call_id: str
     output: str | list[ResponsesPart]
-    synthetic: bool | None = None
 
 
 class ResponsesCustomToolCall(_LenientModel):

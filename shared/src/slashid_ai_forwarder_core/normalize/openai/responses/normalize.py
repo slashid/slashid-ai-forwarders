@@ -127,7 +127,6 @@ def _item(item: ResponsesItem) -> tuple[Role, list[NormalizedContent]] | None:
                 tool_use_id=item.call_id,
                 tool_output=output,
                 tool_executor="client",
-                synthetic=item.synthetic if isinstance(item, ResponsesFunctionCallOutput) else None,
             )
             return "user", [block]
         case ResponsesReasoning():

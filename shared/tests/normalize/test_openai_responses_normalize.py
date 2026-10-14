@@ -392,7 +392,7 @@ def test_instructions_and_leading_developer_message_share_the_system_message() -
     ]
 
 
-def test_synthetic_items_make_synthetic_blocks() -> None:
+def test_synthetic_call_makes_a_synthetic_block() -> None:
     request = ResponsesRequest.model_validate(
         {
             "model": "m",
@@ -406,7 +406,7 @@ def test_synthetic_items_make_synthetic_blocks() -> None:
                     "synthetic": True,
                 },
                 {"type": "function_call_output", "call_id": "a", "output": "x"},
-                {"type": "function_call_output", "call_id": "b", "output": "x", "synthetic": True},
+                {"type": "function_call_output", "call_id": "b", "output": "x"},
             ],
         }
     )
@@ -416,5 +416,5 @@ def test_synthetic_items_make_synthetic_blocks() -> None:
         ("tool_use", "a", None),
         ("tool_use", "b", True),
         ("tool_result", "a", None),
-        ("tool_result", "b", True),
+        ("tool_result", "b", None),
     ]

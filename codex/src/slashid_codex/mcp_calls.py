@@ -61,7 +61,6 @@ def pairs(
                 type="function_call_output",
                 call_id=item.id,
                 output=[ResponsesInputText(type="input_text", text=_result_json(item))],
-                synthetic=True,
             )
         )
     return calls, outputs
