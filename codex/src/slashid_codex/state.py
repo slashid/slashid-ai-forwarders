@@ -36,9 +36,9 @@ class FileRecordStore(Protocol):
         ...
 
     def put_call(
-        self, session_id: str, turn_id: str, tool_use_id: str, entry: AIAccessedFile
+        self, session_id: str, turn_id: str, tool_use_id: str, entries: Sequence[AIAccessedFile]
     ) -> None:
-        """The file a tool call reads, keyed by its ``tool_use_id``. Raises
+        """The files a tool call reads, keyed by its ``tool_use_id``. Raises
         ``RecordStoreBusy``."""
         ...
 
@@ -162,9 +162,9 @@ class SqliteFileRecordStore:
         self._put(session_id, turn_id, "turn", turn_id, entries)
 
     def put_call(
-        self, session_id: str, turn_id: str, tool_use_id: str, entry: AIAccessedFile
+        self, session_id: str, turn_id: str, tool_use_id: str, entries: Sequence[AIAccessedFile]
     ) -> None:
-        self._put(session_id, turn_id, "call", tool_use_id, [entry])
+        self._put(session_id, turn_id, "call", tool_use_id, entries)
 
     def _select(self, session_id: str, kind: KeyKind, keys: Sequence[str]) -> list[AIAccessedFile]:
         if not keys:

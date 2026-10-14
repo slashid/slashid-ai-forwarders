@@ -97,7 +97,7 @@ async def test_function_mode(builder: Builder, tmp_path: Path) -> None:
     [sed_item] = invocations[2].consumed_items
     assert sed_item.id is not None
     record = _file(tmp_path, "notes.md", READ_CONTENT)
-    builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, record)
+    builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, [record])
     # Same file name as the read, other content: told apart by hash, in other rounds.
     attachment = _file(tmp_path, "notes.md", "a").model_copy(update={"provenance": "attachment"})
     builder.records.put_turn("sess", invocations[0].turn_id, [attachment])
@@ -127,7 +127,7 @@ async def test_home_relative_read_dedupes_against_its_record(
     assert sed_item.id is not None
     # Preflight hashed the expanded path; both entries are named ``notes.md``.
     record = _file(tmp_path, "notes.md", READ_CONTENT)
-    builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, record)
+    builder.records.put_call("sess", invocations[1].turn_id, sed_item.id, [record])
 
     events = await builder.events(rollout)
 
@@ -218,7 +218,7 @@ async def test_script_image_view_is_reported_once(builder: Builder, tmp_path: Pa
     path = write_mcp_rollout(tmp_path, [image])
     invocations, _ = _invocations(path)
     record = _file(tmp_path, "pix.png", "png bytes")
-    builder.records.put_call("sess", invocations[0].turn_id, "exec-i", record)
+    builder.records.put_call("sess", invocations[0].turn_id, "exec-i", [record])
     _, second = await builder.events(path)
     assert [f.name for f in second.accessed_files or []] == ["pix.png"]
     assert (second.accessed_files or [])[0].content_hashes
