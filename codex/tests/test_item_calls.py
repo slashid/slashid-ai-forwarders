@@ -6,7 +6,7 @@ import pytest
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from slashid_codex.envelope import failed_calls
-from slashid_codex.item_calls import failed, pairs, tool_name
+from slashid_codex.item_calls import _command, failed, pairs, tool_name
 from slashid_codex.rollout import CommandExecution, FileChange, ImageView, McpToolCall, WebSearch
 
 
@@ -185,3 +185,23 @@ def test_web_run_is_webrun() -> None:
     assert (call.call_id, call.name) == ("exec-9", "webrun")
     assert json.loads(call.arguments)["action"]["url"] == "https://example.com"
     assert "Example Domain" in output.output[0].text  # ty: ignore[unresolved-attribute]
+
+
+@pytest.mark.parametrize(
+    ("argv", "command"),
+    [
+        (["/bin/bash", "-lc", "cat note.txt"], "cat note.txt"),
+        (["sh", "-c", "cat note.txt"], "cat note.txt"),
+        (["/usr/bin/zsh", "-ilc", "cat note.txt"], "cat note.txt"),
+        (["bash", "--noprofile", "-c", "cat note.txt"], "cat note.txt"),
+        (["bash", "-c", "cat note.txt", "name", "arg"], "cat note.txt"),
+        (["python3", "-c", "print(1)"], "python3 -c 'print(1)'"),
+        (["bash", "script.sh"], "bash script.sh"),
+        (["bash", "-l", "script.sh"], "bash -l script.sh"),
+        (["bash", "-c"], "bash -c"),
+        (["ls", "-la", "my dir"], "ls -la 'my dir'"),
+        ([], ""),
+    ],
+)
+def test_command_of_an_argv(argv: list[str], command: str) -> None:
+    assert _command(argv) == command

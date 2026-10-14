@@ -54,7 +54,7 @@ Scope: the kinds of tool call an `exec` script makes that Codex records as items
    | Item | Call | Output |
    | --- | --- | --- |
    | `McpToolCall` | `mcp__<server>__<tool with "." → "__">`, `arguments` | the result serialized by alias (`structuredContent`, `isError`); without a result, `{"isError": <failed>}` |
-   | `CommandExecution` | `Bash`, `{command, workdir}`: `command` is the argv's third element for `[shell, "-c"/"-lc", cmd]`, else the joined argv; `workdir` is the path of the `file://` `cwd` | `formatted_output` |
+   | `CommandExecution` | `Bash`, `{command, workdir}`: `command` is, for a known shell (`bash`, `sh`, `zsh`, `dash`, `ksh`, `fish`), the argument after the first short-option group containing `c` (`-c`, `-lc`, `-ilc`), else the joined argv; `workdir` is the path of the `file://` `cwd` | `formatted_output` |
    | `ImageView` | `view_image`, `{path}` from the `file://` URL | none |
    | `WebSearch` (`type: "Extension"`, `kind: "web.search"`) | `webrun`, `{query, action}`, as `web__run` opens a page or searches | `results` as JSON |
    | `FileChange` | `apply_patch`, `{changes}`: the item's `changes` as they are (path → `type`, `content` of an add, `unified_diff` and `move_path` of an update), without the `content` of a delete, which is the file's text and not something the model sent; the hook's argument is the patch text, which the item does not keep | `stdout` |

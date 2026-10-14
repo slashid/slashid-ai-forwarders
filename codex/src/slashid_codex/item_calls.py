@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shlex
 from collections.abc import Iterable
+from pathlib import PurePath
 from urllib.parse import unquote, urlparse
 
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
@@ -40,7 +41,7 @@ _RESOURCE_TOOLS = frozenset(
     {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
 )
 _VIEW_IMAGE = "view_image"
-_SHELL_FLAGS = frozenset({"-c", "-lc"})
+_SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh", "fish"})
 
 
 def tool_name(item: McpToolCall) -> str:
@@ -67,9 +68,17 @@ def _file_path(url: str) -> str:
 
 
 def _command(argv: list[str]) -> str:
-    """The shell command of ``["/bin/bash", "-lc", "cat note.txt"]``, as the hook gives it."""
-    if len(argv) == 3 and argv[1] in _SHELL_FLAGS:
-        return argv[2]
+    """The shell command of ``["/bin/bash", "-lc", "cat note.txt"]``, as the hook gives it:
+    the argument after the first short-option group with a ``c``, for a known shell.
+    Any other argv is joined."""
+    if argv and PurePath(argv[0]).name in _SHELLS:
+        for index, arg in enumerate(argv[1:], 1):
+            if not arg.startswith("-"):
+                break
+            if not arg.startswith("--") and "c" in arg:
+                if index + 1 < len(argv):
+                    return argv[index + 1]
+                break
     return shlex.join(argv)
 
 
