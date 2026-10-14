@@ -30,10 +30,12 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
 from .log import SessionLog
+from .mcp_calls import pairs
 from .rollout import (
     CodexItem,
     Compacted,
     ItemCompleted,
+    McpToolCall,
     OtherItem,
     SessionMeta,
     TaskComplete,
@@ -346,8 +348,12 @@ class RolloutCursor:
         else:
             consumed, carried = self.pending, []
         round_items = [p.item for p in consumed]
+        joined, scripted = self._join(round_items)
+        # The scripts' MCP calls: calls before the round's first output, outputs
+        # after its last, so ``after_last_assistant`` keeps every output.
+        history = _splice(round_items, *pairs(scripted))
         request = ResponsesRequest.model_construct(
-            instructions=self.base_instructions, input=[*self.committed, *round_items], tools=[]
+            instructions=self.base_instructions, input=[*self.committed, *history], tools=[]
         )
         response = Response.model_construct(
             object="response",
@@ -371,22 +377,29 @@ class RolloutCursor:
                 dict.fromkeys(p.turn_id for p in consumed if p.prompt and p.turn_id is not None)
             ),
             consumed_call_ids=tuple(_output_call_ids(round_items)),
-            consumed_items=self._join(round_items),
+            consumed_items=joined,
             finished_turn_ids=tuple(self._finished),
         )
         self._finished = []
-        self.committed.extend(round_items)
+        self.committed.extend(history)
         self.committed.extend(output)
         self.pending = carried
         if not held.inherited and held.index > self._skip_through:
             self._ready.append(invocation)
 
-    def _join(self, round_items: list[ResponsesItem]) -> tuple[CodexItem, ...]:
+    def _join(
+        self, round_items: list[ResponsesItem]
+    ) -> tuple[tuple[CodexItem, ...], list[McpToolCall]]:
+        """The round's items, and among them the script-mode MCP calls (a
+        function-mode item shares its call's id and needs no pair)."""
         joined: list[CodexItem] = []
+        scripted: list[McpToolCall] = []
         for call_id in _output_call_ids(round_items):
             if (item := self._items.pop(call_id, None)) is not None:
                 joined.append(item)
-            joined.extend(self._script_items.pop(call_id, []))
+            script_items = self._script_items.pop(call_id, [])
+            joined.extend(script_items)
+            scripted.extend(i for i in script_items if isinstance(i, McpToolCall))
             self._function_calls.discard(call_id)
             self._custom_calls.discard(call_id)
             if self._script_call == call_id:
@@ -396,7 +409,7 @@ class RolloutCursor:
         self._items = {k: v for k, v in self._items.items() if k in open_calls}
         self._script_items = {k: v for k, v in self._script_items.items() if k in open_calls}
         self._renamed &= open_calls
-        return tuple(joined)
+        return tuple(joined), scripted
 
 
 def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
@@ -407,3 +420,21 @@ def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
             if isinstance(i, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
         )
     )
+
+
+_OUTPUTS = (ResponsesFunctionCallOutput, ResponsesCustomToolCallOutput)
+
+
+def _splice(
+    round_items: list[ResponsesItem],
+    calls: list[ResponsesFunctionCall],
+    outputs: list[ResponsesFunctionCallOutput],
+) -> list[ResponsesItem]:
+    """``calls`` right before the round's first tool output and ``outputs``
+    right after its last: a round can also hold an aborted response's calls
+    and a later user prompt."""
+    at = [i for i, item in enumerate(round_items) if isinstance(item, _OUTPUTS)]
+    if not calls or not at:
+        return round_items
+    first, last = at[0], at[-1] + 1
+    return [*round_items[:first], *calls, *round_items[first:last], *outputs, *round_items[last:]]

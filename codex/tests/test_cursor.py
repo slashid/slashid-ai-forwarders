@@ -6,8 +6,11 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from slashid_ai_forwarder_core.normalize.openai.responses.normalize import to_normalized
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesCompaction,
+    ResponsesCustomToolCall,
+    ResponsesCustomToolCallOutput,
     ResponsesFunctionCall,
     ResponsesFunctionCallOutput,
     ResponsesInputText,
@@ -15,11 +18,19 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesMessage,
     ResponsesReasoning,
 )
+from slashid_ai_forwarder_core.normalize.turn import after_last_assistant
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
 from slashid_codex.cursor import RolloutCursor, RolloutInvocation
 from slashid_codex.log import SessionLog
-from slashid_codex.rollout import CommandExecution, ImageView, TokenUsageRecord, parse_line
+from slashid_codex.rollout import (
+    CommandExecution,
+    ImageView,
+    McpToolCall,
+    TokenUsageRecord,
+    parse_line,
+)
+from tests.mcp_rollout import mcp_item, write_mcp_rollout
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 PARENT_ID = "01a0f553-7026-70e1-ae0c-d833daddaa9e"
@@ -316,3 +327,90 @@ def test_items_with_no_call_are_dropped_when_a_response_closes(tmp_path: Path) -
     cursor = RolloutCursor(log)
     cursor.advance_to_end()
     assert cursor._items == {}
+
+
+def _open(path: Path) -> SessionLog:
+    log = SessionLog.open(path, lambda _: None)
+    log.refresh()
+    return log
+
+
+def test_mcp_script_becomes_a_call_pair(tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a")])
+    _, second = _drain(RolloutCursor(_open(path)))
+    inputs = _inputs(second)
+    [call] = _calls(inputs)
+    assert (call.call_id, call.name) == ("exec-a", "mcp__codex_apps__google_drive__fetch")
+    [output] = [
+        i for i in inputs if isinstance(i, ResponsesFunctionCallOutput) and i.call_id == "exec-a"
+    ]
+    assert json.loads(output.output[0].text)["structuredContent"] == {"id": "abc"}  # ty: ignore[unresolved-attribute]
+    # The script's own ``exec`` call and output stay.
+    assert any(isinstance(i, ResponsesCustomToolCall) and i.name == "exec" for i in inputs)
+    assert any(isinstance(i, ResponsesCustomToolCallOutput) for i in inputs)
+    [item] = second.consumed_items
+    assert isinstance(item, McpToolCall)
+    assert second.consumed_call_ids == ("call_Y6yRs2JecdOylBbDtr6XaqwV",)
+
+
+def test_pairs_keep_the_round_calls_then_outputs(tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a"), mcp_item("exec-b")])
+    _, second = _drain(RolloutCursor(_open(path)))
+    inputs = _inputs(second)
+    call_at = [i for i, x in enumerate(inputs) if isinstance(x, ResponsesFunctionCall)]
+    output_at = [
+        i
+        for i, x in enumerate(inputs)
+        if isinstance(x, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
+    ]
+    assert len(call_at) == 2
+    assert max(call_at) < min(output_at)
+    messages = to_normalized(second.request, second.response).input.messages
+    results = {
+        b.tool_use_id
+        for m in after_last_assistant(messages)
+        for b in m.content
+        if b.kind == "tool_result"
+    }
+    assert {"exec-a", "exec-b", "call_Y6yRs2JecdOylBbDtr6XaqwV"} <= results
+
+
+def test_the_pairs_stay_in_the_history(tmp_path: Path) -> None:
+    cursor = RolloutCursor(_open(write_mcp_rollout(tmp_path, [mcp_item("exec-a")])))
+    _drain(cursor)
+    assert [c.call_id for c in _calls(cursor.committed)] == ["exec-a"]
+
+
+def test_function_mode_mcp_item_gets_no_pair(tmp_path: Path) -> None:
+    lines = [json.loads(raw) for raw in _raw("function")]
+    n = next(
+        i
+        for i, line in enumerate(lines)
+        if line["payload"].get("item", {}).get("type") == "CommandExecution"
+    )
+    call_id = lines[n]["payload"]["item"]["id"]
+    lines[n]["payload"]["item"] = mcp_item(call_id)
+    path = tmp_path / "function_mcp.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    for response in _drain(RolloutCursor(_open(path))):
+        ids = [c.call_id for c in _calls(_inputs(response))]
+        assert len(ids) == len(set(ids))
+
+
+def test_splice_puts_calls_before_the_first_output_and_outputs_after_the_last() -> None:
+    from slashid_codex.cursor import _splice
+    from slashid_codex.mcp_calls import pairs
+
+    exec_call = ResponsesCustomToolCall(
+        type="custom_tool_call", call_id="c1", name="exec", input="x"
+    )
+    out = ResponsesCustomToolCallOutput(type="custom_tool_call_output", call_id="c1", output=[])
+    prompt = ResponsesMessage(
+        type="message",
+        role="user",
+        content=[ResponsesInputText(type="input_text", text="next")],
+    )
+    calls, outputs = pairs([McpToolCall.model_validate(mcp_item("exec-a"))])
+    spliced = _splice([exec_call, out, prompt], calls, outputs)
+    assert spliced == [exec_call, *calls, out, *outputs, prompt]
+    assert _splice([prompt], calls, outputs) == [prompt]

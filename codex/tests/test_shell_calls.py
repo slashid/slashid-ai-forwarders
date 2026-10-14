@@ -162,3 +162,8 @@ def test_view_image_idiom_maps_to_its_call(script: str) -> None:
 )
 def test_image_idiom_variants_do_not_match(script: str) -> None:
     assert map_custom_call(_exec(script), cwd="/w") is None
+
+
+def test_codex_apps_scripts_are_left_to_their_items() -> None:
+    script = 'text(await tools.mcp__codex_apps__google_drive_fetch({url: "u"}));'
+    assert map_custom_call(_exec(script), cwd="/w") is None

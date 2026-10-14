@@ -16,6 +16,8 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesFunctionCall,
 )
 
+from .mcp_calls import APPS_PREFIX
+
 SHELL_TOOL = "exec_command"
 SCRIPT_TOOL = "exec"
 BASH = "Bash"
@@ -65,11 +67,14 @@ def map_function_call(call: ResponsesFunctionCall) -> ResponsesFunctionCall:
 def map_custom_call(call: ResponsesCustomToolCall, cwd: str | None) -> ResponsesFunctionCall | None:
     """An ``exec`` script that is a single ``tools.NAME(ARG)`` call (see
     ``parse_script``) → that call;
-    ``None`` for any other script. ``cwd`` (the turn's) stands in for a
-    missing ``workdir``."""
+    ``None`` for any other script, and for a ``codex_apps`` MCP call, which
+    the cursor builds from its ``McpToolCall`` item. ``cwd`` (the turn's)
+    stands in for a missing ``workdir``."""
     if call.name != SCRIPT_TOOL or (parsed := parse_script(call.input)) is None:
         return None
     name, arg = parsed
+    if name.startswith(APPS_PREFIX):
+        return None
     if name == SHELL_TOOL:
         try:
             args = _ExecCommandArgs.model_validate(arg)

@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, ConfigDict, Field, ValidationError
+from pydantic import BeforeValidator, ConfigDict, Field, JsonValue, ValidationError
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import ResponsesItem
 
@@ -96,6 +96,28 @@ class ImageView(_Frozen):
     path: str
 
 
+class McpResult(_Frozen):
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: JsonValue = None
+    structured_content: JsonValue = Field(default=None, alias="structuredContent")
+    is_error: bool = Field(default=False, alias="isError")
+
+
+class McpToolCall(_Frozen):
+    type: Literal["McpToolCall"]
+    # ``exec-<uuid>`` in script mode, the call's own ``call_…`` in function mode.
+    id: str
+    server: str
+    # ``google_drive.fetch``.
+    tool: str
+    arguments: JsonValue = None
+    # ``completed`` in every capture.
+    status: str | None = None
+    # Absent on a failed call.
+    result: McpResult | None = None
+
+
 class UserMessagePart(_Frozen):
     # ``text`` or ``local_image``.
     type: str
@@ -115,7 +137,7 @@ class OtherItem(_Frozen):
 
 
 CodexItem = Annotated[
-    CommandExecution | ImageView | UserMessageItem | OtherItem,
+    CommandExecution | ImageView | UserMessageItem | McpToolCall | OtherItem,
     Field(union_mode="left_to_right"),
 ]
 

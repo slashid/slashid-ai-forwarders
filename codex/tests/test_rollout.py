@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from slashid_codex.rollout import (
     Compacted,
     ImageView,
     ItemCompleted,
+    McpToolCall,
     OtherItem,
     RolloutLineError,
     SessionMeta,
@@ -195,3 +197,40 @@ def test_base_instructions_as_plain_string() -> None:
     assert isinstance(line.payload, SessionMeta)
     assert line.payload.base_instructions is not None
     assert line.payload.base_instructions.text == "be nice"
+
+
+def test_mcp_tool_call_item_is_typed() -> None:
+    raw = json.dumps(
+        {
+            "timestamp": "2026-10-13T23:00:00.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "item": {
+                    "type": "McpToolCall",
+                    "id": "exec-1",
+                    "server": "codex_apps",
+                    "tool": "google_drive.fetch",
+                    "arguments": {"url": "https://drive.google.com/file/d/abc/view"},
+                    "connectorId": "connector_x",
+                    "status": "completed",
+                    "result": {"content": [], "structuredContent": {"id": "abc"}, "isError": False},
+                },
+            },
+        }
+    ).encode()
+    line = parse_line(raw)
+    assert line is not None
+    assert isinstance(line.payload, ItemCompleted)
+    item = line.payload.item
+    assert isinstance(item, McpToolCall)
+    assert (item.id, item.server, item.tool, item.status) == (
+        "exec-1",
+        "codex_apps",
+        "google_drive.fetch",
+        "completed",
+    )
+    assert item.arguments == {"url": "https://drive.google.com/file/d/abc/view"}
+    assert item.result is not None
+    assert item.result.structured_content == {"id": "abc"}
+    assert item.result.is_error is False
