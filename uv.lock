@@ -1702,7 +1702,7 @@ wheels = [
 
 [[package]]
 name = "slashid-ai-forwarder-anthropic"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
@@ -1748,7 +1748,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-ai-forwarder-codex"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "codex" }
 dependencies = [
     { name = "aiosqlite" },
