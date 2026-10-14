@@ -237,3 +237,38 @@ async def test_a_frame_that_does_not_parse_as_a_tool_call_is_allowed(sign: Signe
     broken = frame(use("Bash")) | {"messages": "not a list"}
     r = await post(sign, config(), broken, Preflight("no"))
     assert r.json() == {"action": "allow"}
+
+
+DRIVE = "mcp__claude_ai_Google_Drive__download_file_content"
+M365 = "mcp__claude_ai_Microsoft_365__read_resource"
+
+
+def test_a_connector_call_names_its_file_by_ref() -> None:
+    built = event(
+        use(DRIVE, "toolu_a", CLIENT, fileId="1hjGaxM1gJEE8ZzIgxdlF5_hIpigr-tfh"),
+        use(M365, "toolu_b", CLIENT, uri="file:///b!drv/Recipes/banana-bread.md"),
+    )
+    assert built is not None
+    assert [f.file_ref for f in built.accessed_files or []] == [
+        "google/1hjGaxM1gJEE8ZzIgxdlF5_hIpigr-tfh",
+        "m365/path/b!drv/Recipes/banana-bread.md",
+    ]
+    assert all(not f.content_hashes for f in built.accessed_files or [])
+
+
+def test_two_calls_for_one_file_name_it_once() -> None:
+    built = event(
+        use(DRIVE, "toolu_a", CLIENT, fileId="f1"),
+        use(DRIVE, "toolu_b", CLIENT, fileId="f1", exportMimeType="application/pdf"),
+    )
+    assert built is not None
+    assert [f.file_ref for f in built.accessed_files or []] == ["google/f1"]
+
+
+def test_a_call_that_names_no_file_has_no_accessed_files() -> None:
+    built = event(
+        use("Bash", "toolu_a", CLIENT, command="cat x"),
+        use("mcp__claude_ai_Google_Drive__search_files", "toolu_b", CLIENT, query="banana"),
+    )
+    assert built is not None
+    assert built.accessed_files is None

@@ -1,7 +1,7 @@
 # Connector file references on `AIAccessedFile`
 
 **Date:** 2026-10-13
-**Status:** Implemented for Drive and Microsoft 365 in `shared` (`connector_files.py`, the extractor and `finalize`) and in Codex's preflight; the `ng-evangelion` side (schema sync, GUID and path indexes) is not part of it. Every shape below was captured on 2026-10-13/14 from live Google Drive and Microsoft 365 connectors, through claude.ai (`claude-work`), Codex CLI and the ChatGPT desktop app.
+**Status:** Implemented for Drive and Microsoft 365 in `shared` (`connector_files.py`, the extractor and `finalize`) and in the Codex and Anthropic preflights; the `ng-evangelion` side (schema sync, GUID and path indexes) is not part of it. Every shape below was captured on 2026-10-13/14 from live Google Drive and Microsoft 365 connectors, through claude.ai (`claude-work`), Codex CLI and the ChatGPT desktop app.
 **Builds on:** the Codex tool-call extraction (`2026-10-13-codex-tool-calls-design.md`, merged): connector calls made inside `exec` scripts already reach the event as `function_call` pairs named like the hook, and the preflight stores a list of files per call.
 **Companion changes:** in `ng-evangelion`, `file_ref` in the batched spec sync, and an index on the GUID and path of `MicrosoftM365OnedriveFileMetadata` (see Server).
 **Baseline:** before this, a Drive or SharePoint fetch produced `accessed_files: []` in the preflight and in the event. Checked live (Codex CLI, stub SlashID): the preflight of a fetch carries the ref before the call runs; the event carries one entry per file with its ref and name, hashed only for a raw download; searches name every hit in the event.
@@ -61,6 +61,8 @@ A `read_resource` path that includes the library segment (`Shared Documents/…`
 ## Preflight
 
 Codex's `PreToolUse` fires for every tool called inside an `exec` script, with the call's arguments and the `exec-<uuid>` id of the later `McpToolCall`; the tool name is the one the event's synthesized call gets, so one table serves both. The preflight runs the recognizer on the arguments alone: a Drive `fetch` URL, a SharePoint `fetch` Graph URL or `sourcedoc` link yields its ref before the call runs, with no hash, no `name` and no result-only ref (`document_id`, search results). It stores the entries under the call (`put_call` takes a list). The event for that call finds them with the call's other records and adds its own entry from the result, which carries the full ref, the name and any hash.
+
+Anthropic's `tool_call` frame (sent before the tools run when "Validate tool calls" is on) lists each call under its full name (`mcp__claude_ai_Google_Drive__download_file_content`, `tool_info.type` `client`) with its `input`, so `tool_call_event` runs the same recognizer and puts one ref-only entry per file in `accessed_files`, once however many calls name it. Checked on the 12 frames captured from the `claude-work` runs: Drive `fileId`s and M365 `read_resource` paths yield their refs. The preflight cannot tell a folder from a file, so a `read_resource` of a folder keeps a ref the event built later does not have.
 
 ## Dedup
 

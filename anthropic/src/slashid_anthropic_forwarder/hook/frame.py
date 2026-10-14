@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from slashid_ai_forwarder_core.normalize.anthropic.schema import AnthropicRequestMessage
 from slashid_ai_forwarder_core.normalize.turn import after_last_assistant
 
@@ -71,6 +71,7 @@ class ToolCallBlock(_Lenient):
     id: str | None = None
     tool_name: str | None = None
     tool_info: ToolInfo = Field(default_factory=ToolInfo)
+    input: JsonValue = None
 
 
 class ToolUse(_Lenient):
@@ -79,6 +80,7 @@ class ToolUse(_Lenient):
     id: str
     tool_name: str
     tool_info: ToolInfo
+    input: JsonValue = None
 
 
 class ToolCallMessage(_Lenient):
@@ -98,7 +100,12 @@ class ToolCallFrame(Frame):
         if not self.messages or isinstance(self.messages[-1].content, str):
             return []
         return [
-            ToolUse(id=block.id, tool_name=block.tool_name, tool_info=block.tool_info)
+            ToolUse(
+                id=block.id,
+                tool_name=block.tool_name,
+                tool_info=block.tool_info,
+                input=block.input,
+            )
             for block in self.messages[-1].content
             if block.type == "tool_use" and block.id and block.tool_name
         ]
