@@ -7,7 +7,7 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from slashid_codex.envelope import failed_calls
 from slashid_codex.item_calls import failed, pairs, tool_name
-from slashid_codex.rollout import CommandExecution, FileChange, ImageView, McpToolCall
+from slashid_codex.rollout import CommandExecution, FileChange, ImageView, McpToolCall, WebSearch
 
 
 def _item(**fields: object) -> McpToolCall:
@@ -176,3 +176,26 @@ def test_failed_calls_include_a_failed_patch() -> None:
         {"type": "FileChange", "id": "exec-7", "changes": {}, "status": "failed"}
     )
     assert failed_calls([item]) == {"exec-7"}
+
+
+def test_resource_tools_are_named_without_the_server() -> None:
+    for tool in ("list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"):
+        [call], _ = pairs([_item(server="paulo", tool=tool, arguments={"server": "paulo"})])
+        assert call.name == tool
+
+
+def test_web_run_is_webrun() -> None:
+    item = WebSearch.model_validate(
+        {
+            "type": "Extension",
+            "kind": "web.search",
+            "id": "exec-9",
+            "query": "https://example.com",
+            "action": {"type": "openPage", "url": "https://example.com"},
+            "results": [{"title": "Example Domain"}],
+        }
+    )
+    [call], [output] = pairs([item])
+    assert (call.call_id, call.name) == ("exec-9", "webrun")
+    assert json.loads(call.arguments)["action"]["url"] == "https://example.com"
+    assert "Example Domain" in output.output[0].text  # ty: ignore[unresolved-attribute]

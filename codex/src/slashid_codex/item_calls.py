@@ -20,16 +20,33 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesPart,
 )
 
-from .rollout import CodexItem, CommandExecution, FileChange, FileEdit, ImageView, McpToolCall
+from .rollout import (
+    CodexItem,
+    CommandExecution,
+    FileChange,
+    FileEdit,
+    ImageView,
+    McpToolCall,
+    WebSearch,
+)
 from .shell_calls import BASH
 
-CallItem = McpToolCall | CommandExecution | ImageView | FileChange
+CallItem = McpToolCall | CommandExecution | ImageView | FileChange | WebSearch
 _APPLY_PATCH = "apply_patch"
+# The hook's name for ``web__run``.
+_WEB_RUN = "webrun"
+# Codex's own tools on a server's resources: recorded as an ``McpToolCall`` of the server
+# they ask about, but named by the hook without the server.
+_RESOURCE_TOOLS = frozenset(
+    {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}
+)
 _VIEW_IMAGE = "view_image"
 _SHELL_FLAGS = frozenset({"-c", "-lc"})
 
 
 def tool_name(item: McpToolCall) -> str:
+    if item.tool in _RESOURCE_TOOLS:
+        return item.tool
     return f"mcp__{item.server}__{item.tool.replace('.', '__')}"
 
 
@@ -114,6 +131,9 @@ def _pair(item: CallItem) -> tuple[ResponsesFunctionCall, ResponsesFunctionCallO
             return _call(item.id, _APPLY_PATCH, {"command": _patch(item)}), _output(
                 item.id, item.stdout
             )
+        case WebSearch():
+            arguments = {"query": item.query, "action": item.action}
+            return _call(item.id, _WEB_RUN, arguments), _output(item.id, json.dumps(item.results))
         case ImageView():
             return _call(item.id, _VIEW_IMAGE, {"path": _file_path(item.path)}), _output(
                 item.id, None

@@ -140,6 +140,17 @@ class FileChange(_Frozen):
     stdout: str | None = None
 
 
+class WebSearch(_Frozen):
+    """``web__run``: a search or a page opened."""
+
+    type: Literal["Extension"]
+    kind: Literal["web.search"]
+    id: str
+    query: str | None = None
+    action: JsonValue = None
+    results: JsonValue = None
+
+
 class UserMessagePart(_Frozen):
     # ``text`` or ``local_image``.
     type: str
@@ -159,7 +170,13 @@ class OtherItem(_Frozen):
 
 
 CodexItem = Annotated[
-    CommandExecution | ImageView | UserMessageItem | McpToolCall | FileChange | OtherItem,
+    CommandExecution
+    | ImageView
+    | UserMessageItem
+    | McpToolCall
+    | FileChange
+    | WebSearch
+    | OtherItem,
     Field(union_mode="left_to_right"),
 ]
 
