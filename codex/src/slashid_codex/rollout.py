@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator, ConfigDict, Field, ValidationError
+from pydantic import BeforeValidator, ConfigDict, Field, JsonValue, ValidationError
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import ResponsesItem
 
@@ -87,6 +87,8 @@ class CommandExecution(_Frozen):
     parsed_cmd: list[ParsedCmd] = Field(default_factory=list)
     exit_code: int | None = None
     status: str | None = None
+    # The output as the model gets it.
+    formatted_output: str | None = None
 
 
 class ImageView(_Frozen):
@@ -94,6 +96,59 @@ class ImageView(_Frozen):
     id: str
     # A percent-encoded ``file://`` URL.
     path: str
+
+
+class McpResult(_Frozen):
+    model_config = ConfigDict(populate_by_name=True)
+
+    content: JsonValue = None
+    structured_content: JsonValue = Field(default=None, alias="structuredContent")
+    is_error: bool = Field(default=False, alias="isError")
+
+
+class McpToolCall(_Frozen):
+    type: Literal["McpToolCall"]
+    # ``exec-<uuid>`` in script mode, the call's own ``call_…`` in function mode.
+    id: str
+    server: str
+    # ``google_drive.fetch``.
+    tool: str
+    arguments: JsonValue = None
+    # ``completed`` in every capture.
+    status: str | None = None
+    # Absent on a failed call.
+    result: McpResult | None = None
+
+
+class FileEdit(_Frozen):
+    # ``add`` (``content``), ``update`` (``unified_diff``, ``move_path``) or
+    # ``delete`` (``content``: the file's last text).
+    type: str
+    content: str | None = None
+    unified_diff: str | None = None
+    move_path: str | None = None
+
+
+class FileChange(_Frozen):
+    """An ``apply_patch`` call."""
+
+    type: Literal["FileChange"]
+    id: str
+    # Absolute path → edit.
+    changes: dict[str, FileEdit] = Field(default_factory=dict)
+    status: str | None = None
+    stdout: str | None = None
+
+
+class WebSearch(_Frozen):
+    """``web__run``: a search or a page opened."""
+
+    type: Literal["Extension"]
+    kind: Literal["web.search"]
+    id: str
+    query: str | None = None
+    action: JsonValue = None
+    results: JsonValue = None
 
 
 class UserMessagePart(_Frozen):
@@ -115,7 +170,13 @@ class OtherItem(_Frozen):
 
 
 CodexItem = Annotated[
-    CommandExecution | ImageView | UserMessageItem | OtherItem,
+    CommandExecution
+    | ImageView
+    | UserMessageItem
+    | McpToolCall
+    | FileChange
+    | WebSearch
+    | OtherItem,
     Field(union_mode="left_to_right"),
 ]
 

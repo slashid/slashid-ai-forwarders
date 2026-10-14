@@ -14,11 +14,13 @@ from slashid_codex.events import SessionContext, build_event, record_keys
 from slashid_codex.log import SessionLog
 from slashid_codex.mcp_servers import parse_servers
 from slashid_codex.state import SqliteFileRecordStore, connect
+from tests.mcp_rollout import mcp_item, write_mcp_rollout
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 FIXTURES = Path(__file__).parent / "fixtures"
 READ_CONTENT = "line one\nline two\n"
 BASH = resolve_tool("Bash")
+EXEC = resolve_tool("exec")
 
 
 def _invocations(name: str | Path) -> tuple[list[RolloutInvocation], RolloutCursor]:
@@ -82,12 +84,12 @@ async def test_script_mode(builder: Builder) -> None:
     assert first.tokens.input == 3
     assert first.used_tools is None
     assert first.requested_tool_uses is not None
-    assert [u.tool_id for u in first.requested_tool_uses] == [BASH[0].id]
+    # The model called ``exec``; the command it ran is a tool use of its own.
+    assert [u.tool_id for u in first.requested_tool_uses] == [EXEC[0].id]
     assert second.used_tools is not None
-    [used] = second.used_tools
-    assert used.tool_id == BASH[0].id
-    assert used.is_error is False
-    assert second.available_tools == [BASH[0]]
+    assert {u.tool_id for u in second.used_tools} == {EXEC[0].id, BASH[0].id}
+    assert [u.is_error for u in second.used_tools] == [False, False]
+    assert {t.id for t in second.available_tools or []} == {EXEC[0].id, BASH[0].id}
 
 
 async def test_function_mode(builder: Builder, tmp_path: Path) -> None:
@@ -192,3 +194,31 @@ def test_record_keys_without_item_completed() -> None:
     assert record_keys(invocations[4])[1] == [image.id]
     turns, _ = record_keys(invocations[0])
     assert turns == list(invocations[0].consumed_turn_ids)
+
+
+async def test_mcp_script_is_a_used_tool(builder: Builder, tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a", status="failed", is_error=True)])
+    _, event = await builder.events(path)
+    tool, server = resolve_tool("mcp__codex_apps__google_drive__fetch")
+    assert event.used_tools is not None
+    [mcp] = [u for u in event.used_tools if u.tool_id == tool.id]
+    assert mcp.tool_use_id == "exec-a"
+    assert mcp.is_error is True
+    assert server.id in {s.id for s in event.available_tool_servers or []}
+
+
+async def test_mcp_pairs_do_not_break_round_hashes(builder: Builder, tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a")])
+    first, second = await builder.events(path)
+    assert first.round_hash in (second.recent_round_hashes or [])
+
+
+async def test_script_image_view_is_reported_once(builder: Builder, tmp_path: Path) -> None:
+    image = {"type": "ImageView", "id": "exec-i", "path": "file:///home/user/pix.png"}
+    path = write_mcp_rollout(tmp_path, [image])
+    invocations, _ = _invocations(path)
+    record = _file(tmp_path, "pix.png", "png bytes")
+    builder.records.put_call("sess", invocations[0].turn_id, "exec-i", record)
+    _, second = await builder.events(path)
+    assert [f.name for f in second.accessed_files or []] == ["pix.png"]
+    assert (second.accessed_files or [])[0].content_hashes

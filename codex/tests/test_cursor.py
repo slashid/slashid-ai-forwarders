@@ -6,8 +6,11 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from slashid_ai_forwarder_core.normalize.openai.responses.normalize import to_normalized
 from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesCompaction,
+    ResponsesCustomToolCall,
+    ResponsesCustomToolCallOutput,
     ResponsesFunctionCall,
     ResponsesFunctionCallOutput,
     ResponsesInputText,
@@ -15,11 +18,19 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
     ResponsesMessage,
     ResponsesReasoning,
 )
+from slashid_ai_forwarder_core.normalize.turn import after_last_assistant
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
 from slashid_codex.cursor import RolloutCursor, RolloutInvocation
 from slashid_codex.log import SessionLog
-from slashid_codex.rollout import CommandExecution, ImageView, TokenUsageRecord, parse_line
+from slashid_codex.rollout import (
+    CommandExecution,
+    ImageView,
+    McpToolCall,
+    TokenUsageRecord,
+    parse_line,
+)
+from tests.mcp_rollout import mcp_item, write_mcp_rollout
 
 ROLLOUTS = Path(__file__).parent / "fixtures" / "rollouts"
 PARENT_ID = "01a0f553-7026-70e1-ae0c-d833daddaa9e"
@@ -81,16 +92,23 @@ def test_script_mode(tmp_path: Path) -> None:
     assert first.usage.cache_write_input_tokens == 15186
     assert first.response.usage is not None
     assert first.response.usage.input_tokens == 15189
-    [call] = _calls(first.response.output)
-    assert call.name == "Bash"
-    assert json.loads(call.arguments) == {"command": "cat note.txt", "workdir": "/home/user/work"}
+    # The script is the model's call; the command it ran comes from the item.
+    [script] = [i for i in first.response.output if isinstance(i, ResponsesCustomToolCall)]
+    assert script.name == "exec"
     # The exec item precedes the output; it joins the round that consumes the output.
     assert first.consumed_items == ()
     [item] = second.consumed_items
     assert isinstance(item, CommandExecution)
     assert item.id.startswith("exec-")
-    outputs = [i for i in _inputs(second) if isinstance(i, ResponsesFunctionCallOutput)]
-    assert [o.call_id for o in outputs] == [call.call_id]
+    [call] = _calls(_inputs(second))
+    assert (call.call_id, call.name, call.synthetic) == (item.id, "Bash", True)
+    assert json.loads(call.arguments) == {"command": "cat note.txt", "workdir": "/home/user/work"}
+    outputs = [
+        i
+        for i in _inputs(second)
+        if isinstance(i, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
+    ]
+    assert [o.call_id for o in outputs] == [script.call_id, item.id]
     assert second.finished_turn_ids == ()
 
 
@@ -286,7 +304,6 @@ def test_join_maps_drop_consumed_entries(tmp_path: Path, name: str) -> None:
     cursor.advance_to_end()
     assert cursor._items == {}
     assert cursor._script_items == {}
-    assert cursor._renamed == set()
     assert cursor._function_calls == set()
 
 
@@ -316,3 +333,135 @@ def test_items_with_no_call_are_dropped_when_a_response_closes(tmp_path: Path) -
     cursor = RolloutCursor(log)
     cursor.advance_to_end()
     assert cursor._items == {}
+
+
+def _open(path: Path) -> SessionLog:
+    log = SessionLog.open(path, lambda _: None)
+    log.refresh()
+    return log
+
+
+def test_mcp_script_becomes_a_call_pair(tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a")])
+    _, second = _drain(RolloutCursor(_open(path)))
+    inputs = _inputs(second)
+    [call] = _calls(inputs)
+    assert (call.call_id, call.name) == ("exec-a", "mcp__codex_apps__google_drive__fetch")
+    [output] = [
+        i for i in inputs if isinstance(i, ResponsesFunctionCallOutput) and i.call_id == "exec-a"
+    ]
+    assert json.loads(output.output[0].text)["structuredContent"] == {"id": "abc"}  # ty: ignore[unresolved-attribute]
+    # The script's own ``exec`` call and output stay.
+    assert any(isinstance(i, ResponsesCustomToolCall) and i.name == "exec" for i in inputs)
+    assert any(isinstance(i, ResponsesCustomToolCallOutput) for i in inputs)
+    [item] = second.consumed_items
+    assert isinstance(item, McpToolCall)
+    assert second.consumed_call_ids == ("call_Y6yRs2JecdOylBbDtr6XaqwV",)
+
+
+def test_pairs_keep_the_round_calls_then_outputs(tmp_path: Path) -> None:
+    path = write_mcp_rollout(tmp_path, [mcp_item("exec-a"), mcp_item("exec-b")])
+    _, second = _drain(RolloutCursor(_open(path)))
+    inputs = _inputs(second)
+    call_at = [i for i, x in enumerate(inputs) if isinstance(x, ResponsesFunctionCall)]
+    output_at = [
+        i
+        for i, x in enumerate(inputs)
+        if isinstance(x, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
+    ]
+    assert len(call_at) == 2
+    assert max(call_at) < min(output_at)
+    messages = to_normalized(second.request, second.response).input.messages
+    results = {
+        b.tool_use_id
+        for m in after_last_assistant(messages)
+        for b in m.content
+        if b.kind == "tool_result"
+    }
+    assert {"exec-a", "exec-b", "call_Y6yRs2JecdOylBbDtr6XaqwV"} <= results
+
+
+def test_the_pairs_stay_in_the_history(tmp_path: Path) -> None:
+    cursor = RolloutCursor(_open(write_mcp_rollout(tmp_path, [mcp_item("exec-a")])))
+    _drain(cursor)
+    assert [c.call_id for c in _calls(cursor.committed)] == ["exec-a"]
+
+
+def test_function_mode_mcp_item_gets_no_pair(tmp_path: Path) -> None:
+    lines = [json.loads(raw) for raw in _raw("function")]
+    n = next(
+        i
+        for i, line in enumerate(lines)
+        if line["payload"].get("item", {}).get("type") == "CommandExecution"
+    )
+    call_id = lines[n]["payload"]["item"]["id"]
+    lines[n]["payload"]["item"] = mcp_item(call_id)
+    path = tmp_path / "function_mcp.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    for response in _drain(RolloutCursor(_open(path))):
+        ids = [c.call_id for c in _calls(_inputs(response))]
+        assert len(ids) == len(set(ids))
+
+
+def test_splice_puts_calls_before_the_first_output_and_outputs_after_the_last() -> None:
+    from slashid_codex.cursor import _splice
+    from slashid_codex.item_calls import pairs
+
+    exec_call = ResponsesCustomToolCall(
+        type="custom_tool_call", call_id="c1", name="exec", input="x"
+    )
+    out = ResponsesCustomToolCallOutput(type="custom_tool_call_output", call_id="c1", output=[])
+    prompt = ResponsesMessage(
+        type="message",
+        role="user",
+        content=[ResponsesInputText(type="input_text", text="next")],
+    )
+    calls, outputs = pairs([McpToolCall.model_validate(mcp_item("exec-a"))])
+    spliced = _splice([exec_call, out, prompt], calls, outputs)
+    assert spliced == [exec_call, *calls, out, *outputs, prompt]
+    assert _splice([prompt], calls, outputs) == [prompt]
+
+
+def _command_item(item_id: str, command: str) -> dict:
+    return {
+        "type": "CommandExecution",
+        "id": item_id,
+        "command": ["/bin/bash", "-lc", command],
+        "cwd": "file:///home/user/work",
+        "status": "completed",
+        "exit_code": 0,
+        "formatted_output": "ok\n",
+    }
+
+
+def test_script_with_several_commands_gets_a_call_for_each(tmp_path: Path) -> None:
+    items = [_command_item("exec-a", "echo one"), _command_item("exec-b", "echo two")]
+    _, second = _drain(RolloutCursor(_open(write_mcp_rollout(tmp_path, items))))
+    calls = _calls(_inputs(second))
+    assert [(c.call_id, c.name) for c in calls] == [("exec-a", "Bash"), ("exec-b", "Bash")]
+    assert [json.loads(c.arguments)["command"] for c in calls] == ["echo one", "echo two"]
+
+
+def test_image_views_and_other_servers_get_calls_too(tmp_path: Path) -> None:
+    items = [
+        {"type": "ImageView", "id": "exec-i", "path": "file:///home/user/a.png"},
+        mcp_item("exec-m") | {"server": "paulo", "tool": "web_fetch"},
+    ]
+    _, second = _drain(RolloutCursor(_open(write_mcp_rollout(tmp_path, items))))
+    assert [(c.call_id, c.name) for c in _calls(_inputs(second))] == [
+        ("exec-i", "view_image"),
+        ("exec-m", "mcp__paulo__web_fetch"),
+    ]
+
+
+def test_patches_get_a_call(tmp_path: Path) -> None:
+    item = {
+        "type": "FileChange",
+        "id": "exec-p",
+        "changes": {"/w/a.txt": {"type": "add", "content": "x\n"}},
+        "status": "completed",
+        "stdout": "Success.\n",
+    }
+    _, second = _drain(RolloutCursor(_open(write_mcp_rollout(tmp_path, [item]))))
+    [call] = _calls(_inputs(second))
+    assert (call.call_id, call.name) == ("exec-p", "apply_patch")

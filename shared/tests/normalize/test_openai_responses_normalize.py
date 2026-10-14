@@ -390,3 +390,31 @@ def test_instructions_and_leading_developer_message_share_the_system_message() -
         ),
         ("user", [NormalizedContent(kind="text", text="hi")]),
     ]
+
+
+def test_synthetic_call_makes_a_synthetic_block() -> None:
+    request = ResponsesRequest.model_validate(
+        {
+            "model": "m",
+            "input": [
+                {"type": "function_call", "call_id": "a", "name": "n", "arguments": "{}"},
+                {
+                    "type": "function_call",
+                    "call_id": "b",
+                    "name": "n",
+                    "arguments": "{}",
+                    "synthetic": True,
+                },
+                {"type": "function_call_output", "call_id": "a", "output": "x"},
+                {"type": "function_call_output", "call_id": "b", "output": "x"},
+            ],
+        }
+    )
+    empty = Response.model_construct(object="response", id="", output=[])
+    blocks = [b for m in to_normalized(request, empty).input.messages for b in m.content]
+    assert [(b.kind, b.tool_use_id, b.synthetic) for b in blocks] == [
+        ("tool_use", "a", None),
+        ("tool_use", "b", True),
+        ("tool_result", "a", None),
+        ("tool_result", "b", None),
+    ]

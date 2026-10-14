@@ -49,6 +49,9 @@ class NormalizedContent(_LenientModel):
     tool_executor: Literal["client", "server"] | None = None
     media_type: MimeType | None = None
     byte_length: NonNegativeInt | None = None
+    # Added by the forwarder, not part of what the model saw or will see
+    # replayed: left out of round hashes. ``None`` when not.
+    synthetic: bool | None = None
 
 
 class NormalizedMessage(_LenientModel):

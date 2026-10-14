@@ -29,6 +29,7 @@ from slashid_ai_forwarder_core.normalize.openai.responses.schema import (
 )
 from slashid_ai_forwarder_core.platform.checkpoint import Checkpoint
 
+from .item_calls import CallItem, pairs
 from .log import SessionLog
 from .rollout import (
     CodexItem,
@@ -43,7 +44,7 @@ from .rollout import (
     TurnContext,
     UserMessageItem,
 )
-from .shell_calls import SCRIPT_TOOL, map_custom_call, map_function_call
+from .shell_calls import SCRIPT_TOOL, map_function_call
 from .usage import CodexUsage
 
 # ``item_completed`` types that are not tool executions.
@@ -154,7 +155,6 @@ class RolloutCursor:
         self._items: dict[str, CodexItem] = {}
         self._script_items: dict[str, list[CodexItem]] = {}
         self._script_call: str | None = None
-        self._renamed: set[str] = set()
 
     @property
     def history_truncated(self) -> bool:
@@ -294,13 +294,6 @@ class RolloutCursor:
                 if item.name == SCRIPT_TOOL:
                     # Parallel ``exec`` calls: their items all join the last one.
                     self._script_call = item.call_id
-                if (mapped := map_custom_call(item, self.cwd)) is not None:
-                    self._renamed.add(item.call_id)
-                    item = mapped
-            case ResponsesCustomToolCallOutput() if item.call_id in self._renamed:
-                item = ResponsesFunctionCallOutput(
-                    type="function_call_output", call_id=item.call_id, output=item.output
-                )
         self.pending.append(_Pending(item, _is_model_output(item), self.turn_id))
 
     def _on_item(self, item: CodexItem) -> None:
@@ -346,8 +339,10 @@ class RolloutCursor:
         else:
             consumed, carried = self.pending, []
         round_items = [p.item for p in consumed]
+        joined = self._join(round_items)
+        history = _with_item_pairs(round_items, joined)
         request = ResponsesRequest.model_construct(
-            instructions=self.base_instructions, input=[*self.committed, *round_items], tools=[]
+            instructions=self.base_instructions, input=[*self.committed, *history], tools=[]
         )
         response = Response.model_construct(
             object="response",
@@ -371,11 +366,11 @@ class RolloutCursor:
                 dict.fromkeys(p.turn_id for p in consumed if p.prompt and p.turn_id is not None)
             ),
             consumed_call_ids=tuple(_output_call_ids(round_items)),
-            consumed_items=self._join(round_items),
+            consumed_items=joined,
             finished_turn_ids=tuple(self._finished),
         )
         self._finished = []
-        self.committed.extend(round_items)
+        self.committed.extend(history)
         self.committed.extend(output)
         self.pending = carried
         if not held.inherited and held.index > self._skip_through:
@@ -395,7 +390,6 @@ class RolloutCursor:
         open_calls = self._function_calls | self._custom_calls
         self._items = {k: v for k, v in self._items.items() if k in open_calls}
         self._script_items = {k: v for k, v in self._script_items.items() if k in open_calls}
-        self._renamed &= open_calls
         return tuple(joined)
 
 
@@ -407,3 +401,33 @@ def _output_call_ids(items: list[ResponsesItem]) -> list[str]:
             if isinstance(i, ResponsesFunctionCallOutput | ResponsesCustomToolCallOutput)
         )
     )
+
+
+_OUTPUTS = (ResponsesFunctionCallOutput, ResponsesCustomToolCallOutput)
+
+
+def _with_item_pairs(
+    round_items: list[ResponsesItem], joined: tuple[CodexItem, ...]
+) -> list[ResponsesItem]:
+    """``round_items`` with a call pair for each script-mode tool item (MCP
+    call, shell command, image view). A function-mode item's id is an output's
+    ``call_id`` in the round and needs no pair, a script-mode one
+    (``exec-<uuid>``) is not."""
+    answered = set(_output_call_ids(round_items))
+    scripted = [i for i in joined if isinstance(i, CallItem) and i.id not in answered]
+    return _splice(round_items, *pairs(scripted))
+
+
+def _splice(
+    round_items: list[ResponsesItem],
+    calls: list[ResponsesFunctionCall],
+    outputs: list[ResponsesFunctionCallOutput],
+) -> list[ResponsesItem]:
+    """``calls`` right before the round's first tool output and ``outputs``
+    right after its last: a round can also hold an aborted response's calls
+    and a later user prompt."""
+    at = [i for i, item in enumerate(round_items) if isinstance(item, _OUTPUTS)]
+    if not calls or not at:
+        return round_items
+    first, last = at[0], at[-1] + 1
+    return [*round_items[:first], *calls, *round_items[first:last], *outputs, *round_items[last:]]

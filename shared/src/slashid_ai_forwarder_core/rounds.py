@@ -61,6 +61,8 @@ class Round:
 
 
 def _project_block(block: NormalizedContent) -> _Block | None:
+    if block.synthetic:
+        return None
     match block.kind:
         case "text":
             return _Block(kind="text", text=block.text)

@@ -56,6 +56,9 @@ class ResponsesFunctionCall(_LenientModel):
     call_id: str
     name: str
     arguments: str
+    # A forwarder-built call, not in the conversation: its blocks are
+    # ``synthetic``.
+    synthetic: bool | None = None
 
 
 class ResponsesFunctionCallOutput(_LenientModel):
