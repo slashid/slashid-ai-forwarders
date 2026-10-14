@@ -109,7 +109,11 @@ def _item(item: ResponsesItem) -> tuple[Role, list[NormalizedContent]] | None:
                 return None
             return _role(item.role), blocks
         case ResponsesFunctionCall():
-            return "assistant", [_tool_use(item.call_id, item.name, _json_or_raw(item.arguments))]
+            return "assistant", [
+                _tool_use(
+                    item.call_id, item.name, _json_or_raw(item.arguments), synthetic=item.synthetic
+                )
+            ]
         case ResponsesCustomToolCall():
             return "assistant", [_tool_use(item.call_id, item.name, item.input)]
         case ResponsesFunctionCallOutput() | ResponsesCustomToolCallOutput():
@@ -123,6 +127,7 @@ def _item(item: ResponsesItem) -> tuple[Role, list[NormalizedContent]] | None:
                 tool_use_id=item.call_id,
                 tool_output=output,
                 tool_executor="client",
+                synthetic=item.synthetic if isinstance(item, ResponsesFunctionCallOutput) else None,
             )
             return "user", [block]
         case ResponsesReasoning():
@@ -153,13 +158,16 @@ def _role(role: str) -> Role:
     return "user"
 
 
-def _tool_use(call_id: str, name: str, tool_input: JsonValue) -> NormalizedContent:
+def _tool_use(
+    call_id: str, name: str, tool_input: JsonValue, *, synthetic: bool | None = None
+) -> NormalizedContent:
     return NormalizedContent(
         kind="tool_use",
         tool_use_id=call_id,
         tool_name=name,
         tool_input=tool_input,
         tool_executor="client",
+        synthetic=synthetic,
     )
 
 

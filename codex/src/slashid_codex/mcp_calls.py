@@ -49,7 +49,11 @@ def pairs(
         arguments = json.dumps({} if item.arguments is None else item.arguments)
         calls.append(
             ResponsesFunctionCall(
-                type="function_call", call_id=item.id, name=tool_name(item), arguments=arguments
+                type="function_call",
+                call_id=item.id,
+                name=tool_name(item),
+                arguments=arguments,
+                synthetic=True,
             )
         )
         outputs.append(
@@ -57,6 +61,7 @@ def pairs(
                 type="function_call_output",
                 call_id=item.id,
                 output=[ResponsesInputText(type="input_text", text=_result_json(item))],
+                synthetic=True,
             )
         )
     return calls, outputs

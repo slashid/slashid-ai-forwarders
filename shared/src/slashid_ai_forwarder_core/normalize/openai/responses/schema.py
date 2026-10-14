@@ -56,12 +56,16 @@ class ResponsesFunctionCall(_LenientModel):
     call_id: str
     name: str
     arguments: str
+    # A forwarder-built call, not in the conversation: its blocks are
+    # ``synthetic``.
+    synthetic: bool | None = None
 
 
 class ResponsesFunctionCallOutput(_LenientModel):
     type: Literal["function_call_output"]
     call_id: str
     output: str | list[ResponsesPart]
+    synthetic: bool | None = None
 
 
 class ResponsesCustomToolCall(_LenientModel):

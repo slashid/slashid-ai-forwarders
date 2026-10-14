@@ -52,26 +52,6 @@ def mark_errors(messages: Sequence[NormalizedMessage], failed: set[str]) -> list
     return out
 
 
-def mark_synthetic(
-    messages: Sequence[NormalizedMessage], call_ids: frozenset[str]
-) -> list[NormalizedMessage]:
-    """``messages`` with the blocks of the synthesized calls ``call_ids`` flagged
-    ``synthetic``: they join the previous response's assistant run, so unflagged
-    they would change that round's hash against the event that emitted it."""
-    if not call_ids:
-        return list(messages)
-    out: list[NormalizedMessage] = []
-    for message in messages:
-        if any(b.tool_use_id in call_ids for b in message.content):
-            content = [
-                b.model_copy(update={"synthetic": True}) if b.tool_use_id in call_ids else b
-                for b in message.content
-            ]
-            message = message.model_copy(update={"content": content})
-        out.append(message)
-    return out
-
-
 def declared_from_calls(
     messages: Iterable[NormalizedMessage],
 ) -> tuple[list[AITool], list[AIToolServer]]:
