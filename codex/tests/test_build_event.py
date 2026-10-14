@@ -211,3 +211,14 @@ async def test_mcp_pairs_do_not_break_round_hashes(builder: Builder, tmp_path: P
     path = write_mcp_rollout(tmp_path, [mcp_item("exec-a")])
     first, second = await builder.events(path)
     assert first.round_hash in (second.recent_round_hashes or [])
+
+
+async def test_script_image_view_is_reported_once(builder: Builder, tmp_path: Path) -> None:
+    image = {"type": "ImageView", "id": "exec-i", "path": "file:///home/user/pix.png"}
+    path = write_mcp_rollout(tmp_path, [image])
+    invocations, _ = _invocations(path)
+    record = _file(tmp_path, "pix.png", "png bytes")
+    builder.records.put_call("sess", invocations[0].turn_id, "exec-i", record)
+    _, second = await builder.events(path)
+    assert [f.name for f in second.accessed_files or []] == ["pix.png"]
+    assert (second.accessed_files or [])[0].content_hashes

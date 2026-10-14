@@ -18,7 +18,7 @@ from slashid_ai_forwarder_core.normalize.openai.responses.normalize import to_no
 
 from .config import CodexConfig
 from .cursor import RolloutInvocation
-from .envelope import declared_from_calls, failed_calls, mark_errors, wire_time
+from .envelope import declared_from_calls, drop_shadowed_stubs, failed_calls, mark_errors, wire_time
 from .state import FileRecordStore
 from .usage import codex_usage_to_tokens
 
@@ -70,6 +70,7 @@ async def build_event(
     turn_ids, tool_ids = record_keys(invocation)
     normalized.accessed_files = records.for_round(context.session_id, turn_ids, tool_ids)
     finalize(normalized, config=config)
+    normalized.accessed_files = drop_shadowed_stubs(normalized.accessed_files)
     envelope = EventEnvelope(
         request_id=invocation.response_id,
         timestamp=wire_time(invocation.timestamp),

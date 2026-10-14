@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 
-from slashid_ai_forwarder_core.events import AITool, AIToolServer, AIToolUse
+from slashid_ai_forwarder_core.events import AIAccessedFile, AITool, AIToolServer, AIToolUse
 from slashid_ai_forwarder_core.normalize.normalized.tools import build_tools_declared
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedMessage
 
@@ -50,6 +50,16 @@ def mark_errors(messages: Sequence[NormalizedMessage], failed: set[str]) -> list
             message = message.model_copy(update={"content": content})
         out.append(message)
     return out
+
+
+def drop_shadowed_stubs(files: Iterable[AIAccessedFile]) -> list[AIAccessedFile]:
+    """``files`` without the entries that have no hashes when another entry of the
+    same name has some. A script's ``view_image`` result carries no image bytes (the
+    item has only the path), so the extractor reports the path unhashed beside the
+    preflight's hashed record."""
+    files = list(files)
+    hashed = {f.name for f in files if f.content_hashes}
+    return [f for f in files if f.content_hashes or f.name not in hashed]
 
 
 def declared_from_calls(
