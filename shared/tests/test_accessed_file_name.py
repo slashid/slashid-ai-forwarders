@@ -37,3 +37,12 @@ def test_the_wire_body_carries_no_directory() -> None:
         "provenance": "attachment",
     }
     assert "secret-project" not in file.model_dump_json()
+
+
+def test_a_connector_file_carries_its_ref() -> None:
+    file = AIAccessedFile(name="a.md", file_ref="google/abc")
+    assert file.model_dump(mode="json", exclude_none=True) == {
+        "name": "a.md",
+        "file_ref": "google/abc",
+    }
+    assert AIAccessedFile(name="a.md").file_ref is None
