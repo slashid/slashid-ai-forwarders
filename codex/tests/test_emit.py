@@ -151,11 +151,11 @@ async def test_process_sends_and_saves(env: Env) -> None:
     [sed] = invocations[2].consumed_items
     assert sed.id is not None
     env.records.put_turn(sid, invocations[0].turn_id, [ENTRY])
-    env.records.put_call(sid, invocations[1].turn_id, sed.id, ENTRY)
+    env.records.put_call(sid, invocations[1].turn_id, sed.id, [ENTRY])
     # Never consumed: a denied call in turn 2 (finished before response 4),
     # and one in the last turn, whose end no sent response follows.
-    env.records.put_call(sid, invocations[1].turn_id, "call_denied", ENTRY)
-    env.records.put_call(sid, invocations[4].turn_id, "call_open", ENTRY)
+    env.records.put_call(sid, invocations[1].turn_id, "call_denied", [ENTRY])
+    env.records.put_call(sid, invocations[4].turn_id, "call_open", [ENTRY])
 
     assert await env.collector.process(env.session("function"))
 
@@ -445,9 +445,9 @@ async def test_sweep_skips_unmodified_since_watermark(env: Env) -> None:
 async def test_sweep_prunes(env: Env) -> None:
     old = datetime.now(UTC) - timedelta(days=8)
     SqliteFileRecordStore(lambda: connect(env.state_dir), clock=lambda: old).put_call(
-        "s", "t", "c", ENTRY
+        "s", "t", "c", [ENTRY]
     )
-    env.records.put_call("s", "t", "fresh", ENTRY)
+    env.records.put_call("s", "t", "fresh", [ENTRY])
     await env.store("old").save(Checkpoint(old, "r"))
     await env.store("new").save(Checkpoint(datetime.now(UTC), "r"))
     other = env.platform.checkpoint_store(collection="other", document="old")

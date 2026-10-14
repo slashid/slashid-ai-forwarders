@@ -160,7 +160,7 @@ async def test_prompt_after_interrupt(env: Env) -> None:
     read = env.tmp_path / "read.txt"
     read.write_text("x")
     entry = hash_local_file(read, max_bytes=100, provenance="tool_result")
-    env.store.put_call(INTERRUPT_SESSION, "t0", "call_8SuKXzdmQRKmwFyUjfSrl5k0", entry)
+    env.store.put_call(INTERRUPT_SESSION, "t0", "call_8SuKXzdmQRKmwFyUjfSrl5k0", [entry])
 
     await env.preflight.user_prompt_submit(
         _ups("go on", transcript=transcript, session_id=INTERRUPT_SESSION)
@@ -251,6 +251,20 @@ async def test_tool_read_script_mode_uses_payload_cwd(env: Env) -> None:
     assert entry.name == "note.txt"
     assert entry.byte_length == 1
     assert env.store.for_round(SESSION, [], ["exec-1"]) == [entry]
+
+
+async def test_tool_read_of_several_files(env: Env) -> None:
+    cwd = env.tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / "a.txt").write_text("aa")
+    (cwd / "b.txt").write_text("bbb")
+    await env.preflight.pre_tool_use(_ptu("cat a.txt b.txt", cwd=cwd, tool_use_id="exec-2"))
+    assert env.sent.accessed_files is not None
+    assert [(f.name, f.byte_length) for f in env.sent.accessed_files] == [
+        ("a.txt", 2),
+        ("b.txt", 3),
+    ]
+    assert env.store.for_round(SESSION, [], ["exec-2"]) == env.sent.accessed_files
 
 
 async def test_tool_read_expands_home(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -57,7 +57,7 @@ Environment variables are never read.
 
 - A hook Codex cannot start (the session's working directory no longer exists, or the executable is missing) is a nonblocking failure: the prompt or tool call goes through unchecked, and `verdict_fail_mode` never applies because the client never ran. Observed in the desktop app after its project folder was deleted: the session's own commands failed with "No such file or directory" and no hook reached the daemon.
 - Script mode (`codex exec`): the hook's `tool_use_id` (`exec-<uuid>`) is not linked to the call's `call_id`.
-- Reads are checked only for simple shell reads (`cat`, `sed`, `head`, `tail`, `nl` on one path) and `view_image`; other commands are reported after the fact.
+- Reads are checked only for simple shell reads (`cat`, `sed`, `head`, `tail`, `nl` on one or more paths) and `view_image`; other commands are reported after the fact.
 - A token or config rotation takes effect within about 5 s (the daemon checks the files every 5 s and exits; the next hook respawns it).
 - The spawn backoff after a failed start is keyed by the config file's size and mtime: fixing the config applies at once, but fixing only the token file does not reset it and can wait up to the 5-minute backoff window.
 - Identity is claimed, not proven: the token is per connection and readable by the user, so a user can send any `user_id`.

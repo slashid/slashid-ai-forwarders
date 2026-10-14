@@ -37,7 +37,7 @@ from slashid_ai_forwarder_core.normalize.normalized.types import (
     NormalizedMessage,
 )
 from slashid_ai_forwarder_core.normalize.turn import after_last_assistant
-from slashid_ai_forwarder_core.reads import get_file_read_by_tool
+from slashid_ai_forwarder_core.reads import get_files_read_by_tool
 from slashid_ai_forwarder_core.sink import PreflightError
 
 from .attachments import parse_attachments
@@ -279,16 +279,15 @@ class Preflight:
         )
 
     def _tool_invocation(self, hook: PreToolUseHook, hash_until: float) -> AIInvocationObservedV1:
-        """Only the file this call reads."""
+        """Only the files this call reads."""
         workdir = self._workdir(hook)
-        files: list[AIAccessedFile] = []
-        path = get_file_read_by_tool(hook.tool_name, hook.tool_input, workdir, expand_home=True)
-        if path is not None:
-            entry = self._hasher(hash_until)(path, "tool_result")
-            files.append(entry)
+        hasher = self._hasher(hash_until)
+        paths = get_files_read_by_tool(hook.tool_name, hook.tool_input, workdir, expand_home=True)
+        files = [hasher(path, "tool_result") for path in paths]
+        if files:
             self._store(
                 lambda: self._records.put_call(
-                    hook.session_id, hook.turn_id, hook.tool_use_id, entry
+                    hook.session_id, hook.turn_id, hook.tool_use_id, files
                 )
             )
         try:

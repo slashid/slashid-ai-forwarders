@@ -31,10 +31,10 @@ def _store(tmp_path: Path, now: datetime = T0) -> SqliteFileRecordStore:
 
 def test_round_lists_attachments_first(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    store.put_call("s1", "turn-1", "call_a", _file("a.md"))
+    store.put_call("s1", "turn-1", "call_a", [_file("a.md")])
     store.put_turn("s1", "turn-1", [_file("x.pdf", "attachment"), _file("y.png", "attachment")])
-    store.put_call("s1", "turn-1", "call_b", _file("b.md"))
-    store.put_call("s2", "turn-9", "call_a", _file("other.md"))
+    store.put_call("s1", "turn-1", "call_b", [_file("b.md")])
+    store.put_call("s2", "turn-9", "call_a", [_file("other.md")])
     got = store.for_round("s1", ["turn-1"], ["call_a", "call_b"])
     assert [f.name for f in got] == ["x.pdf", "y.png", "a.md", "b.md"]
     assert got[0] == _file("x.pdf", "attachment")
@@ -43,8 +43,8 @@ def test_round_lists_attachments_first(tmp_path: Path) -> None:
 def test_round_selects_by_key(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.put_turn("s1", "turn-1", [_file("x.pdf", "attachment")])
-    store.put_call("s1", "turn-1", "call_a", _file("a.md"))
-    store.put_call("s1", "turn-1", "call_b", _file("b.md"))
+    store.put_call("s1", "turn-1", "call_a", [_file("a.md")])
+    store.put_call("s1", "turn-1", "call_b", [_file("b.md")])
     assert [f.name for f in store.for_round("s1", [], ["call_b"])] == ["b.md"]
     assert [f.name for f in store.for_round("s1", ["turn-1"], [])] == ["x.pdf"]
     assert store.for_round("s1", [], []) == []
@@ -54,8 +54,8 @@ def test_put_replaces(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.put_turn("s1", "turn-1", [_file("old.pdf", "attachment")])
     store.put_turn("s1", "turn-1", [_file("new.pdf", "attachment")])
-    store.put_call("s1", "turn-1", "call_a", _file("old.md"))
-    store.put_call("s1", "turn-1", "call_a", _file("new.md"))
+    store.put_call("s1", "turn-1", "call_a", [_file("old.md")])
+    store.put_call("s1", "turn-1", "call_a", [_file("new.md")])
     got = store.for_round("s1", ["turn-1"], ["call_a"])
     assert [f.name for f in got] == ["new.pdf", "new.md"]
 
@@ -63,8 +63,8 @@ def test_put_replaces(tmp_path: Path) -> None:
 def test_delete_keys(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.put_turn("s1", "turn-1", [_file("x.pdf", "attachment")])
-    store.put_call("s1", "turn-1", "call_a", _file("a.md"))
-    store.put_call("s1", "turn-1", "call_b", _file("b.md"))
+    store.put_call("s1", "turn-1", "call_a", [_file("a.md")])
+    store.put_call("s1", "turn-1", "call_b", [_file("b.md")])
     store.delete_keys("s1", ["turn-1"], ["call_a"])
     assert [f.name for f in store.for_round("s1", ["turn-1"], ["call_a", "call_b"])] == ["b.md"]
 
@@ -72,17 +72,17 @@ def test_delete_keys(tmp_path: Path) -> None:
 def test_delete_turn(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.put_turn("s1", "turn-1", [_file("x.pdf", "attachment")])
-    store.put_call("s1", "turn-1", "call_a", _file("a.md"))
-    store.put_call("s1", "turn-2", "call_b", _file("b.md"))
+    store.put_call("s1", "turn-1", "call_a", [_file("a.md")])
+    store.put_call("s1", "turn-2", "call_b", [_file("b.md")])
     store.delete_turn("s1", "turn-1")
     got = store.for_round("s1", ["turn-1", "turn-2"], ["call_a", "call_b"])
     assert [f.name for f in got] == ["b.md"]
 
 
 def test_delete_older_than(tmp_path: Path) -> None:
-    _store(tmp_path, T0 - timedelta(days=8)).put_call("s1", "t", "call_old", _file("old"))
+    _store(tmp_path, T0 - timedelta(days=8)).put_call("s1", "t", "call_old", [_file("old")])
     store = _store(tmp_path)
-    store.put_call("s1", "t", "call_new", _file("new"))
+    store.put_call("s1", "t", "call_new", [_file("new")])
     store.delete_older_than(T0 - timedelta(days=7))
     assert [f.name for f in store.for_round("s1", [], ["call_old", "call_new"])] == ["new"]
 
@@ -96,7 +96,7 @@ def test_two_connections_write_concurrently(tmp_path: Path) -> None:
         try:
             start.wait()
             for n in range(50):
-                stores[i].put_call("s1", "t", f"call_{i}_{n}", _file(f"f{i}_{n}"))
+                stores[i].put_call("s1", "t", f"call_{i}_{n}", [_file(f"f{i}_{n}")])
         except BaseException as exc:
             errors.append(exc)
 
@@ -118,7 +118,7 @@ def _hammer(store: SqliteFileRecordStore, threads: int = 2, n: int = 50) -> list
         try:
             start.wait()
             for k in range(n):
-                store.put_call("s1", "t", f"call_{i}_{k}", _file(f"f{i}_{k}"))
+                store.put_call("s1", "t", f"call_{i}_{k}", [_file(f"f{i}_{k}")])
         except BaseException as exc:
             errors.append(exc)
 
@@ -151,7 +151,7 @@ def test_store_on_any_transaction_mode(tmp_path: Path, autocommit: bool | int) -
         lambda: sqlite3.connect(db, autocommit=autocommit)  # ty: ignore[invalid-argument-type]
     )
     assert _hammer(store) == []
-    store.put_call("s1", "t", "call_a", _file("a.md"))
+    store.put_call("s1", "t", "call_a", [_file("a.md")])
     other = sqlite3.connect(db)
     try:
         assert other.execute("SELECT COUNT(*) FROM codex_file_records").fetchone()[0] == 101
@@ -183,12 +183,12 @@ def test_busy_write_gives_up_within_a_second(tmp_path: Path) -> None:
     try:
         started = time.monotonic()
         with pytest.raises(RecordStoreBusy):
-            store.put_call("s1", "t", "call_a", _file("a.md"))
+            store.put_call("s1", "t", "call_a", [_file("a.md")])
         assert 0.5 < time.monotonic() - started < 2.5
     finally:
         blocker.execute("ROLLBACK")
         blocker.close()
-    store.put_call("s1", "t", "call_a", _file("a.md"))
+    store.put_call("s1", "t", "call_a", [_file("a.md")])
     assert [f.name for f in store.for_round("s1", [], ["call_a"])] == ["a.md"]
 
 
@@ -208,6 +208,6 @@ async def test_shares_the_local_platform_database(tmp_path: Path) -> None:
     async with create_local_platform(tmp_path) as platform:
         checkpoints = platform.checkpoint_store(collection="c", document="s1")
         await checkpoints.save(Checkpoint(T0, "resp_1"))
-        store.put_call("s1", "t", "call_a", _file("a.md"))
+        store.put_call("s1", "t", "call_a", [_file("a.md")])
         assert await checkpoints.load() == Checkpoint(T0, "resp_1")
     assert [f.name for f in store.for_round("s1", [], ["call_a"])] == ["a.md"]

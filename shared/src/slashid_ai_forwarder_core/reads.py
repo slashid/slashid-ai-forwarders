@@ -1,7 +1,8 @@
-"""The file a tool call is about to read, when the call is simple enough to tell.
+"""The files a tool call is about to read, when the call is simple enough to tell.
 
-Shared by Codex's ``PreToolUse`` preflight and by ``_READ_TOOLS``. ``None``
-means "not a recognised single-file read", never an error.
+Shared by Codex's ``PreToolUse`` preflight (every file) and by ``_READ_TOOLS``
+(a call that reads exactly one, whose output is that file). ``None`` or an
+empty list means "not a recognised read", never an error.
 """
 
 from __future__ import annotations
@@ -58,39 +59,68 @@ def get_file_read_by_tool(
     return _absolute(raw, workdir, expand_home) if raw else None
 
 
+def get_files_read_by_tool(
+    tool_name: str, tool_input: JsonValue, workdir: str | None, *, expand_home: bool = False
+) -> list[Path]:
+    """Like ``get_file_read_by_tool``, for every file: ``cat a b c`` reads three."""
+    if tool_name != "Bash":
+        path = get_file_read_by_tool(tool_name, tool_input, workdir, expand_home=expand_home)
+        return [path] if path else []
+    try:
+        command = _Bash.model_validate(tool_input).command
+    except ValidationError:
+        return []
+    return bash_read_paths(command, workdir, expand_home=expand_home)
+
+
 def bash_read_path(command: str, workdir: str | None, *, expand_home: bool = False) -> Path | None:
-    raw = _bash_target(command)
-    if not raw or raw == "-":
+    """The file of a command that reads exactly one."""
+    raws = _bash_targets(command)
+    if len(raws) != 1 or raws[0] == "-" or not _tilde_safe(command, raws):
         return None
-    # Allow only a lone, unquoted leading ``~``, which bash expands as we do.
-    if "~" in command and (
-        not raw.startswith("~") or command.count("~") != 1 or re.search(r"['\"\\]", command)
-    ):
-        return None
-    return _absolute(raw, workdir, expand_home)
+    return _absolute(raws[0], workdir, expand_home)
 
 
-def _bash_target(command: str) -> str | None:
+def bash_read_paths(command: str, workdir: str | None, *, expand_home: bool = False) -> list[Path]:
+    """Every file of a command that reads files, once each, in order. Standard
+    input and a word that does not resolve are left out."""
+    raws = [raw for raw in _bash_targets(command) if raw != "-"]
+    if not _tilde_safe(command, raws):
+        return []
+    paths = (_absolute(raw, workdir, expand_home) for raw in raws)
+    return list(dict.fromkeys(path for path in paths if path is not None))
+
+
+def _tilde_safe(command: str, raws: list[str]) -> bool:
+    """Allow only unquoted ``~`` that open a path word, which bash expands as we do."""
+    if "~" not in command:
+        return True
+    return command.count("~") == sum(raw.startswith("~") for raw in raws) and not re.search(
+        r"['\"\\]", command
+    )
+
+
+def _bash_targets(command: str) -> list[str]:
     if _SHELL_META.search(command):
-        return None
+        return []
     try:
         argv = shlex.split(command)
     except ValueError:
-        return None
+        return []
     # zsh expands ``=cmd`` to the command's path.
     if not argv or any(arg.startswith("=") for arg in argv):
-        return None
+        return []
     program, args = argv[0], argv[1:]
     if program == "sed":
-        if len(args) != 3 or args[0] != "-n" or not _SED_RANGE.fullmatch(args[1]):
-            return None
+        if len(args) < 3 or args[0] != "-n" or not _SED_RANGE.fullmatch(args[1]):
+            return []
         if "$" in command and command.replace(f"'{args[1]}'", "", 1).count("$"):
-            return None
-        return args[2]
+            return []
+        return args[2:]
     if "$" in command:
-        return None
+        return []
     if program not in _VALUE_OPTIONS:
-        return None
+        return []
     paths: list[str] = []
     skip = False
     for arg in args:
@@ -100,7 +130,7 @@ def _bash_target(command: str) -> str | None:
             skip = arg in _VALUE_OPTIONS[program]
         else:
             paths.append(arg)
-    return paths[0] if len(paths) == 1 else None
+    return paths
 
 
 def _absolute(raw: str, workdir: str | None, expand_home: bool) -> Path | None:
