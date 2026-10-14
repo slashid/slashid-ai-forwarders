@@ -260,3 +260,18 @@ async def test_connector_fetch_without_a_result_keeps_the_stub(
     builder.records.put_call("sess", invocations[0].turn_id, "exec-d", [stub])
     _, second = await builder.events(path)
     assert [f.file_ref for f in second.accessed_files or []] == ["google/ID2"]
+
+
+async def test_a_failed_connector_call_does_not_keep_its_stub(
+    builder: Builder, tmp_path: Path
+) -> None:
+    item = mcp_item("exec-d", status="failed", is_error=True)
+    item["tool"] = "google_drive.fetch"
+    item["arguments"] = {"url": "https://drive.google.com/file/d/ID2/view"}
+    path = write_mcp_rollout(tmp_path, [item])
+    invocations, _ = _invocations(path)
+    stub = AIAccessedFile(file_ref="google/ID2", provenance="tool_result")
+    local = _file(tmp_path, "keep.txt", "k")
+    builder.records.put_call("sess", invocations[0].turn_id, "exec-d", [stub, local])
+    _, second = await builder.events(path)
+    assert [f.name for f in second.accessed_files or []] == ["keep.txt"]

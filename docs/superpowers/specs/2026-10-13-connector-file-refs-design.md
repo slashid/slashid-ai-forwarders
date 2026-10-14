@@ -94,4 +94,4 @@ Match each ref kind on its index: `item` on `drive_id` + `identifier_from_source
 
 ## Not covered
 
-M365 content hashing; M365 content that is not a drive file (site pages, Loop, OneNote, Whiteboard, Forms, list items: unverified against a tenant); Teams/Outlook messages and attachments.
+A Codex fetch of a Drive or SharePoint folder URL: the preflight names it by its id before the call and nothing removes it afterwards (a failed call does drop its stub); M365 content hashing; M365 content that is not a drive file (site pages, Loop, OneNote, Whiteboard, Forms, list items: unverified against a tenant); Teams/Outlook messages and attachments.

@@ -319,3 +319,34 @@ def test_a_stub_is_the_ref_without_content() -> None:
     assert (stub.name, stub.file_ref, stub.media_type) == ("a.md", "google/ID1", "text/markdown")
     assert (stub.provenance, stub.content_hashes) == ("tool_result", None)
     assert connector_stub(ConnectorFile(ref="google/ID2")).name is None
+
+
+def test_a_non_ascii_download_keeps_the_ref() -> None:
+    result = json.dumps({"content": "é", "id": "ID1", "title": "a.pdf"})
+    assert _got(connector_files(_claude("download_file_content"), {"fileId": "ID1"}, result)) == [
+        ("google/ID1", "a.pdf", None)
+    ]
+    envelope = _envelope({"id": "ID2", "b64_string": "é"})
+    got = connector_files(
+        _codex("fetch"), {"url": "https://drive.google.com/file/d/ID2/"}, envelope
+    )
+    assert _got(got) == [("google/ID2", None, None)]
+
+
+def test_a_published_link_is_not_a_file_id() -> None:
+    url = "https://docs.google.com/document/d/e/2PACX-1vT/pub"
+    assert connector_files(_codex("fetch"), {"url": url}, None) == []
+
+
+def test_claude_search_leaves_folders_out() -> None:
+    files = [
+        {"id": "A", "title": "a.md", "mimeType": "text/markdown"},
+        {"id": "F", "title": "dir", "mimeType": "application/vnd.google-apps.folder"},
+    ]
+    got = connector_files(_claude("search_files"), {"query": "q"}, json.dumps({"files": files}))
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_a_result_that_is_not_text_parts_names_nothing() -> None:
+    assert connector_files(_claude("search_files"), {"query": "q"}, [1, "x"]) == []
+    assert connector_files(_claude("search_files"), {"query": "q"}, {"a": 1}) == []

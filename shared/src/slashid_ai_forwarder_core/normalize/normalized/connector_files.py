@@ -11,18 +11,19 @@ and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them).
 from __future__ import annotations
 
 import base64
-import binascii
 import re
 from collections.abc import Callable
 from typing import Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
-from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 _CLAUDE = re.compile(r"mcp__claude_ai_(Google_Drive|Microsoft_365)__(\w+)")
 _CODEX = re.compile(r"mcp__codex_apps__(google_drive|microsoft_sharepoint)__(\w+)")
 _DRIVE_HOSTS = frozenset({"drive.google.com", "docs.google.com"})
-_DRIVE_ID = re.compile(r"/d/([A-Za-z0-9_-]+)")
+# ``/d/e/<token>/pub`` is a published link, whose token is not a file id.
+_DRIVE_ID = re.compile(r"/d/(?!e/)([A-Za-z0-9_-]+)")
+_FOLDER = "application/vnd.google-apps.folder"
 # A drive item's id, as opposed to a path segment.
 _ITEM_ID = re.compile(r"01[A-Z2-7]{30,}")
 _GRAPH_ITEM = re.compile(r"/drives/([^/]+)/items/([^/?#]+)")
@@ -94,8 +95,16 @@ class _SharepointFiles(_Lenient):
     results: list[_SharepointFile] = []
 
 
+class _TextPart(_Lenient):
+    text: str | None = None
+
+
+_TEXT_PARTS = TypeAdapter(list[_TextPart])
+
+
 class _DriveFile(_Lenient):
     id: str | None = None
+    mimeType: str | None = None
     title: str | None = None
     file_name: str | None = None
     file_or_folder: str | None = None
@@ -148,11 +157,11 @@ def _texts(tool_output: JsonValue) -> list[str]:
     """A result's text: a string is one text, a list of ``{text}`` parts gives each part's."""
     if isinstance(tool_output, str):
         return [tool_output]
-    if isinstance(tool_output, list):
-        return [
-            p["text"] for p in tool_output if isinstance(p, dict) and isinstance(p.get("text"), str)
-        ]
-    return []
+    try:
+        parts = _TEXT_PARTS.validate_python(tool_output)
+    except ValidationError:
+        return []
+    return [part.text for part in parts if part.text is not None]
 
 
 def _json[M: BaseModel](model: type[M], text: str) -> M | None:
@@ -185,7 +194,7 @@ def _bytes(b64: str | None) -> bytes | None:
         return None
     try:
         return base64.b64decode(b64, validate=True)
-    except binascii.Error:
+    except ValueError:  # ``binascii.Error``, or a non-ASCII string
         return None
 
 
@@ -216,7 +225,7 @@ def _claude_drive(
         return [
             ConnectorFile(ref=_google(f.id), name=f.title)
             for f in (found.files if found else [])
-            if f.id
+            if f.id and f.mimeType != _FOLDER
         ]
     if action not in {"read_file_content", "get_file_metadata", "download_file_content"}:
         return []
