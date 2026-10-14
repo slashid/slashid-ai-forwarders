@@ -237,3 +237,69 @@ def test_finalize_dedup_ignores_provenance_and_keeps_first_seen() -> None:
     finalize(n, config=_config())
     assert len(n.accessed_files) == 1
     assert n.accessed_files[0].provenance == "attachment"
+
+
+# ----------------------------------------------------------------------------
+# Connector files: merged by file_ref
+# ----------------------------------------------------------------------------
+
+
+def _ref_file(ref: str, **fields: object) -> AIAccessedFile:
+    return AIAccessedFile(file_ref=ref, provenance="tool_result", **fields)  # ty: ignore[invalid-argument-type]
+
+
+def _finalized(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
+    normalized = NormalizedInvocation(input=NormalizedInvocationInput(messages=[]))
+    normalized.accessed_files = files
+    return finalize(normalized, config=_config()).accessed_files
+
+
+def test_a_ref_only_entry_merges_into_the_hashed_one() -> None:
+    stub = _ref_file("google/A")
+    full = _ref_file(
+        "google/A",
+        name="a.md",
+        media_type="text/markdown",
+        byte_length=3,
+        content_hashes={"sha256": "h"},
+    )
+    for order in ([stub, full], [full, stub]):
+        [merged] = _finalized(order)
+        assert merged.name == "a.md"
+        assert merged.content_hashes == {"sha256": "h"}
+        assert (merged.byte_length, merged.media_type) == (3, "text/markdown")
+
+
+def test_the_stub_position_is_kept_and_its_fields_win_when_the_other_lacks_them() -> None:
+    first = _ref_file("google/A", name="from-args.md")
+    second = _ref_file("google/A", media_type="text/markdown", content_hashes={"sha256": "h"})
+    other = _ref_file("google/B")
+    out = _finalized([first, other, second])
+    assert [f.file_ref for f in out] == ["google/A", "google/B"]
+    assert out[0].name == "from-args.md"
+    assert out[0].content_hashes == {"sha256": "h"}
+    assert out[0].media_type == "text/markdown"
+
+
+def test_unhashed_entries_of_one_ref_keep_the_earliest_and_fill_it() -> None:
+    first = _ref_file("google/A")
+    second = _ref_file("google/A", name="a.md")
+    [merged] = _finalized([first, second])
+    assert merged.name == "a.md"
+    assert merged.content_hashes is None
+
+
+def test_nameless_stubs_of_different_refs_stay_apart() -> None:
+    out = _finalized([_ref_file("google/A"), _ref_file("google/B"), _ref_file("m365/guid/X")])
+    assert [f.file_ref for f in out] == ["google/A", "google/B", "m365/guid/X"]
+
+
+def test_a_connector_file_and_a_local_one_of_the_same_name_and_hash_both_stay() -> None:
+    local = AIAccessedFile(name="a.md", content_hashes={"sha256": "h"}, provenance="tool_result")
+    remote = _ref_file("google/A", name="a.md", content_hashes={"sha256": "h"})
+    assert len(_finalized([local, remote])) == 2
+
+
+def test_entries_without_a_ref_dedup_as_before() -> None:
+    a = AIAccessedFile(name="a.md", content_hashes={"sha256": "h"})
+    assert _finalized([a, a.model_copy()]) == [a]

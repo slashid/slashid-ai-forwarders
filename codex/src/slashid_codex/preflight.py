@@ -30,6 +30,8 @@ from slashid_ai_forwarder_core.events import (
 )
 from slashid_ai_forwarder_core.files import hash_local_file
 from slashid_ai_forwarder_core.normalize._base import _LenientModel
+from slashid_ai_forwarder_core.normalize.normalized.connector_files import connector_refs
+from slashid_ai_forwarder_core.normalize.normalized.tool_results import connector_stub
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 from slashid_ai_forwarder_core.normalize.normalized.types import (
     NormalizedInvocation,
@@ -279,11 +281,12 @@ class Preflight:
         )
 
     def _tool_invocation(self, hook: PreToolUseHook, hash_until: float) -> AIInvocationObservedV1:
-        """Only the files this call reads."""
+        """Only the files this call reads: local ones hashed, or a connector's by ref."""
         workdir = self._workdir(hook)
         hasher = self._hasher(hash_until)
         paths = get_files_read_by_tool(hook.tool_name, hook.tool_input, workdir, expand_home=True)
         files = [hasher(path, "tool_result") for path in paths]
+        files += [connector_stub(cf) for cf in connector_refs(hook.tool_name, hook.tool_input)]
         if files:
             self._store(
                 lambda: self._records.put_call(

@@ -39,8 +39,39 @@ def finalize(
     win ties.
     """
     tool_files = extract_tool_result_files(normalized.input.messages, config=config)
-    normalized.accessed_files = _dedupe_by_name_hash(normalized.accessed_files + tool_files)
+    merged = _merge_by_ref(normalized.accessed_files + tool_files)
+    normalized.accessed_files = _dedupe_by_name_hash(merged)
     return normalized
+
+
+def _merge_by_ref(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
+    """Entries that share a ``file_ref`` are one file: a connector call names it by
+    the provider's id, then returns it (or not), and a hook may have named it first.
+    The merged entry takes the first one's position and the hashed one's hashes, size
+    and content; ``name`` and ``media_type`` come from whichever has them."""
+    slot: dict[str, int] = {}
+    out: list[AIAccessedFile] = []
+    for f in files:
+        if f.file_ref is None:
+            out.append(f)
+        elif f.file_ref not in slot:
+            slot[f.file_ref] = len(out)
+            out.append(f)
+        else:
+            out[slot[f.file_ref]] = _combine(out[slot[f.file_ref]], f)
+    return out
+
+
+def _combine(a: AIAccessedFile, b: AIAccessedFile) -> AIAccessedFile:
+    base, other = (b, a) if b.content_hashes and not a.content_hashes else (a, b)
+    return base.model_copy(
+        update={
+            "name": base.name or other.name,
+            "media_type": base.media_type or other.media_type,
+            "byte_length": base.byte_length if base.byte_length is not None else other.byte_length,
+            "redacted_content": base.redacted_content or other.redacted_content,
+        }
+    )
 
 
 def _hash_triples(f: AIAccessedFile) -> set[tuple[str | None, str | None, str | None]]:
@@ -73,6 +104,11 @@ def _dedupe_by_name_hash(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
     seen: set[tuple[str | None, str | None, str | None]] = set()
     out: list[AIAccessedFile] = []
     for f in files:
+        if f.file_ref:
+            # Identified by the provider's id, and merged on it: a nameless stub must
+            # not collapse into another.
+            out.append(f)
+            continue
         triples = _hash_triples(f)
         collides = bool(triples & seen)
         seen |= triples

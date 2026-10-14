@@ -30,6 +30,7 @@ from ...content_utils import strip_cat_n, truncate_middle
 from ...events import AIAccessedFile
 from ..turn import after_last_assistant
 from .codex_output import image_output_bytes, shell_read_path, shell_stdout, view_image_path
+from .connector_files import ConnectorFile, connector_files
 from .types import NormalizedMessage
 
 
@@ -120,6 +121,20 @@ def extract_tool_result_files(
             if not pair:
                 continue
             tool_name, tool_input = pair
+            if connector := connector_files(tool_name, tool_input, block.tool_output):
+                out.extend(
+                    _build_accessed_file(
+                        name=cf.name,
+                        media_type=_mime_from_name(cf.name),
+                        content_bytes=cf.content,
+                        include_raw_content=config.include_raw_content,
+                        max_content_size=config.max_content_size,
+                        text_content=False,
+                        file_ref=cf.ref,
+                    )
+                    for cf in connector
+                )
+                continue
             spec = _READ_TOOLS.get(tool_name)
             if not spec:
                 continue
@@ -182,12 +197,13 @@ def _mime_from_name(name: str | None) -> str | None:
 
 def _build_accessed_file(
     *,
-    name: str,
+    name: str | None,
     media_type: str | None,
     content_bytes: bytes | None,
     include_raw_content: bool,
     max_content_size: int,
     text_content: bool = True,
+    file_ref: str | None = None,
 ) -> AIAccessedFile:
     """Assemble an AIAccessedFile with hashes / byte_length / optional redacted_content."""
     if content_bytes is not None:
@@ -210,4 +226,15 @@ def _build_accessed_file(
         byte_length=byte_length,
         redacted_content=redacted,
         provenance="tool_result",
+        file_ref=file_ref,
+    )
+
+
+def connector_stub(cf: ConnectorFile) -> AIAccessedFile:
+    """A connector file seen in a call's arguments: the ref, and no content."""
+    return AIAccessedFile(
+        name=cf.name,
+        media_type=_mime_from_name(cf.name),
+        provenance="tool_result",
+        file_ref=cf.ref,
     )

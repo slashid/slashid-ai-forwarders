@@ -4,6 +4,7 @@ judged before any of it does."""
 from __future__ import annotations
 
 from slashid_ai_forwarder_core.events import (
+    AIAccessedFile,
     AIInvocationObservedV1,
     AIModel,
     AITool,
@@ -11,6 +12,8 @@ from slashid_ai_forwarder_core.events import (
     AIToolUse,
     AnthropicIdentityDetails,
 )
+from slashid_ai_forwarder_core.normalize.normalized.connector_files import connector_refs
+from slashid_ai_forwarder_core.normalize.normalized.tool_results import connector_stub
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from .envelope import PARSED_AS, signed_at_iso
@@ -34,8 +37,11 @@ def tool_call_event(frame: ToolCallFrame, *, signed_at: int) -> AIInvocationObse
     tools: dict[str, AITool] = {}
     servers: dict[str, AIToolServer] = {}
     requested: list[AIToolUse] = []
+    files: dict[str, AIAccessedFile] = {}
     for use in uses:
         tool, server = resolve_tool(_raw_name(use))
+        for ref in connector_refs(_raw_name(use), use.input):
+            files.setdefault(ref.ref, connector_stub(ref))
         tools.setdefault(tool.id, tool)
         servers.setdefault(server.id, server)
         requested.append(AIToolUse(tool_id=tool.id, tool_use_id=use.id))
@@ -48,6 +54,7 @@ def tool_call_event(frame: ToolCallFrame, *, signed_at: int) -> AIInvocationObse
         user_agent=frame.source.application,
         conversation_id=frame.session_id,
         requested_tool_uses=requested,
+        accessed_files=list(files.values()) or None,
         available_tools=list(tools.values()),
         available_tool_servers=list(servers.values()),
     )
