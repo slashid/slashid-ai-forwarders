@@ -238,11 +238,11 @@ async def test_connector_fetch_merges_its_stub_and_its_result(
     }
     path = write_mcp_rollout(tmp_path, [item])
     invocations, _ = _invocations(path)
-    stub = AIAccessedFile(file_ref="google/ID2", provenance="tool_result")
+    stub = AIAccessedFile(file_refs=["google/ID2"], provenance="tool_result")
     builder.records.put_call("sess", invocations[0].turn_id, "exec-d", [stub])
     _, second = await builder.events(path)
     [file] = second.accessed_files or []
-    assert (file.file_ref, file.name) == ("google/ID2", "g.md")
+    assert (file.file_refs, file.name) == (["google/ID2"], "g.md")
     assert file.content_hashes is not None
     assert file.byte_length == 2
 
@@ -256,10 +256,10 @@ async def test_connector_fetch_without_a_result_keeps_the_stub(
     item["result"] = None
     path = write_mcp_rollout(tmp_path, [item])
     invocations, _ = _invocations(path)
-    stub = AIAccessedFile(file_ref="google/ID2", provenance="tool_result")
+    stub = AIAccessedFile(file_refs=["google/ID2"], provenance="tool_result")
     builder.records.put_call("sess", invocations[0].turn_id, "exec-d", [stub])
     _, second = await builder.events(path)
-    assert [f.file_ref for f in second.accessed_files or []] == ["google/ID2"]
+    assert [f.file_refs for f in second.accessed_files or []] == [["google/ID2"]]
 
 
 async def test_a_failed_connector_call_does_not_keep_its_stub(
@@ -270,7 +270,7 @@ async def test_a_failed_connector_call_does_not_keep_its_stub(
     item["arguments"] = {"url": "https://drive.google.com/file/d/ID2/view"}
     path = write_mcp_rollout(tmp_path, [item])
     invocations, _ = _invocations(path)
-    stub = AIAccessedFile(file_ref="google/ID2", provenance="tool_result")
+    stub = AIAccessedFile(file_refs=["google/ID2"], provenance="tool_result")
     local = _file(tmp_path, "keep.txt", "k")
     builder.records.put_call("sess", invocations[0].turn_id, "exec-d", [stub, local])
     _, second = await builder.events(path)

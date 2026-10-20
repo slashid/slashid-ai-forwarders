@@ -71,7 +71,7 @@ async def build_event(
     files = records.for_round(context.session_id, turn_ids, tool_ids)
     # A connector call that failed named a file it did not read.
     if failed := failed_calls(invocation.consumed_items):
-        gone = [f for f in records.for_round(context.session_id, [], sorted(failed)) if f.file_ref]
+        gone = [f for f in records.for_round(context.session_id, [], sorted(failed)) if f.file_refs]
         files = [f for f in files if f not in gone]
     normalized.accessed_files = files
     finalize(normalized, config=config)

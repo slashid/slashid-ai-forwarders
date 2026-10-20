@@ -30,7 +30,7 @@ _GRAPH_ITEM = re.compile(r"/drives/([^/]+)/items/([^/?#]+)")
 _GUID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 # What reading a folder returns: ``<name> (file|folder, N bytes) file:///…`` per child.
 _LISTING = re.compile(r"\((?:file|folder), \d+ bytes\) file:///")
-# When a call names a file several ways, the first of these kinds is kept.
+# When a call names a file several ways, it gives every ref, these kinds in this order.
 _KIND_ORDER = ("m365/item/", "m365/guid/", "m365/path/")
 
 Source = Literal["claude", "codex"]
@@ -38,13 +38,18 @@ Family = Literal["drive", "m365"]
 
 
 class ConnectorFile(BaseModel):
-    """A file a call named: its ``ref``, its ``name`` and, if the call returned them, its bytes."""
+    """A file a call named: its ``refs`` (every identifier the call gave), its ``name`` and,
+    if the call returned them, its bytes."""
 
     model_config = ConfigDict(frozen=True)
 
-    ref: str
+    refs: list[str]
     name: str | None = None
     content: bytes | None = None
+
+
+def _file(ref: str, name: str | None = None, content: bytes | None = None) -> ConnectorFile:
+    return ConnectorFile(refs=[ref], name=name, content=content)
 
 
 class _Lenient(BaseModel):
@@ -223,7 +228,7 @@ def _claude_drive(
     if action == "search_files":
         found = _result(_DriveFiles, tool_output)
         return [
-            ConnectorFile(ref=_google(f.id), name=f.title)
+            _file(_google(f.id), name=f.title)
             for f in (found.files if found else [])
             if f.id and f.mimeType != _FOLDER
         ]
@@ -234,16 +239,14 @@ def _claude_drive(
         return []
     file = _result(_DriveFile, tool_output)
     content = _bytes(file.content) if file and action == "download_file_content" else None
-    return [
-        ConnectorFile(ref=_google(args.fileId), name=file.title if file else None, content=content)
-    ]
+    return [_file(_google(args.fileId), name=file.title if file else None, content=content)]
 
 
 def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
     if action == "search":
         found = _payload(_DriveFiles, tool_output)
         return [
-            ConnectorFile(ref=_google(f.id), name=f.title)
+            _file(_google(f.id), name=f.title)
             for f in (found.results if found else [])
             if f.id and f.file_or_folder != "folder"
         ]
@@ -255,15 +258,13 @@ def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> 
             return []
         name = (file.title or file.file_name) if file else None
         return [
-            ConnectorFile(
-                ref=_google(file_id), name=name, content=_bytes(file.b64_string) if file else None
-            )
+            _file(_google(file_id), name=name, content=_bytes(file.b64_string) if file else None)
         ]
     if action == "get_file_metadata":
         args = _args(_FileIdArgs, tool_input)
         if args is None:
             return []
-        return [ConnectorFile(ref=_google(args.fileId), name=file.title if file else None)]
+        return [_file(_google(args.fileId), name=file.title if file else None)]
     return []
 
 
@@ -288,9 +289,11 @@ def _url_refs(url: str) -> list[str]:
     return refs
 
 
-def _best(refs: list[str]) -> str:
-    return min(
-        refs, key=lambda ref: next(i for i, kind in enumerate(_KIND_ORDER) if ref.startswith(kind))
+def _by_kind(refs: list[str]) -> list[str]:
+    """Each ref once, the strongest kind first."""
+    return sorted(
+        dict.fromkeys(refs),
+        key=lambda ref: next(i for i, kind in enumerate(_KIND_ORDER) if ref.startswith(kind)),
     )
 
 
@@ -306,8 +309,8 @@ def _read_resource(tool_input: JsonValue, tool_output: JsonValue) -> list[Connec
     if not drive_id or not sep or not rest:
         return []
     if "/" not in rest and _ITEM_ID.fullmatch(rest):
-        return [ConnectorFile(ref=_item(drive_id, rest))]
-    return [ConnectorFile(ref=f"m365/path/{drive_id}/{rest}", name=rest.rsplit("/", 1)[-1])]
+        return [_file(_item(drive_id, rest))]
+    return [_file(f"m365/path/{drive_id}/{rest}", name=rest.rsplit("/", 1)[-1])]
 
 
 def _claude_m365(action: str, tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
@@ -316,7 +319,7 @@ def _claude_m365(action: str, tool_input: JsonValue, tool_output: JsonValue) -> 
     if action == "sharepoint_folder_search":
         hits = (_json(_FolderHit, text) for text in _texts(tool_output))
         return [
-            ConnectorFile(ref=_item(hit.driveId, hit.id), name=hit.name)
+            _file(_item(hit.driveId, hit.id), name=hit.name)
             for hit in hits
             if hit and hit.driveId and hit.id
         ]
@@ -329,7 +332,7 @@ def _codex_sharepoint(
     if action == "search":
         found = _payload(_SharepointFiles, tool_output)
         return [
-            ConnectorFile(ref=_item(f.drive_id, f.item_id), name=f.title)
+            _file(_item(f.drive_id, f.item_id), name=f.title)
             for f in (found.results if found else [])
             if f.drive_id and f.item_id
         ]
@@ -338,9 +341,7 @@ def _codex_sharepoint(
         file = _payload(_SharepointFile, tool_output)
         if args is None:
             return []
-        return [
-            ConnectorFile(ref=_item(args.drive_id, args.item_id), name=file.name if file else None)
-        ]
+        return [_file(_item(args.drive_id, args.item_id), name=file.name if file else None)]
     if action == "fetch":
         file = _payload(_SharepointFile, tool_output)
         url = _args(_UrlArgs, tool_input)
@@ -349,7 +350,7 @@ def _codex_sharepoint(
             refs += _url_refs(link) if link else []
         if not refs:
             return []
-        return [ConnectorFile(ref=_best(refs), name=file.title if file else None)]
+        return [ConnectorFile(refs=_by_kind(refs), name=file.title if file else None)]
     return []
 
 

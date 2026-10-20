@@ -249,9 +249,9 @@ def test_a_connector_call_names_its_file_by_ref() -> None:
         use(M365, "toolu_b", CLIENT, uri="file:///b!drv/Recipes/banana-bread.md"),
     )
     assert built is not None
-    assert [f.file_ref for f in built.accessed_files or []] == [
-        "google/1hjGaxM1gJEE8ZzIgxdlF5_hIpigr-tfh",
-        "m365/path/b!drv/Recipes/banana-bread.md",
+    assert [f.file_refs for f in built.accessed_files or []] == [
+        ["google/1hjGaxM1gJEE8ZzIgxdlF5_hIpigr-tfh"],
+        ["m365/path/b!drv/Recipes/banana-bread.md"],
     ]
     assert all(not f.content_hashes for f in built.accessed_files or [])
 
@@ -262,7 +262,7 @@ def test_two_calls_for_one_file_name_it_once() -> None:
         use(DRIVE, "toolu_b", CLIENT, fileId="f1", exportMimeType="application/pdf"),
     )
     assert built is not None
-    assert [f.file_ref for f in built.accessed_files or []] == ["google/f1"]
+    assert [f.file_refs for f in built.accessed_files or []] == [["google/f1"]]
 
 
 def test_a_call_that_names_no_file_has_no_accessed_files() -> None:

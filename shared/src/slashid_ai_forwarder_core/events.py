@@ -335,11 +335,11 @@ class AIAccessedFile(_WireModel):
     # nothing produces it yet, and advertising an unset value is worse than
     # adding the member later.
     provenance: Literal["tool_result", "attachment"] | None = None
-    # A connector file's provider identifier (``google/<fileId>``,
+    # A connector file's provider identifiers (``google/<fileId>``,
     # ``m365/item/<driveId>/<itemId>``, ``m365/guid/<GUID>``,
-    # ``m365/path/<driveId>/<path>``), which a content hash cannot stand for:
-    # a connector returns a re-rendering, not the stored bytes.
-    file_ref: str | None = None
+    # ``m365/path/<driveId>/<path>``), every one the call gave. A content hash cannot
+    # stand for them: a connector returns a re-rendering, not the stored bytes.
+    file_refs: list[str] | None = None
 
     @field_validator("name")
     @classmethod

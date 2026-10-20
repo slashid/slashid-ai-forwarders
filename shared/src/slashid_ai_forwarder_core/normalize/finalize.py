@@ -39,33 +39,47 @@ def finalize(
     win ties.
     """
     tool_files = extract_tool_result_files(normalized.input.messages, config=config)
-    merged = _merge_by_ref(normalized.accessed_files + tool_files)
+    merged = merge_by_refs(normalized.accessed_files + tool_files)
     normalized.accessed_files = _dedupe_by_name_hash(merged)
     return normalized
 
 
-def _merge_by_ref(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
-    """Entries that share a ``file_ref`` are one file: a connector call names it by
-    the provider's id, then returns it (or not), and a hook may have named it first.
-    The merged entry takes the first one's position and the hashed one's hashes, size
-    and content; ``name`` and ``media_type`` come from whichever has them."""
+def merge_by_refs(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
+    """Entries that share a ``file_refs`` member are one file: a connector call names it by
+    the provider's ids, then returns it (or not), and a hook may have named it first.
+    The merged entry takes the first one's position, the union of the refs and the hashed
+    one's hashes, size and content; ``name`` and ``media_type`` come from whichever has them."""
     slot: dict[str, int] = {}
-    out: list[AIAccessedFile] = []
+    out: list[AIAccessedFile | None] = []
     for f in files:
-        if f.file_ref is None:
+        if not f.file_refs:
             out.append(f)
-        elif f.file_ref not in slot:
-            slot[f.file_ref] = len(out)
+            continue
+        hits = sorted({slot[ref] for ref in f.file_refs if ref in slot})
+        if not hits:
+            hits = [len(out)]
             out.append(f)
         else:
-            out[slot[f.file_ref]] = _combine(out[slot[f.file_ref]], f)
-    return out
+            merged = out[hits[0]]
+            assert merged is not None
+            merged = _combine(merged, f)
+            for later in hits[1:]:
+                other = out[later]
+                assert other is not None
+                merged = _combine(merged, other)
+                out[later] = None
+            out[hits[0]] = merged
+        for ref in (out[hits[0]] or f).file_refs or []:
+            slot[ref] = hits[0]
+    return [f for f in out if f is not None]
 
 
 def _combine(a: AIAccessedFile, b: AIAccessedFile) -> AIAccessedFile:
     base, other = (b, a) if b.content_hashes and not a.content_hashes else (a, b)
+    refs = list(dict.fromkeys([*(a.file_refs or []), *(b.file_refs or [])]))
     return base.model_copy(
         update={
+            "file_refs": refs or None,
             "name": base.name or other.name,
             "media_type": base.media_type or other.media_type,
             "byte_length": base.byte_length if base.byte_length is not None else other.byte_length,
@@ -104,7 +118,7 @@ def _dedupe_by_name_hash(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
     seen: set[tuple[str | None, str | None, str | None]] = set()
     out: list[AIAccessedFile] = []
     for f in files:
-        if f.file_ref:
+        if f.file_refs:
             # Identified by the provider's id, and merged on it: a nameless stub must
             # not collapse into another.
             out.append(f)

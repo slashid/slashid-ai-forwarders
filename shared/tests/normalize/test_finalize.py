@@ -240,12 +240,12 @@ def test_finalize_dedup_ignores_provenance_and_keeps_first_seen() -> None:
 
 
 # ----------------------------------------------------------------------------
-# Connector files: merged by file_ref
+# Connector files: merged by file_refs
 # ----------------------------------------------------------------------------
 
 
 def _ref_file(ref: str, **fields: object) -> AIAccessedFile:
-    return AIAccessedFile(file_ref=ref, provenance="tool_result", **fields)  # ty: ignore[invalid-argument-type]
+    return AIAccessedFile(file_refs=[ref], provenance="tool_result", **fields)  # ty: ignore[invalid-argument-type]
 
 
 def _finalized(files: list[AIAccessedFile]) -> list[AIAccessedFile]:
@@ -275,7 +275,7 @@ def test_the_stub_position_is_kept_and_its_fields_win_when_the_other_lacks_them(
     second = _ref_file("google/A", media_type="text/markdown", content_hashes={"sha256": "h"})
     other = _ref_file("google/B")
     out = _finalized([first, other, second])
-    assert [f.file_ref for f in out] == ["google/A", "google/B"]
+    assert [f.file_refs for f in out] == [["google/A"], ["google/B"]]
     assert out[0].name == "from-args.md"
     assert out[0].content_hashes == {"sha256": "h"}
     assert out[0].media_type == "text/markdown"
@@ -291,7 +291,7 @@ def test_unhashed_entries_of_one_ref_keep_the_earliest_and_fill_it() -> None:
 
 def test_nameless_stubs_of_different_refs_stay_apart() -> None:
     out = _finalized([_ref_file("google/A"), _ref_file("google/B"), _ref_file("m365/guid/X")])
-    assert [f.file_ref for f in out] == ["google/A", "google/B", "m365/guid/X"]
+    assert [f.file_refs for f in out] == [["google/A"], ["google/B"], ["m365/guid/X"]]
 
 
 def test_a_connector_file_and_a_local_one_of_the_same_name_and_hash_both_stay() -> None:
@@ -303,3 +303,24 @@ def test_a_connector_file_and_a_local_one_of_the_same_name_and_hash_both_stay() 
 def test_entries_without_a_ref_dedup_as_before() -> None:
     a = AIAccessedFile(name="a.md", content_hashes={"sha256": "h"})
     assert _finalized([a, a.model_copy()]) == [a]
+
+
+def _refs_file(*refs: str, **fields: object) -> AIAccessedFile:
+    return AIAccessedFile(file_refs=list(refs), provenance="tool_result", **fields)  # ty: ignore[invalid-argument-type]
+
+
+def test_entries_sharing_any_ref_merge_and_keep_all_the_refs() -> None:
+    first = _refs_file("m365/guid/X", name="a.docx")
+    second = _refs_file("m365/item/D/I", "m365/guid/X", content_hashes={"sha256": "h"})
+    other = _refs_file("google/A")
+    out = _finalized([first, other, second])
+    assert [f.file_refs for f in out] == [["m365/guid/X", "m365/item/D/I"], ["google/A"]]
+    assert (out[0].name, out[0].content_hashes) == ("a.docx", {"sha256": "h"})
+
+
+def test_a_third_entry_that_bridges_two_files_merges_them() -> None:
+    a, b = _refs_file("m365/guid/X"), _refs_file("m365/path/D/p")
+    bridge = _refs_file("m365/guid/X", "m365/path/D/p", name="a.docx")
+    [merged] = _finalized([a, b, bridge])
+    assert merged.file_refs == ["m365/guid/X", "m365/path/D/p"]
+    assert merged.name == "a.docx"
