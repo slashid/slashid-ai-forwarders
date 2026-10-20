@@ -56,11 +56,11 @@ def drop_shadowed_stubs(files: Iterable[AIAccessedFile]) -> list[AIAccessedFile]
     """``files`` without the entries that have no hashes when another entry of the
     same name has some. A script's ``view_image`` result carries no image bytes (the
     item has only the path), so the extractor reports the path unhashed beside the
-    preflight's hashed record. A connector file (it has a ``file_ref``) is merged on
+    preflight's hashed record. A connector file (it has ``file_refs``) is merged on
     that ref instead, so it neither shadows nor is dropped."""
     files = list(files)
-    hashed = {f.name for f in files if f.name and f.content_hashes and not f.file_ref}
-    return [f for f in files if f.file_ref or f.content_hashes or f.name not in hashed]
+    hashed = {f.name for f in files if f.name and f.content_hashes and not f.file_refs}
+    return [f for f in files if f.file_refs or f.content_hashes or f.name not in hashed]
 
 
 def declared_from_calls(

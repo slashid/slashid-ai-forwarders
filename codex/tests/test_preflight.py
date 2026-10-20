@@ -316,7 +316,7 @@ async def test_connector_call_names_its_file_by_ref(
     await env.preflight.pre_tool_use(_connector_ptu(tool, args, "exec-3", env.tmp_path))
     assert env.sent.accessed_files is not None
     [entry] = env.sent.accessed_files
-    assert (entry.file_ref, entry.name, entry.content_hashes) == (ref, None, None)
+    assert (entry.file_refs, entry.name, entry.content_hashes) == ([ref], None, None)
     assert entry.provenance == "tool_result"
     assert env.store.for_round(SESSION, [], ["exec-3"]) == [entry]
 

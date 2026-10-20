@@ -7,7 +7,9 @@ from slashid_codex.envelope import drop_shadowed_stubs
 
 def _file(name: str | None, *, hashed: bool = False, ref: str | None = None) -> AIAccessedFile:
     return AIAccessedFile(
-        name=name, content_hashes={"sha256": "h"} if hashed else None, file_ref=ref
+        name=name,
+        content_hashes={"sha256": "h"} if hashed else None,
+        file_refs=[ref] if ref else None,
     )
 
 

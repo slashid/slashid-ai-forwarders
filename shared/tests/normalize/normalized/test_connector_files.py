@@ -46,7 +46,8 @@ def _envelope(payload: JsonValue) -> list[JsonValue]:
 
 
 def _got(files: list[ConnectorFile]) -> list[tuple[str, str | None, bytes | None]]:
-    return [(f.ref, f.name, f.content) for f in files]
+    """A file's refs joined by a space."""
+    return [(" ".join(f.refs), f.name, f.content) for f in files]
 
 
 def test_claude_download_gives_the_bytes_and_the_title() -> None:
@@ -223,10 +224,10 @@ def test_codex_sharepoint_fetch_takes_the_ref_from_the_url(url: str, ref: str | 
     assert _got(got) == ([(ref, None, None)] if ref else [])
 
 
-def test_the_item_beats_the_guid_when_a_fetch_has_both() -> None:
+def test_a_fetch_with_an_item_and_a_guid_gives_both_refs_item_first() -> None:
     payload = {"title": "a.docx", "document_id": GRAPH, "web_link": SOURCEDOC}
     got = connector_files(_sp("fetch"), {"url": SOURCEDOC}, _envelope(payload))
-    assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM}", "a.docx", None)]
+    assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM} m365/guid/{GUID.upper()}", "a.docx", None)]
 
 
 def test_codex_sharepoint_search_and_get_drive_item() -> None:
@@ -274,9 +275,9 @@ def test_a_download_becomes_a_hashed_file_with_its_ref() -> None:
         _claude("download_file_content"), {"fileId": "ID1"}, _download(_b64(b"# Bread\n"))
     )
     [file] = extract_tool_result_files(messages, config=CONFIG)
-    assert (file.name, file.file_ref, file.media_type) == (
+    assert (file.name, file.file_refs, file.media_type) == (
         "banana-bread.md",
-        "google/ID1",
+        ["google/ID1"],
         "text/markdown",
     )
     assert file.provenance == "tool_result"
@@ -291,10 +292,10 @@ def test_other_reads_have_a_ref_and_no_hash() -> None:
         _claude("read_file_content"), {"fileId": "ID1"}, json.dumps({"title": "banana-bread.md"})
     )
     [file] = extract_tool_result_files(messages, config=CONFIG)
-    assert (file.file_ref, file.content_hashes) == ("google/ID1", None)
+    assert (file.file_refs, file.content_hashes) == (["google/ID1"], None)
     bad = _exchange(_claude("download_file_content"), {"fileId": "ID1"}, _download("!!!"))
     [stub] = extract_tool_result_files(bad, config=CONFIG)
-    assert (stub.file_ref, stub.content_hashes) == ("google/ID1", None)
+    assert (stub.file_refs, stub.content_hashes) == (["google/ID1"], None)
 
 
 def test_a_failed_call_names_nothing() -> None:
@@ -315,10 +316,10 @@ def _text(text: str) -> NormalizedContent:
 
 
 def test_a_stub_is_the_ref_without_content() -> None:
-    stub = connector_stub(ConnectorFile(ref="google/ID1", name="a.md"))
-    assert (stub.name, stub.file_ref, stub.media_type) == ("a.md", "google/ID1", "text/markdown")
+    stub = connector_stub(ConnectorFile(refs=["google/ID1"], name="a.md"))
+    assert (stub.name, stub.file_refs, stub.media_type) == ("a.md", ["google/ID1"], "text/markdown")
     assert (stub.provenance, stub.content_hashes) == ("tool_result", None)
-    assert connector_stub(ConnectorFile(ref="google/ID2")).name is None
+    assert connector_stub(ConnectorFile(refs=["google/ID2"])).name is None
 
 
 def test_a_non_ascii_download_keeps_the_ref() -> None:

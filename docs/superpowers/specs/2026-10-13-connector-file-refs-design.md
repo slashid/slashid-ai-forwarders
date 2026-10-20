@@ -3,7 +3,7 @@
 **Date:** 2026-10-13
 **Status:** Implemented for Drive and Microsoft 365 in `shared` (`connector_files.py`, the extractor and `finalize`) and in the Codex and Anthropic preflights; the `ng-evangelion` side (schema sync, GUID and path indexes) is not part of it. Every shape below was captured on 2026-10-13/14 from live Google Drive and Microsoft 365 connectors, through claude.ai (`claude-work`), Codex CLI and the ChatGPT desktop app.
 **Builds on:** the Codex tool-call extraction (`2026-10-13-codex-tool-calls-design.md`, merged): connector calls made inside `exec` scripts already reach the event as `function_call` pairs named like the hook, and the preflight stores a list of files per call.
-**Companion changes:** in `ng-evangelion`, `file_ref` in the batched spec sync, and an index on the GUID and path of `MicrosoftM365OnedriveFileMetadata` (see Server).
+**Companion changes:** in `ng-evangelion` (merged, #8496): `file_refs` on the wire, resolved for `google/…` and `m365/item/…`; the GUID and path kinds follow there (see Server).
 **Baseline:** before this, a Drive or SharePoint fetch produced `accessed_files: []` in the preflight and in the event. Checked live (Codex CLI, stub SlashID): the preflight of a fetch carries the ref before the call runs; the event carries one entry per file with its ref and name, hashed only for a raw download; searches name every hit in the event.
 
 ## Problem
@@ -18,7 +18,7 @@ The provider's file ID is in the call and is what an admin copies from a share l
 
 ## Wire
 
-`AIAccessedFile.file_ref: str | None`, a typed string: the identifier the call exposed, the first of `item`, `guid`, `path` when it exposed several.
+`AIAccessedFile.file_refs: list[str] | None`: every identifier the call exposed, in the order `item`, `guid`, `path`, each once. The server matches each on its own and skips the kinds it does not resolve yet, so all kinds are sent.
 
 | Ref | Meaning |
 | --- | --- |
@@ -27,7 +27,7 @@ The provider's file ID is in the call and is what an admin copies from a share l
 | `m365/guid/<GUID>` | SharePoint file GUID (uppercase, no braces), from a `sourcedoc` link or a `get_drive_item` result |
 | `m365/path/<driveId>/<path>` | Path relative to the drive root, library name omitted, percent-decoded once (`Recipes/Pipoca %#.txt`) |
 
-A Codex SharePoint fetch can expose an `itemId` (`document_id`) and a GUID (`web_link`); the `item` is kept. The forwarder derives nothing across kinds; the one transformation is decoding a path. `name`, `media_type` and `provenance: tool_result` are set as for local files. The server ignores unknown fields until the spec sync lands.
+A Codex SharePoint fetch can expose an `itemId` (`document_id`) and a GUID (`web_link`); both are sent. The forwarder derives nothing across kinds; the one transformation is decoding a path. `name`, `media_type` and `provenance: tool_result` are set as for local files. The server ignores unknown fields until the spec sync lands.
 
 ## Recognition
 
@@ -66,7 +66,7 @@ Anthropic's `tool_call` frame (sent before the tools run when "Validate tool cal
 
 ## Dedup
 
-Connector entries sharing a `file_ref` merge, never on name. The merged entry keeps the hashed entry's hashes and takes `name` and `media_type` from whichever has them; with equal or no hashes the earliest wins. Today `_dedupe_by_name_hash` is first-seen-wins on `(name, alg, value)`, and a preflight record (ref-only, first) must not beat the later hashed entry, so the merge is a new step beside it. Codex also runs `drop_shadowed_stubs` (a hashless entry goes when a hashed one has its name) for script-mode `view_image`; a ref-only entry has no name, so it is the ref merge that must collapse it. Entries for one file with different refs (a path read and an `itemId` read) stay separate; the server matches each on its own ref.
+Connector entries sharing any `file_refs` member merge (and one bridging two merges them), keeping the union of the refs, never on name. The merged entry keeps the hashed entry's hashes and takes `name` and `media_type` from whichever has them; with equal or no hashes the earliest wins. Today `_dedupe_by_name_hash` is first-seen-wins on `(name, alg, value)`, and a preflight record (ref-only, first) must not beat the later hashed entry, so the merge is a new step beside it. Codex also runs `drop_shadowed_stubs` (a hashless entry goes when a hashed one has its name) for script-mode `view_image`; a ref-only entry has no name, so it is the ref merge that must collapse it. Entries for one file that share no ref (a path read and an `itemId` read) stay separate; the server matches each on its own ref.
 
 ## Identity facts (M365)
 
@@ -85,11 +85,11 @@ Stored M365 file metadata has `drive_id`, `identifier_from_source` (the `itemId`
 - the file GUID, derived from `identifier_from_source` at ingest (or read from `web_url`);
 - a normalized path: lowercased, no leading slash, relative to the drive root (`parent_path` after `root:` + `/` + `name`).
 
-Match each ref kind on its index: `item` on `drive_id` + `identifier_from_source`, `guid` on the GUID, `path` on `drive_id` + lowercased path. The server lowercases the ref and never decodes: the forwarder sends a decoded path. Derivation lives only server-side so a wrong guess is fixed in one place.
+Merged as of ng-evangelion #8496: `file_refs` on the wire, `google/…` and `m365/item/…` resolved (the item id is the node's `identifier_from_source`, the drive id a node property); `m365/guid/…` and `m365/path/…` are the next server PR, and until then a file with only those refs is allowed unchecked. Match each ref kind on its index: `item` on `drive_id` + `identifier_from_source`, `guid` on the GUID, `path` on `drive_id` + lowercased path. The server lowercases the ref and never decodes: the forwarder sends a decoded path. Derivation lives only server-side so a wrong guess is fixed in one place.
 
 ## Implementation outline
 
-1. `shared`: `AIAccessedFile.file_ref`; the recognizer and its tables in `normalize/normalized/` (next to `tool_results.py`), a connector branch in `extract_tool_result_files`, the ref merge in `finalize`.
+1. `shared`: `AIAccessedFile.file_refs`; the recognizer and its tables in `normalize/normalized/` (next to `tool_results.py`), a connector branch in `extract_tool_result_files`, the ref merge in `finalize`.
 2. `codex`: the preflight's `_tool_invocation` runs the recognizer on the hook's arguments when `get_files_read_by_tool` finds no local file; the event path needs nothing new, since the synthesized pairs already reach `extract_tool_result_files`. Replace `drop_shadowed_stubs` by the ref merge where it overlaps.
 3. claude.ai and API forwarders (`anthropic`, `bedrock`, `vertex`): nothing beyond step 1, they share the extractor.
 4. `ng-evangelion`: spec sync, the GUID and path columns and indexes, the match by ref kind.

@@ -130,7 +130,7 @@ def extract_tool_result_files(
                         include_raw_content=config.include_raw_content,
                         max_content_size=config.max_content_size,
                         text_content=False,
-                        file_ref=cf.ref,
+                        file_refs=cf.refs,
                     )
                     for cf in connector
                 )
@@ -203,7 +203,7 @@ def _build_accessed_file(
     include_raw_content: bool,
     max_content_size: int,
     text_content: bool = True,
-    file_ref: str | None = None,
+    file_refs: list[str] | None = None,
 ) -> AIAccessedFile:
     """Assemble an AIAccessedFile with hashes / byte_length / optional redacted_content."""
     if content_bytes is not None:
@@ -226,7 +226,7 @@ def _build_accessed_file(
         byte_length=byte_length,
         redacted_content=redacted,
         provenance="tool_result",
-        file_ref=file_ref,
+        file_refs=file_refs,
     )
 
 
@@ -236,5 +236,5 @@ def connector_stub(cf: ConnectorFile) -> AIAccessedFile:
         name=cf.name,
         media_type=_mime_from_name(cf.name),
         provenance="tool_result",
-        file_ref=cf.ref,
+        file_refs=cf.refs,
     )
