@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 
 TIMEOUT_S = 5.0
 MAX_OUTPUT_BYTES = 1 << 20
+REAP_TIMEOUT_S = 2.0
 CACHE_S = 600.0
 # macOS and Windows bundle paths are unverified.
 _LINUX_BUNDLE = Path("/usr/lib/chatgpt/resources/codex")
@@ -125,13 +126,11 @@ class McpServers:
         try:
             stdout = await asyncio.wait_for(_read(proc), TIMEOUT_S)
         except TimeoutError:
-            _kill(proc)
-            await proc.wait()
+            await _kill(proc)
             log.info("codex mcp list timed out")
             return []
         if stdout is None:
-            _kill(proc)
-            await proc.wait()
+            await _kill(proc)
             log.info("codex mcp list output over %d bytes", MAX_OUTPUT_BYTES)
             return []
         if proc.returncode != 0:
@@ -152,12 +151,17 @@ async def _read(proc: asyncio.subprocess.Process) -> bytes | None:
     return bytes(out)
 
 
-def _kill(proc: asyncio.subprocess.Process) -> None:
-    """The whole group on POSIX: a child left holding stdout would keep the pipe open."""
+async def _kill(proc: asyncio.subprocess.Process) -> None:
+    """The whole group on POSIX: a child left holding stdout would keep the pipe open.
+    The reap is bounded: the exit notification can fail to arrive."""
     try:
         if _POSIX:
             os.killpg(proc.pid, signal.SIGKILL)
         else:
             proc.kill()
     except ProcessLookupError:
-        pass
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), REAP_TIMEOUT_S)
+    except TimeoutError:
+        log.info("codex mcp list child not reaped")

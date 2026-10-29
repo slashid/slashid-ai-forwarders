@@ -48,7 +48,7 @@ jobs:
 
       - name: pytest
         working-directory: ${{ matrix.subproject }}
-        run: uv run pytest
+        run: uv run pytest -v
 
   terraform:
     runs-on: ubuntu-latest
