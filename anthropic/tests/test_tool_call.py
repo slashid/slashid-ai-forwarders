@@ -272,3 +272,28 @@ def test_a_call_that_names_no_file_has_no_accessed_files() -> None:
     )
     assert built is not None
     assert built.accessed_files is None
+
+
+def test_a_claude_ai_sandbox_read_of_an_upload_names_it_before_it_runs() -> None:
+    """The tool call frame is the one moment a verdict can stop a read: the
+    upload the call names is judged before Claude sees its content."""
+    built = event(
+        use("view", "toolu_a", CLIENT, path="/mnt/user-data/uploads/A_B.docx"),
+        use("bash_tool", "toolu_b", CLIENT, command="cat /mnt/user-data/uploads/c.txt"),
+        source={"application": "claude-ai"},
+    )
+    assert built is not None
+    files = built.accessed_files or []
+    assert [(f.name, f.provenance, f.content_hashes) for f in files] == [
+        ("A_B.docx", "tool_result", None),
+        ("c.txt", "tool_result", None),
+    ]
+
+
+def test_a_claude_ai_sandbox_read_of_its_own_files_names_nothing() -> None:
+    built = event(
+        use("view", "toolu_a", CLIENT, path="/home/claude/draft.py"),
+        use("create_file", "toolu_b", CLIENT, path="/mnt/user-data/uploads/new.txt"),
+    )
+    assert built is not None
+    assert built.accessed_files is None

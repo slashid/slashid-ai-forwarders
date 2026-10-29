@@ -109,6 +109,7 @@ append:
 expected:
   accessed_files:
     - {name: maria.txt, sha256: 576f5772eb89115f882ac39a431b48a4bc1872d84b48573ee1dd5c1f43065055, provenance: attachment}
+    - {name: WhatsApp_Image_2026-09-02_at_17_07_21.jpeg, sha256: null, byte_length: 70657, provenance: attachment}
     - {name: guiaSADT.pdf, sha256: 3f6af091f4b9191b99ff17468d46aee5079b69c13ad754979846b6883e92b5ff, provenance: attachment}
 ---
 # The Bash result is what the trailing Read run consumed, and Bash is no file
