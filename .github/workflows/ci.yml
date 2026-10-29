@@ -14,6 +14,8 @@ jobs:
         # 3.12 is the supported floor, 3.14 is what the images and Lambda ship.
         python: ["3.12", "3.14"]
     runs-on: ubuntu-latest
+    # A hung step fails in minutes instead of holding the runner for six hours.
+    timeout-minutes: 15
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:
@@ -52,6 +54,8 @@ jobs:
 
   terraform:
     runs-on: ubuntu-latest
+    # A hung step fails in minutes instead of holding the runner for six hours.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

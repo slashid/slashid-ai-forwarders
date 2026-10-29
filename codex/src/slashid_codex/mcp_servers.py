@@ -125,13 +125,11 @@ class McpServers:
         try:
             stdout = await asyncio.wait_for(_read(proc), TIMEOUT_S)
         except TimeoutError:
-            _kill(proc)
-            await proc.wait()
+            await _reap(proc)
             log.info("codex mcp list timed out")
             return []
         if stdout is None:
-            _kill(proc)
-            await proc.wait()
+            await _reap(proc)
             log.info("codex mcp list output over %d bytes", MAX_OUTPUT_BYTES)
             return []
         if proc.returncode != 0:
@@ -150,6 +148,20 @@ async def _read(proc: asyncio.subprocess.Process) -> bytes | None:
             return None
     await proc.wait()
     return bytes(out)
+
+
+async def _reap(proc: asyncio.subprocess.Process) -> None:
+    """Kill the group, drain stdout to EOF, then wait.
+
+    ``Process.wait()`` returns only once stdout's pipe has closed, and a
+    child that out-ran the reader leaves the transport paused on a full
+    buffer, so it never sees that EOF unless the buffer is drained.
+    """
+    _kill(proc)
+    assert proc.stdout is not None
+    while await proc.stdout.read(1 << 16):
+        pass
+    await proc.wait()
 
 
 def _kill(proc: asyncio.subprocess.Process) -> None:
