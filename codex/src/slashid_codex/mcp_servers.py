@@ -153,7 +153,7 @@ async def _read(proc: asyncio.subprocess.Process) -> bytes | None:
 
 async def _kill(proc: asyncio.subprocess.Process) -> None:
     """The whole group on POSIX: a child left holding stdout would keep the pipe open.
-    The reap is bounded: the exit notification can fail to arrive, and the listing must not wait on it."""
+    The reap is bounded: the exit notification can fail to arrive."""
     try:
         if _POSIX:
             os.killpg(proc.pid, signal.SIGKILL)
