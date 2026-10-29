@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 from typing import Any, Literal
@@ -51,7 +52,8 @@ def config(**overrides: Any) -> Config:
 
 class ExpectedFile(BaseModel):
     name: str | None
-    sha256: str
+    # None: an entry with no content hashes, a file named but never read.
+    sha256: str | None
     media_type: str | None = None
     byte_length: int | None = None
     provenance: Literal["tool_result", "attachment"] = "tool_result"
@@ -63,7 +65,11 @@ def check_files(files: list[AIAccessedFile] | None, expected: list[ExpectedFile]
         (e.name, e.sha256) for e in expected
     ]
     for g, e in zip(got, expected, strict=True):
-        assert g.content_hashes is not None and set(g.content_hashes) == {"sha256", "sha1", "md5"}
+        if e.sha256 is None:
+            assert g.content_hashes is None
+        else:
+            assert g.content_hashes is not None
+            assert set(g.content_hashes) == {"sha256", "sha1", "md5"}
         assert g.provenance == e.provenance
         if e.media_type is not None:
             assert g.media_type == e.media_type
@@ -79,10 +85,78 @@ async def test_accessed_files_for(fixture: str, expected: list[ExpectedFile]) ->
 async def test_a_nameless_attachment_takes_its_name_by_media_type() -> None:
     """The <uploaded_files> block lists pdf, jpeg, txt; the attachment blocks
     run txt, jpeg, pdf. Order cannot pair them, so the nameless PDF claims
-    the listed name whose media type matches — and the image, carrying no
-    text, produces no entry to name at all."""
+    the listed name whose media type matches; so does the image, which
+    carries no text."""
     files = await accessed_files_for(load("frame_attachment").messages, config=config())
-    assert [f.name for f in files] == ["maria.txt", "guiaSADT.pdf"]
+    assert [f.name for f in files] == [
+        "maria.txt",
+        "WhatsApp_Image_2026-09-02_at_17_07_21.jpeg",
+        "guiaSADT.pdf",
+    ]
+
+
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _user(*blocks: dict[str, Any]) -> AnthropicRequestMessage:
+    return AnthropicRequestMessage.model_validate({"role": "user", "content": list(blocks)})
+
+
+def _attachment(**over: Any) -> dict[str, Any]:
+    return {"type": "attachment", "media_type": DOCX, "size_bytes": None, "file_name": None} | over
+
+
+def _listing(*names: str) -> dict[str, Any]:
+    paths = "".join(f"<file_path>/mnt/user-data/uploads/{n}</file_path>\n" for n in names)
+    return {"type": "text", "text": f"<uploaded_files>\n{paths}</uploaded_files>\n\n"}
+
+
+async def test_a_textless_upload_is_named_and_sized() -> None:
+    """claude.ai stores a binary upload (a docx) in the sandbox and sends no
+    text for it. It is still a file the user put in front of the model: the
+    name and the upload's size are what a server-side name match grades,
+    and there are no bytes to hash."""
+    first_turn = load("frame_claude_ai_upload").messages[:1]
+    [upload] = await accessed_files_for(first_turn, config=config())
+    assert upload.name == "Quarterly Results.docx"
+    assert upload.content_hashes is None
+    assert upload.byte_length == 31809
+    assert upload.media_type == DOCX
+    assert upload.provenance == "attachment"
+
+
+async def test_a_textless_attachment_nothing_names_is_not_an_entry() -> None:
+    files = attachment_files([_user(_attachment(size_bytes=10))], config=config())
+    assert files == []
+
+
+async def test_byte_length_is_the_size_of_the_upload_when_claude_ai_sends_it() -> None:
+    """The text is a processed copy: its hashes stay (they are what the
+    denylist compares), but the size a name match grades is the upload's."""
+    [f] = attachment_files(
+        [_user(_attachment(file_name="a.docx", size_bytes=31809, text="extracted"))],
+        config=config(),
+    )
+    assert f.byte_length == 31809
+    assert f.content_hashes is not None
+    assert f.content_hashes["sha256"] == hashlib.sha256(b"extracted").hexdigest()
+
+
+async def test_an_original_name_consumes_its_sandbox_listing() -> None:
+    """The sandbox path replaces spaces with ``_``; a block that brings its
+    own name must still consume that listing, or a nameless block of the
+    same type would claim it."""
+    files = attachment_files(
+        [
+            _user(
+                _listing("A_B.docx", "C.docx"),
+                _attachment(file_name="A B.docx", size_bytes=1),
+                _attachment(size_bytes=2),
+            )
+        ],
+        config=config(),
+    )
+    assert [f.name for f in files] == ["A B.docx", "C.docx"]
 
 
 async def test_attachment_text_rides_along_only_under_include_raw_content() -> None:

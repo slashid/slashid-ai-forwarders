@@ -3,7 +3,8 @@
 Walks ``NormalizedInvocation.input.messages`` for tool_use/tool_result
 pairs matching the ``_READ_TOOLS`` table (Claude Code Read, OpenCode /
 Amazon Q / Gemini CLI ReadFile / read_file / view_file, Claude
-computer-use text-editor tool, single-file shell reads, Codex view_image).
+computer-use text-editor tool, single-file shell reads, Codex view_image,
+claude.ai's sandbox ``view`` / ``bash_tool`` on a chat upload).
 For each match: hashes the returned bytes (with per-tool cleanup — e.g.
 ``strip_cat_n`` for Claude Code's line-number prefix), builds an
 AIAccessedFile keyed by the tool's ``file_path`` / ``path`` argument.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
@@ -57,6 +59,50 @@ def _field(name: str) -> Callable[[JsonValue], str | None]:
     return path_from
 
 
+# claude.ai's code-execution sandbox puts every chat upload here. The rest of
+# the sandbox is Claude's own (``/home/claude`` scratch, the
+# ``/mnt/user-data/outputs`` it writes, the ``/mnt/skills`` it loads), so its
+# tools count as reads of a user file only under this directory.
+CLAUDE_AI_UPLOADS = PurePosixPath("/mnt/user-data/uploads")
+
+
+def _claude_ai_upload(
+    path_from: Callable[[JsonValue], str | None],
+) -> Callable[[JsonValue], str | None]:
+    def upload_path(tool_input: JsonValue) -> str | None:
+        path = path_from(tool_input)
+        if path is None:
+            return None
+        pure = PurePosixPath(path)
+        if ".." in pure.parts or pure == CLAUDE_AI_UPLOADS:
+            return None
+        return path if pure.is_relative_to(CLAUDE_AI_UPLOADS) else None
+
+    return upload_path
+
+
+def _shell_output_bytes(output: JsonValue) -> bytes | None:
+    return _bytes_from_tool_output(shell_stdout(output), None)
+
+
+# claude.ai's sandbox tools: ``view`` reads a path, ``bash_tool`` runs a
+# command (``create_file`` and ``str_replace`` write, and are not reads).
+_CLAUDE_AI_READ_TOOLS: dict[str, _ToolSpec] = {
+    "view": _ToolSpec(path_from=_claude_ai_upload(_field("path"))),
+    "bash_tool": _ToolSpec(
+        path_from=_claude_ai_upload(shell_read_path), content_from=_shell_output_bytes
+    ),
+}
+
+
+def claude_ai_upload_read(tool_name: str, tool_input: JsonValue) -> str | None:
+    """The chat upload a claude.ai sandbox call reads, judged from its input
+    alone: a tool call frame has no result yet. ``None`` for any other tool
+    or path."""
+    spec = _CLAUDE_AI_READ_TOOLS.get(tool_name)
+    return spec.path_from(tool_input) if spec else None
+
+
 # Canonical reference: https://docs.anthropic.com/en/docs/claude-code/tools
 _READ_TOOLS: dict[str, _ToolSpec] = {
     "Read": _ToolSpec(path_from=_field("file_path"), cleanup=strip_cat_n),  # Claude Code
@@ -67,12 +113,12 @@ _READ_TOOLS: dict[str, _ToolSpec] = {
         path_from=_field("path")
     ),  # Claude computer-use text editor view
     "Bash": _ToolSpec(
-        path_from=shell_read_path,
-        content_from=lambda output: _bytes_from_tool_output(shell_stdout(output), None),
+        path_from=shell_read_path, content_from=_shell_output_bytes
     ),  # Claude Code, Codex
     "view_image": _ToolSpec(
         path_from=view_image_path, content_from=image_output_bytes, binary=True
     ),  # Codex
+    **_CLAUDE_AI_READ_TOOLS,
 }
 
 
@@ -238,3 +284,8 @@ def connector_stub(cf: ConnectorFile) -> AIAccessedFile:
         provenance="tool_result",
         file_refs=cf.refs,
     )
+
+
+def upload_stub(path: str) -> AIAccessedFile:
+    """An upload a sandbox call is about to read: its name, and no content."""
+    return AIAccessedFile(name=path, media_type=_mime_from_name(path), provenance="tool_result")

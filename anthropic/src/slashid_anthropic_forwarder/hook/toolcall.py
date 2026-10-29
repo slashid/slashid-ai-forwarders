@@ -14,7 +14,11 @@ from slashid_ai_forwarder_core.events import (
 )
 from slashid_ai_forwarder_core.normalize.finalize import merge_by_refs
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import connector_refs
-from slashid_ai_forwarder_core.normalize.normalized.tool_results import connector_stub
+from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
+    claude_ai_upload_read,
+    connector_stub,
+    upload_stub,
+)
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
 from .envelope import PARSED_AS, signed_at_iso
@@ -42,6 +46,8 @@ def tool_call_event(frame: ToolCallFrame, *, signed_at: int) -> AIInvocationObse
     for use in uses:
         tool, server = resolve_tool(_raw_name(use))
         files += [connector_stub(cf) for cf in connector_refs(_raw_name(use), use.input)]
+        if path := claude_ai_upload_read(use.tool_name, use.input):
+            files.append(upload_stub(path))
         tools.setdefault(tool.id, tool)
         servers.setdefault(server.id, server)
         requested.append(AIToolUse(tool_id=tool.id, tool_use_id=use.id))

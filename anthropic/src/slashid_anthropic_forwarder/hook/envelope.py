@@ -18,6 +18,7 @@ import hashlib
 import mimetypes
 import re
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 
 from slashid_ai_forwarder_core.content_utils import truncate_middle
 from slashid_ai_forwarder_core.events import (
@@ -67,12 +68,27 @@ def _uploaded_names(messages: list[AnthropicRequestMessage]) -> list[str]:
     return names
 
 
+# The sandbox path of an upload replaces spaces (and other punctuation) in
+# its name with ``_``. Folding both sides the same way pairs the user's own
+# name with its listing; the folded form is never sent — the server
+# normalises names for matching on its own.
+_UNSAFE = re.compile(r"[^0-9A-Za-z.]+")
+
+
+def _fold(name: str) -> str:
+    return _UNSAFE.sub("_", PurePosixPath(name).name)
+
+
 def _name_for(block: AnthropicAttachmentBlock, candidates: list[str]) -> str | None:
     """Consume a listed name for this block. Consuming matters: two uploads
-    of the same media type must not both claim the first listed name."""
+    of the same media type must not both claim the first listed name, and a
+    block that brings its own name consumes its (underscored) listing."""
     if block.file_name:
-        if block.file_name in candidates:
-            candidates.remove(block.file_name)
+        folded = _fold(block.file_name)
+        for i, name in enumerate(candidates):
+            if name == block.file_name or _fold(name) == folded:
+                del candidates[i]
+                break
         return block.file_name
     for i, name in enumerate(candidates):
         guessed, _ = mimetypes.guess_type(name)
@@ -84,36 +100,53 @@ def _name_for(block: AnthropicAttachmentBlock, candidates: list[str]) -> str | N
 def attachment_files(
     messages: list[AnthropicRequestMessage], *, config: Config
 ) -> list[AIAccessedFile]:
-    """One entry per text-bearing attachment in the last round of ``messages``.
+    """One entry per attachment in the last round of ``messages``.
 
     Which round that is belongs to the caller: the whole frame scans the
     fresh round, ``split.before`` scans the round the previous run
     consumed.
 
     A hook attachment carries extracted text and never bytes, so the
-    digest and ``byte_length`` are over that text — not over the frame's
-    ``size_bytes``, which describes the upload and disagrees with it
-    whenever Claude stored a processed copy. An attachment with no text
-    (an image) yields no entry: there is nothing to hash.
+    digests are over that text. ``byte_length`` is the upload's
+    ``size_bytes`` when the frame has one: it is the size of the file the
+    user sent, the one a server-side name match compares against the
+    crawled file; the text's length only when there is no size.
+
+    An attachment with no text (an image, or a binary upload claude.ai
+    keeps in its sandbox) is still a file the user put in front of the
+    model: it is named and sized, with nothing to hash. One that nothing
+    names is not an entry — there is nothing to match it on.
     """
     last_round = list(after_last_assistant(messages))
     candidates = _uploaded_names(last_round)
     out: list[AIAccessedFile] = []
     for msg in last_round:
         for block in msg.content:
-            if not isinstance(block, AnthropicAttachmentBlock) or block.text is None:
+            if not isinstance(block, AnthropicAttachmentBlock):
+                continue
+            name = _name_for(block, candidates)
+            if block.text is None:
+                if name is not None:
+                    out.append(
+                        AIAccessedFile(
+                            name=name,
+                            media_type=parse_media_type(block.media_type),
+                            byte_length=block.size_bytes,
+                            provenance="attachment",
+                        )
+                    )
                 continue
             data = block.text.encode()
             out.append(
                 AIAccessedFile(
-                    name=_name_for(block, candidates),
+                    name=name,
                     content_hashes={
                         "sha256": hashlib.sha256(data).hexdigest(),
                         "sha1": hashlib.sha1(data).hexdigest(),
                         "md5": hashlib.md5(data).hexdigest(),
                     },
                     media_type=parse_media_type(block.media_type),
-                    byte_length=len(data),
+                    byte_length=block.size_bytes if block.size_bytes is not None else len(data),
                     redacted_content=(
                         truncate_middle(block.text, config.max_content_size)
                         if config.include_raw_content
@@ -122,6 +155,47 @@ def attachment_files(
                     provenance="attachment",
                 )
             )
+    return out
+
+
+def _uploads_by_folded_name(
+    messages: list[AnthropicRequestMessage],
+) -> dict[str, AnthropicAttachmentBlock]:
+    """Every upload in the transcript that brought its own name, keyed by the
+    folded form its sandbox path takes. Every round counts: Claude reads an
+    upload with a sandbox tool rounds after the user sent it."""
+    out: dict[str, AnthropicAttachmentBlock] = {}
+    for msg in messages:
+        for block in msg.content:
+            if isinstance(block, AnthropicAttachmentBlock) and block.file_name:
+                out.setdefault(_fold(block.file_name), block)
+    return out
+
+
+def _as_uploaded(
+    files: list[AIAccessedFile], messages: list[AnthropicRequestMessage]
+) -> list[AIAccessedFile]:
+    """A sandbox read names an upload by its sandbox path; the upload's own
+    attachment gives it back the name the user gave it and its size."""
+    uploads = _uploads_by_folded_name(messages)
+    if not uploads:
+        return files
+    out: list[AIAccessedFile] = []
+    for f in files:
+        upload = uploads.get(_fold(f.name)) if f.provenance == "tool_result" and f.name else None
+        if upload is None:
+            out.append(f)
+            continue
+        out.append(
+            f.model_copy(
+                update={
+                    "name": upload.file_name,
+                    "byte_length": (
+                        upload.size_bytes if upload.size_bytes is not None else f.byte_length
+                    ),
+                }
+            )
+        )
     return out
 
 
@@ -144,7 +218,9 @@ async def _normalized(
         config=config,
     )
     normalized.accessed_files = attachment_files(messages, config=config)
-    return finalize(normalized, config=config)
+    finalized = finalize(normalized, config=config)
+    finalized.accessed_files = _as_uploaded(finalized.accessed_files, messages)
+    return finalized
 
 
 async def accessed_files_for(

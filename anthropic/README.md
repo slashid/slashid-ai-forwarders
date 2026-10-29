@@ -74,6 +74,15 @@ around. Extend as new ones surface.
   measured image came back 2 KB larger as a processed copy, and some documents
   are stored as extracted text. Such a hash will not match the original file,
   and nothing marks which is which.
+- **A binary upload reaches the hook without text.** claude.ai keeps a docx
+  (or an image) in its code-execution sandbox, sends its attachment block with
+  `text: null`, and lets Claude read it with its own `view` / `bash_tool`
+  tools. Such an attachment is reported by name and the upload's `size_bytes`
+  with no digest, and a sandbox read of a file under `/mnt/user-data/uploads/`
+  counts as a `tool_result` file (named back to the user's own file name when
+  the transcript carries it). A tool call frame for such a read names the upload
+  before it runs, so a verdict can stop it. The sandbox path replaces spaces in
+  a name with `_`; the server folds names before matching.
 - **There is no metadata probe for an attachment.** `HEAD` on the file content
   endpoint 404s on every attachment, so a file's size and digest can be learned
   only from the listing that names it. That is why

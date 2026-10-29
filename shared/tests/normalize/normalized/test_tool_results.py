@@ -7,6 +7,7 @@ import hashlib
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import AIAccessedFile
 from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
+    claude_ai_upload_read,
     extract_tool_result_files,
 )
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedMessage
@@ -109,3 +110,21 @@ def test_extract_tool_result_files_include_raw_populates_redacted() -> None:
     )
     out = extract_tool_result_files([msg_asst, msg_user], config=_config(include_raw_content=True))
     assert out[0].redacted_content == "secret"
+
+
+def test_claude_ai_upload_read_names_the_upload_a_sandbox_call_reads() -> None:
+    """At tool-call time there is no result yet, only the input: the path is
+    what a verdict can judge before Claude reads the file."""
+    assert (
+        claude_ai_upload_read("view", {"path": "/mnt/user-data/uploads/A_B.docx"})
+        == "/mnt/user-data/uploads/A_B.docx"
+    )
+    assert (
+        claude_ai_upload_read("bash_tool", {"command": "cat /mnt/user-data/uploads/a.txt"})
+        == "/mnt/user-data/uploads/a.txt"
+    )
+    assert claude_ai_upload_read("view", {"path": "/home/claude/a.txt"}) is None
+    assert claude_ai_upload_read("view", {"path": "/mnt/user-data/uploads/"}) is None
+    assert claude_ai_upload_read("view", {"path": "/mnt/user-data/uploads/../outputs/a"}) is None
+    # Claude Code's tools are judged on their results, as before.
+    assert claude_ai_upload_read("Read", {"file_path": "/mnt/user-data/uploads/a.txt"}) is None

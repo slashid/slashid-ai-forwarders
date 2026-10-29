@@ -137,3 +137,93 @@ expected:
   - name: "/tmp/new.txt"
     byte_length: 11
     media_type: text/plain
+---
+# claude.ai's sandbox reads a chat upload with its `view` tool. The upload
+# is the user's file, so it counts like any other Read.
+id: claude_ai_view_of_an_upload
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_view
+        tool_name: view
+        tool_input: {description: "Read the upload", path: "/mnt/user-data/uploads/notes.txt"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_view
+        tool_output: "hello\n"
+        tool_is_error: false
+expected:
+  - name: "/mnt/user-data/uploads/notes.txt"
+    byte_length: 6
+    media_type: text/plain
+---
+# ... and with its `bash_tool`, reusing the single-file shell-read parser.
+id: claude_ai_bash_tool_cat_of_an_upload
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_bash
+        tool_name: bash_tool
+        tool_input: {command: "cat /mnt/user-data/uploads/notes.txt", description: "Print the upload"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_bash
+        tool_output: "hello\n"
+        tool_is_error: false
+expected:
+  - name: "/mnt/user-data/uploads/notes.txt"
+    byte_length: 6
+    media_type: text/plain
+---
+# Outside the uploads directory the sandbox holds Claude's own files (its
+# scratch space, its outputs, the skills it loads), and the uploads
+# directory itself is a listing, not a file: none of them is a user file.
+id: claude_ai_sandbox_reads_outside_the_uploads_are_not_files
+messages:
+  - role: assistant
+    content:
+      - kind: tool_use
+        tool_use_id: tu_home
+        tool_name: view
+        tool_input: {path: "/home/claude/draft.py"}
+        tool_is_error: false
+      - kind: tool_use
+        tool_use_id: tu_out
+        tool_name: view
+        tool_input: {path: "/mnt/user-data/outputs/report.md"}
+        tool_is_error: false
+      - kind: tool_use
+        tool_use_id: tu_dir
+        tool_name: view
+        tool_input: {path: "/mnt/user-data/uploads"}
+        tool_is_error: false
+      - kind: tool_use
+        tool_use_id: tu_skill
+        tool_name: bash_tool
+        tool_input: {command: "cat /mnt/skills/public/docx/SKILL.md"}
+        tool_is_error: false
+  - role: user
+    content:
+      - kind: tool_result
+        tool_use_id: tu_home
+        tool_output: "print(1)\n"
+        tool_is_error: false
+      - kind: tool_result
+        tool_use_id: tu_out
+        tool_output: "# Report\n"
+        tool_is_error: false
+      - kind: tool_result
+        tool_use_id: tu_dir
+        tool_output: "notes.txt\n"
+        tool_is_error: false
+      - kind: tool_result
+        tool_use_id: tu_skill
+        tool_output: "skill\n"
+        tool_is_error: false
+expected: []

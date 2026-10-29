@@ -1,0 +1,68 @@
+{
+  "type": "prompt",
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "session_id": "00000010-0000-4000-8000-000000000000",
+  "request_id": "chatcompl_000000000000000000000010",
+  "model": "claude-sonnet-5-5",
+  "actor": {
+    "type": "user",
+    "id": "user_01AbCdEfGhIjKlMnOpQrStUv",
+    "email_address": "alice@example.com"
+  },
+  "source": {
+    "application": "claude-ai"
+  },
+  "metadata": {},
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "<uploaded_files>\n<file_path>/mnt/user-data/uploads/Quarterly_Results.docx</file_path>\n</uploaded_files>\n\n"
+        },
+        {
+          "type": "attachment",
+          "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "size_bytes": 31809,
+          "file_name": "Quarterly Results.docx",
+          "text": null
+        },
+        {
+          "type": "text",
+          "text": "Summarise this document."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll read the document."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_0000000000000000000000A1",
+          "tool_name": "view",
+          "input": {
+            "description": "Read the uploaded document",
+            "path": "/mnt/user-data/uploads/Quarterly_Results.docx"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_0000000000000000000000A1",
+          "tool_name": "view",
+          "content": "Quarterly results\n\nRevenue grew in every region.\n",
+          "is_error": false
+        }
+      ]
+    }
+  ]
+}
