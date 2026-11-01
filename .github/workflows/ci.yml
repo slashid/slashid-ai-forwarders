@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        subproject: [shared, bedrock, vertex, anthropic, codex]
+        subproject: [shared, bedrock, vertex, anthropic, codex, openai]
         # 3.12 is the supported floor, 3.14 is what the images and Lambda ship.
         python: ["3.12", "3.14"]
     runs-on: ubuntu-latest

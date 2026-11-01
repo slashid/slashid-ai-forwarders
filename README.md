@@ -7,6 +7,7 @@ Monorepo of SlashID forwarders that observe AI-provider invocations and forward 
 - [`bedrock/`](bedrock/README.md) — AWS Bedrock forwarder Lambda. CloudWatch Logs subscription → SlashID.
 - [`vertex/`](vertex/README.md) — GCP Vertex AI forwarder Cloud Run service. BigQuery request-response logs → SlashID.
 - [`anthropic/`](anthropic/README.md) — Claude Enterprise forwarder on Cloud Run. Inference hooks (inline, with allow/deny) + Compliance API polling → SlashID.
+- [`openai/`](openai/README.md) — ChatGPT Enterprise on Cloud Run. ChatGPT Work remote hooks (an MCP preflight tool, inline allow/deny) + Compliance Logs Platform upload reports → SlashID.
 - `shared/` — internal library reused across forwarders (event schema, HTTP sink, content hashing, base config, Anthropic + Converse + Gemini normalizers).
 
 ## Development
