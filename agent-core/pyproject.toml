@@ -42,5 +42,6 @@ include = ["src", "tests"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
+markers = ["live: talks to a real SlashID server; needs SLASHID_LIVE=1"]
 # A test that blocks on a child process fails with its stack instead of hanging CI.
 timeout = 120
