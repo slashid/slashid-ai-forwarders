@@ -4,12 +4,12 @@ members = ["shared", "bedrock", "vertex", "anthropic", "codex"]
 [dependency-groups]
 dev = [
     # boto3 is provided by the AWS Lambda Python runtime — not packaged
-    # into the deploy zip. aioboto3 is listed as a runtime dep in
+    # into the deploy zip. aiobotocore is listed as a runtime dep in
     # bedrock/pyproject.toml and IS packaged. Both live here (workspace-
     # scope dev deps) so ty and tests can resolve the S3 imports in
     # bedrock/src/slashid_bedrock_forwarder/s3.py.
     "boto3>=1.35",
-    "aioboto3>=15.0",
+    "aiobotocore>=3.10",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-timeout>=2.3",
