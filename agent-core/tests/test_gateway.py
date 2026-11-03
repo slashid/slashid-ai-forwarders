@@ -1011,3 +1011,92 @@ async def test_a_status_code_is_echoed_as_the_payload_gave_it(
     answer = await handle(make_runtime(), payload, ctx())
     echoed = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
     assert echoed["statusCode"] == status
+
+
+# MCP notifications: no id, no params, and a RESPONSE with no body (captured on a real Gateway)
+
+FAIL_MODES = [("allow", False), ("deny", False), ("deny", True)]  # (fail mode, shadow)
+FAIL_MODE_IDS = ["allow", "deny", "shadow"]
+
+
+def echoed_notification_response() -> JsonValue:
+    """The 1.0 echo of the captured notification RESPONSE: no ``body`` key."""
+    return {
+        "interceptorOutputVersion": VERSION,
+        "mcp": {"transformedGatewayResponse": {"statusCode": 200, "headers": {}}},
+    }
+
+
+@pytest.mark.parametrize(("fail_mode", "shadow"), FAIL_MODES, ids=FAIL_MODE_IDS)
+async def test_a_notification_request_is_echoed_unchecked(
+    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str, shadow: bool
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_request_notification")
+    runtime = make_runtime(
+        Outcome("deny", ("no",)), verdict_fail_mode=fail_mode, shadow_mode=shadow
+    )
+    assert await handle(runtime, payload, ctx()) == allow_request(body_of(payload))
+    assert checker_of(runtime).invocations == []
+    assert events(caplog, "fail_mode") == []
+
+
+@pytest.mark.parametrize(("fail_mode", "shadow"), FAIL_MODES, ids=FAIL_MODE_IDS)
+async def test_a_notification_response_without_a_body_is_echoed_unchecked(
+    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str, shadow: bool
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_response_notification")
+    assert "body" not in response_of(payload)
+    roles = FakeRoles()
+    runtime = make_runtime(
+        Outcome("deny", ("no",)), roles=roles, verdict_fail_mode=fail_mode, shadow_mode=shadow
+    )
+    assert await handle(runtime, payload, ctx()) == echoed_notification_response()
+    assert checker_of(runtime).invocations == []
+    assert roles.looked_up == []
+    assert events(caplog, "fail_mode") == []
+    assert events(caplog, "unreadable") == []
+
+
+@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
+async def test_a_non_call_response_echoes_whatever_its_body_looks_like(
+    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_response_notification")
+    request_of(payload)["body"] = {"jsonrpc": "2.0", "id": 1, "method": "initialize"}
+    response_of(payload)["body"] = {"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}
+    runtime = make_runtime(verdict_fail_mode=fail_mode)
+    answer = await handle(runtime, payload, ctx())
+    echoed = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
+    assert echoed["body"] == response_of(payload)["body"]
+    assert checker_of(runtime).invocations == []
+    assert events(caplog, "fail_mode") == []
+
+
+async def test_a_non_call_response_with_an_empty_envelope_is_echoed_empty(load: Load) -> None:
+    payload = load("gateway_response_notification")
+    mcp_of(payload)["gatewayResponse"] = {}
+    answer = await handle(make_runtime(verdict_fail_mode="deny"), payload, ctx())
+    assert answer == {
+        "interceptorOutputVersion": VERSION,
+        "mcp": {"transformedGatewayResponse": {}},
+    }
+
+
+@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
+async def test_a_call_response_without_a_body_takes_the_no_answer_path(
+    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_response")
+    del response_of(payload)["body"]
+    runtime = make_runtime(verdict_fail_mode=fail_mode)
+    answer = await handle(runtime, payload, ctx())
+    assert checker_of(runtime).invocations == []
+    assert denied(answer) is (fail_mode == "deny")
+    if fail_mode == "deny":
+        assert denied_text(answer).startswith(WITHHELD + POLICY_UNAVAILABLE)
+    [line] = events(caplog, "fail_mode")
+    assert (line["check"], line["reason"]) == ("result", "error")

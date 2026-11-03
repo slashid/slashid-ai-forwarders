@@ -687,3 +687,30 @@ def test_debug_logging_never_reaches_the_aws_and_http_libraries() -> None:
         "package": True,
         "libraries": {"botocore": False, "aiobotocore": False, "httpx": False, "httpcore": False},
     }
+
+
+# An MCP notification and its body-less RESPONSE, captured on a real Gateway
+
+
+@pytest.mark.parametrize(
+    ("fail_mode", "shadow"),
+    [("allow", False), ("deny", False), ("deny", True)],
+    ids=["allow", "deny", "shadow"],
+)
+@pytest.mark.parametrize("name", ["gateway_request_notification", "gateway_response_notification"])
+async def test_a_notification_is_echoed_with_no_check_and_no_fail_mode_line(
+    load: Load, caplog: pytest.LogCaptureFixture, name: str, fail_mode: str, shadow: bool
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load(name)
+    rt = make_runtime(Outcome("deny", ("no",)), verdict_fail_mode=fail_mode, shadow_mode=shadow)
+    answer = await dispatch(rt, payload, ctx())
+    if name.startswith("gateway_request"):
+        assert answer == echo_request(payload)
+    else:
+        assert answer == {
+            "interceptorOutputVersion": "1.0",
+            "mcp": {"transformedGatewayResponse": {"statusCode": 200, "headers": {}}},
+        }
+    assert checker_of(rt).invocations == []
+    assert events(caplog, "fail_mode") == []

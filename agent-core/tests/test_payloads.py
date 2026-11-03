@@ -147,8 +147,8 @@ def test_a_tools_call_error_does_not_echo_the_arguments() -> None:
 
 def test_a_gateway_error_does_not_echo_the_headers() -> None:
     with pytest.raises(ValidationError) as err:
-        GatewayResponse.model_validate({"headers": "SECRETVAL"})
-    assert "body" in str(err.value)
+        GatewayResponse.model_validate({"headers": "SECRETVAL", "isStreamingResponse": "SECRETVAL"})
+    assert "isStreamingResponse" in str(err.value)
     assert "SECRETVAL" not in str(err.value)
 
 
@@ -352,12 +352,13 @@ def test_a_streaming_flag_must_be_a_boolean(flag: JsonValue) -> None:
         GatewayResponse.model_validate({"body": None, "isStreamingResponse": flag})
 
 
-def test_a_response_needs_a_body_but_not_a_status_code() -> None:
+def test_a_response_needs_neither_a_body_nor_a_status_code() -> None:
+    """The response to a notification has no body; a body that is null is still a body."""
+    assert GatewayResponse.model_validate({}).model_fields_set == set()
+    assert "body" not in GatewayResponse.model_validate({"statusCode": 200}).model_fields_set
     response = GatewayResponse.model_validate({"body": None})
+    assert "body" in response.model_fields_set
     assert "statusCode" not in response.model_fields_set
-    for bad in ({}, {"statusCode": 200}):
-        with pytest.raises(ValidationError):
-            GatewayResponse.model_validate(bad)
 
 
 def test_strings_are_kept_as_they_came() -> None:

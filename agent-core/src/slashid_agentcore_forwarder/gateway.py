@@ -79,13 +79,14 @@ def _echo_request(request: GatewayRequest) -> Mcp:
 
 
 def _echo_response(response: GatewayResponse) -> Mcp:
-    """The status code only when the payload had one; nothing is made up."""
+    """The status code and body only when the payload had them; nothing is made up."""
     echoed: dict[str, JsonValue] = {}
     if "statusCode" in response.model_fields_set:
         echoed["statusCode"] = response.statusCode
     if response.headers is not None:
         echoed["headers"] = response.headers
-    echoed["body"] = response.body
+    if "body" in response.model_fields_set:
+        echoed["body"] = response.body
     return {"transformedGatewayResponse": echoed}
 
 
@@ -294,6 +295,16 @@ async def _after(
         return _unreadable(runtime, "too_deep", check="result", rpc_id=None, echo=echo)
 
 
+def _is_not_a_call(raw_request: object) -> bool:
+    """A readable request that is anything but a ``tools/call``, a notification included: its
+    RESPONSE is echoed whatever it looks like."""
+    try:
+        request = GatewayRequest.model_validate(raw_request)
+    except ValidationError:
+        return False
+    return classify_body(request.body).kind in ("other", "batch_other")
+
+
 async def _check_response(
     runtime: Runtime,
     ctx: ClientContext,
@@ -301,6 +312,10 @@ async def _check_response(
     raw_request: object,
     echo: Mcp,
 ) -> JsonValue:
+    if _is_not_a_call(raw_request):
+        return _out(mcp=echo)
+    if "body" not in response.model_fields_set:  # only a tools/call needs one
+        return _no_answer(runtime, "error", check="result", rpc_id=None, echo={})
     if response.isStreamingResponse:
         logs.pass_through(surface=SURFACE, reason="streaming_response")
         return _out(mcp=echo)

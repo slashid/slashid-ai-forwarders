@@ -133,12 +133,12 @@ class GatewayRequest(Lenient):
 
 
 class GatewayResponse(Lenient):
-    """Read ``model_fields_set`` for a ``statusCode`` that was there. A flag that is not exactly
-    a boolean fails the envelope."""
+    """Read ``model_fields_set`` for a ``statusCode`` or ``body`` that was there (the response
+    to a notification has no body). A flag that is not exactly a boolean fails the envelope."""
 
     statusCode: Raw = None
     headers: Raw = None
-    body: Raw
+    body: Raw = None
     isStreamingResponse: StrictBool | None = None
 
 
