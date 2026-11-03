@@ -11,7 +11,8 @@ from slashid_agentcore_forwarder import logs
 from slashid_agentcore_forwarder.headers import Baggage
 from slashid_agentcore_forwarder.roles import RateLimited
 
-_HARNESS_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+# botocore's pattern for GetHarness ``harnessId``: an id it would reject never costs a lookup.
+HARNESS_ID = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{0,39}-[a-zA-Z0-9]{10}")
 
 
 class RoleLookup(Protocol):
@@ -59,7 +60,7 @@ async def _verified_agent(
     if len(parts) < 6 or not all(parts[:5]):
         logs.baggage_unverified("no_gateway_arn")
         return None
-    if not _HARNESS_ID.fullmatch(harness_id):
+    if not HARNESS_ID.fullmatch(harness_id):
         logs.baggage_unverified("invalid_id")
         return None
     partition, region, account = parts[1], parts[3], parts[4]

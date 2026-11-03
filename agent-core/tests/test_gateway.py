@@ -22,7 +22,7 @@ LOGGER = "slashid_agentcore_forwarder"
 GATEWAY_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:gateway/gw-EXAMPLE"
 PRINCIPAL = "arn:aws:iam::123456789012:role/AgentCore-example-ApplicationRuntimeAgentRole"
 GATEWAY_ROLE = "arn:aws:iam::123456789012:role/gateway-role"
-HARNESS_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/h-1"
+HARNESS_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/harness1-AbCdEfGhIj"
 SESSION = "00000000-0000-4000-8000-000000000001"
 RID = "11111111-1111-4111-8111-111111111111"
 READ = "gdrive___read_file_content"
@@ -234,7 +234,7 @@ async def test_request_without_a_session_id_has_a_bare_request_id(load: Load) ->
 async def test_baggage_is_read_field_by_field_header_first(load: Load) -> None:
     payload = load("gateway_request")
     request_of(payload)["headers"] = {"Baggage": "session.id=FROM-HEADER"}
-    params_of(payload)["_meta"] = {"baggage": "harness.id=h-1,session.id=FROM-META"}
+    params_of(payload)["_meta"] = {"baggage": "harness.id=harness1-AbCdEfGhIj,session.id=FROM-META"}
     roles = FakeRoles()
     runtime = make_runtime(roles=roles)
     await handle(runtime, payload, ctx())
@@ -264,7 +264,7 @@ async def test_role_lookups_come_before_the_budget_starts(load: Load) -> None:
 
 
 async def test_a_deny_is_a_transformed_response_with_the_request_id(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["tagged file"]))
+    runtime = make_runtime(Outcome("deny", ("tagged file",)))
     answer = await handle(runtime, load("gateway_request"), ctx())
     text = denied_text(answer)
     assert answer == deny_body(2, text)
@@ -276,14 +276,14 @@ async def test_a_deny_is_a_transformed_response_with_the_request_id(load: Load) 
 async def test_a_deny_keeps_a_string_id(load: Load) -> None:
     payload = load("gateway_request")
     body_of(payload)["id"] = "req-7"
-    answer = await handle(make_runtime(Outcome("deny", ["no"])), payload, ctx())
+    answer = await handle(make_runtime(Outcome("deny", ("no",))), payload, ctx())
     assert answer == deny_body("req-7", denied_text(answer))
 
 
 async def test_a_deny_without_an_id_has_a_null_id(load: Load) -> None:
     payload = load("gateway_request")
     del body_of(payload)["id"]
-    answer = await handle(make_runtime(Outcome("deny", ["no"])), payload, ctx())
+    answer = await handle(make_runtime(Outcome("deny", ("no",))), payload, ctx())
     assert answer == deny_body(None, denied_text(answer))
 
 
@@ -292,7 +292,7 @@ async def test_shadow_mode_echoes_a_deny_and_logs_it(
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     payload = load("gateway_request")
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     assert await handle(runtime, payload, ctx()) == allow_request(body_of(payload))
     [line] = events(caplog, "shadow")
     assert (line["surface"], line["check"], line["verdict"]) == ("gateway", "call", "deny")
@@ -537,7 +537,7 @@ async def test_the_authorization_header_is_never_read(
     load: Load, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=LOGGER)
-    outcomes = [Outcome("deny", ["no"]), Outcome("no_answer", why="status"), Outcome("allow")]
+    outcomes = [Outcome("deny", ("no",)), Outcome("no_answer", why="status"), Outcome("allow")]
     runtime = make_runtime(*outcomes, verdict_fail_mode="deny")
     payloads = [
         load("gateway_request"),
@@ -695,7 +695,7 @@ async def test_a_result_with_structured_content_is_read(load: Load) -> None:
 
 
 async def test_a_deny_withholds_the_result(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["tagged file"]))
+    runtime = make_runtime(Outcome("deny", ("tagged file",)))
     answer = await handle(runtime, load("gateway_response"), ctx())
     text = denied_text(answer)
     assert answer == deny_body(2, text)
@@ -705,7 +705,7 @@ async def test_a_deny_withholds_the_result(load: Load) -> None:
 
 
 async def test_the_deny_text_is_capped_with_its_prefix(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["x" * 900]))
+    runtime = make_runtime(Outcome("deny", ("x" * 900,)))
     text = denied_text(await handle(runtime, load("gateway_response"), ctx()))
     assert text.startswith(WITHHELD + "x")
     body, _, _ref = text.rpartition(" (ref ")
@@ -717,7 +717,7 @@ async def test_response_shadow_mode_echoes_a_deny(
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     payload = load("gateway_response")
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     assert await handle(runtime, payload, ctx()) == echoed_response(payload)
     [line] = events(caplog, "shadow")
     assert (line["surface"], line["check"]) == ("gateway", "result")
@@ -820,7 +820,7 @@ async def test_a_streaming_response_is_echoed_with_a_pass_through_line(
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     roles = FakeRoles()
-    runtime = make_runtime(Outcome("deny", ["no"]), roles=roles)
+    runtime = make_runtime(Outcome("deny", ("no",)), roles=roles)
     payload = load("gateway_response_streaming")
     assert await handle(runtime, payload, ctx()) == echoed_response(payload)
     assert checker_of(runtime).invocations == []
@@ -923,7 +923,7 @@ async def test_no_log_line_carries_payload_text(
     load: Load, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=LOGGER)
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     await handle(runtime, load("gateway_request"), ctx(REQUEST_ID=None))
     payload = with_result(load, drive_result("SECRET-ID"))
     await handle(runtime, payload, ctx())

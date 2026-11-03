@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 import httpx
@@ -30,7 +30,7 @@ IDLE_REPLACE_S = 4.0
 @dataclass(frozen=True)
 class Outcome:
     kind: Literal["allow", "deny", "no_answer"]
-    reasons: list[str] = field(default_factory=list)
+    reasons: tuple[str, ...] = ()
     why: logs.FailReason = "error"  # a no-answer's reason
 
 
@@ -102,7 +102,7 @@ class Checker:
             except Exception:
                 return Outcome("no_answer", why="error")
             self._last_used = self._clock()
-            return Outcome("deny", reasons) if reasons else Outcome("allow")
+            return Outcome("deny", tuple(reasons)) if reasons else Outcome("allow")
 
 
 def _apply(
