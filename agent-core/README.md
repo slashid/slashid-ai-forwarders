@@ -9,7 +9,7 @@ Gateway interceptor ┘          │
                                └──→ allow, or deny with a reason the model receives
 ```
 
-A Runtime agent is covered only for tools behind a Gateway. `before_invocation`, `after_invocation`, `initialize` and `tools/list` pass through. Design: [`docs/superpowers/specs/2026-10-30-agentcore-tool-call-forwarder-design.md`](../docs/superpowers/specs/2026-10-30-agentcore-tool-call-forwarder-design.md); what AgentCore exposes: [`docs/agentcore/agentcore-findings.md`](../docs/agentcore/agentcore-findings.md).
+A Runtime agent is covered only for tools behind a Gateway. `before_invocation`, `after_invocation`, `initialize`, `tools/list` and notifications pass through. Design: [`docs/superpowers/specs/2026-10-30-agentcore-tool-call-forwarder-design.md`](../docs/superpowers/specs/2026-10-30-agentcore-tool-call-forwarder-design.md); what AgentCore exposes: [`docs/agentcore/agentcore-findings.md`](../docs/agentcore/agentcore-findings.md).
 
 ## Install
 

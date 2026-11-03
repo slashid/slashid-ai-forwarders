@@ -33,9 +33,11 @@ REASON = "SECRET-REASON"
 FIXTURES = [
     "gateway_request",
     "gateway_request_jwt",
+    "gateway_request_notification",
     "gateway_response",
     "gateway_response_drive",
     "gateway_response_no_request",
+    "gateway_response_notification",
     "gateway_response_policy_denied",
     "gateway_response_streaming",
     "gateway_tools_list_request",
@@ -49,7 +51,12 @@ FIXTURES = [
 PATHS = ["allow", "deny", "no_answer", "unreadable", "unplaced", "exception", "recursion"]
 # Never sent to the checker, so no outcome of it can deny them.
 NO_REQUEST = "gateway_response_no_request"  # no tool name to check: a no-answer by design
-UNCHECKED = {"gateway_tools_list_request", "gateway_response_streaming"}
+UNCHECKED = {
+    "gateway_request_notification",
+    "gateway_response_notification",
+    "gateway_response_streaming",
+    "gateway_tools_list_request",
+}
 
 
 class Boom(Exception):
