@@ -184,3 +184,18 @@ def test_cached_input_matches_on_the_raw_name() -> None:
     assert cached.matches(make_call("gdrive___read_file_content"))
     assert not cached.matches(make_call("gdrive___search_files"))
     assert not cached.matches(make_call("mcp__gdrive__read_file_content"))
+
+
+@pytest.mark.parametrize("depth", [300, 100_000])
+def test_the_extractors_cope_with_any_nesting(depth: int) -> None:
+    deep: JsonValue = []
+    for _ in range(depth):
+        deep = [deep]
+    call = make_call("gdrive___read_file_content", {"fileId": "ID1", "deep": deep})
+    [stub] = call_files(call)
+    assert stub.file_refs == ["google/ID1"]
+    output: JsonValue = {"content": [{"text": "{}"}], "structuredContent": deep}
+    [file] = result_files(call, call.tool_input, output, config=CONFIG)
+    assert file.file_refs == ["google/ID1"]
+    assert result_files(call, deep, deep, config=CONFIG) == []
+    assert result_files(call, call.tool_input, output, config=CONFIG, skip=True) == []
