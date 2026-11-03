@@ -351,3 +351,57 @@ def test_claude_search_leaves_folders_out() -> None:
 def test_a_result_that_is_not_text_parts_names_nothing() -> None:
     assert connector_files(_claude("search_files"), {"query": "q"}, [1, "x"]) == []
     assert connector_files(_claude("search_files"), {"query": "q"}, {"a": 1}) == []
+
+
+def _mcp(text: str | None = None, structured: JsonValue = None) -> JsonValue:
+    """What a Gateway hands over as ``result``."""
+    out: dict[str, JsonValue] = {"content": [{"type": "text", "text": text}] if text else []}
+    if structured is not None:
+        out["structuredContent"] = structured
+    return out
+
+
+def test_an_mcp_result_object_is_read_from_its_first_text() -> None:
+    files = [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]
+    got = connector_files(
+        _claude("search_files"), {"query": "q"}, _mcp(json.dumps({"files": files}))
+    )
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_an_mcp_result_object_prefers_structured_content() -> None:
+    structured = {"files": [{"id": "S", "title": "s.md", "mimeType": "text/markdown"}]}
+    result = _mcp(json.dumps({"files": []}), structured)
+    got = connector_files(_claude("search_files"), {"query": "q"}, result)
+    assert _got(got) == [("google/S", "s.md", None)]
+
+
+def test_codex_shapes_travel_in_structured_content() -> None:
+    results = [{"id": "A", "title": "a.md", "file_or_folder": "file"}]
+    got = connector_files(_codex("search"), {"query": "q"}, _mcp(None, {"results": results}))
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_sharepoint_takes_structured_content_too() -> None:
+    results = [{"title": "a.txt", "drive_id": DRIVE, "item_id": ITEM}]
+    got = connector_files(_sp("search"), {"query": "q"}, _mcp(None, {"results": results}))
+    assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM}", "a.txt", None)]
+
+
+def test_an_mcp_object_without_structured_content_falls_back_to_the_codex_envelope() -> None:
+    payload = {"results": [{"id": "A", "title": "a.md", "file_or_folder": "file"}]}
+    text = json.dumps({"content": [], "structuredContent": payload, "isError": False})
+    got = connector_files(_codex("search"), {"query": "q"}, _mcp(text))
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_the_harness_content_list_reads_like_the_object() -> None:
+    files = [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]
+    result = [{"text": json.dumps({"files": files})}]
+    got = connector_files(_claude("search_files"), {"query": "q"}, result)
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_an_mcp_result_with_no_readable_payload_names_nothing() -> None:
+    assert connector_files(_claude("search_files"), {"query": "q"}, _mcp("not json")) == []
+    assert connector_files(_claude("search_files"), {"query": "q"}, {"content": 3}) == []

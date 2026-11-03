@@ -107,6 +107,13 @@ class _TextPart(_Lenient):
 _TEXT_PARTS = TypeAdapter(list[_TextPart])
 
 
+class _McpResult(_Lenient):
+    """An MCP tool result: ``{content, structuredContent, isError}``."""
+
+    content: list[_TextPart] = []
+    structuredContent: JsonValue = None
+
+
 class _DriveFile(_Lenient):
     id: str | None = None
     mimeType: str | None = None
@@ -158,10 +165,28 @@ def _args[M: BaseModel](model: type[M], tool_input: JsonValue) -> M | None:
         return None
 
 
+def _mcp_result(tool_output: JsonValue) -> _McpResult | None:
+    if (
+        not isinstance(tool_output, dict)
+        or not {"content", "structuredContent"} & tool_output.keys()
+    ):
+        return None
+    return _args(_McpResult, tool_output)
+
+
+def _structured(tool_output: JsonValue) -> JsonValue:
+    mcp = _mcp_result(tool_output)
+    return mcp.structuredContent if mcp else None
+
+
 def _texts(tool_output: JsonValue) -> list[str]:
-    """A result's text: a string is one text, a list of ``{text}`` parts gives each part's."""
+    """A result's text: a string is one text, a list of ``{text}`` parts gives each part's, an
+    MCP result object gives its ``content`` parts'."""
     if isinstance(tool_output, str):
         return [tool_output]
+    if isinstance(tool_output, dict):
+        mcp = _mcp_result(tool_output)
+        return [part.text for part in mcp.content if part.text is not None] if mcp else []
     try:
         parts = _TEXT_PARTS.validate_python(tool_output)
     except ValidationError:
@@ -177,21 +202,21 @@ def _json[M: BaseModel](model: type[M], text: str) -> M | None:
 
 
 def _result[M: BaseModel](model: type[M], tool_output: JsonValue) -> M | None:
-    """claude.ai: the first text is the tool's JSON."""
+    """claude.ai: the tool's JSON is the first text, or the result's ``structuredContent``."""
+    if (data := _structured(tool_output)) is not None:
+        return _args(model, data)
     texts = _texts(tool_output)
     return _json(model, texts[0]) if texts else None
 
 
 def _payload[M: BaseModel](model: type[M], tool_output: JsonValue) -> M | None:
-    """Codex: the tool's JSON is the envelope's ``structuredContent``."""
+    """Codex: the tool's JSON is the envelope's ``structuredContent``, in the first text or on
+    the result object itself."""
+    if (data := _structured(tool_output)) is not None:
+        return _args(model, data)
     texts = _texts(tool_output)
     envelope = _json(_Envelope, texts[0]) if texts else None
-    if envelope is None:
-        return None
-    try:
-        return model.model_validate(envelope.structuredContent)
-    except ValidationError:
-        return None
+    return _args(model, envelope.structuredContent) if envelope else None
 
 
 def _bytes(b64: str | None) -> bytes | None:
