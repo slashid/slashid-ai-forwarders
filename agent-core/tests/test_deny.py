@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from pydantic import JsonValue
 
@@ -42,6 +44,7 @@ def test_reasons_are_joined_prefixed_and_capped_before_the_reference() -> None:
         ([{"text": "x"}, {"text": "y"}], None, None),
         ([{"text": "x"}], {"a": 1}, None),
         ([{"type": "image", "data": "d"}], None, None),
+        ([{"type": "image", "text": "x"}], None, None),
         ([], None, None),
         ("x", None, None),
     ],
@@ -50,3 +53,21 @@ def test_only_a_lone_text_block_can_be_our_deny(
     content: JsonValue, structured: JsonValue, want: str | None
 ) -> None:
     assert single_text(content, structured) == want
+
+
+def test_a_lone_surrogate_neither_raises_nor_verifies() -> None:
+    lone = json.loads('"\\ud800 (ref abcdef012345)"')
+    assert not is_own_deny(lone, KEY)
+    assert not is_own_deny(json.loads('"\\ud800"'), KEY)
+    text = with_reference(lone, KEY)
+    assert is_own_deny(text, KEY)
+    assert not is_own_deny(text.replace("\ud800", "\ud801"), KEY)
+
+
+def test_no_usable_reasons_fall_back_to_a_default() -> None:
+    for reasons in ([], ["", "  "]):
+        text = deny_text(reasons, KEY)
+        assert text.startswith("Blocked by your organization's policy. (ref ")
+        assert is_own_deny(text, KEY)
+    prefixed = deny_text([], KEY, prefix="Content withheld: ")
+    assert prefixed.startswith("Content withheld: Blocked by your organization's policy. (ref ")

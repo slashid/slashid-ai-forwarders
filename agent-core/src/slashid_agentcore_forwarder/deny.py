@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from slashid_ai_forwarder_core.sink import join_deny_reasons
 
 MAX_REASON = 500  # the Anthropic hook's bound, chosen
+DEFAULT_REASON = "Blocked by your organization's policy."
 _REF = re.compile(r" \(ref ([0-9a-f]{12})\)\Z")
 _LABEL = b"slashid-agentcore-deny-ref-v1"
 
@@ -20,7 +21,7 @@ def derive_key(push_token: str) -> bytes:
 
 
 def _mac(text: str, key: bytes) -> str:
-    return hmac.new(key, text.encode(), hashlib.sha256).digest()[:6].hex()
+    return hmac.new(key, text.encode("utf-8", "surrogatepass"), hashlib.sha256).digest()[:6].hex()
 
 
 def with_reference(text: str, key: bytes) -> str:
@@ -36,7 +37,7 @@ def is_own_deny(text: str, key: bytes) -> bool:
 
 def deny_text(reasons: list[str], key: bytes, *, prefix: str = "") -> str:
     """The reasons joined, behind ``prefix``, capped at 500 characters, then the reference."""
-    text = prefix + join_deny_reasons(reasons)
+    text = prefix + (join_deny_reasons(reasons) or DEFAULT_REASON)
     if len(text) > MAX_REASON:
         text = text[: MAX_REASON - 1] + "…"
     return with_reference(text, key)

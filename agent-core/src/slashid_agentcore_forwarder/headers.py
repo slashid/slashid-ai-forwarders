@@ -32,6 +32,12 @@ class RequestHeaders(Lenient):
             return {str(key).lower(): value for key, value in raw.items()}
         return raw
 
+    @field_validator("user_agent", "baggage", mode="before")
+    @classmethod
+    def _text_only(cls, value: object) -> object:
+        """A field of another type is dropped alone, not the whole model."""
+        return value if isinstance(value, str) else None
+
     @field_validator("user_agent")
     @classmethod
     def _bounded(cls, value: str | None) -> str | None:
@@ -61,12 +67,22 @@ class Baggage(BaseModel):
         )
 
 
+def _usable(value: str) -> bool:
+    """Non-empty, bounded, printable, and not a decoding failure (U+FFFD)."""
+    return 0 < len(value) <= MAX_VALUE and value.isprintable() and "\ufffd" not in value
+
+
 def parse_baggage(value: str | None) -> Baggage:
-    """``harness.id`` and ``session.id`` from a baggage string; properties are dropped."""
-    found: dict[str, str] = {}
+    """``harness.id`` and ``session.id`` from a baggage string; properties are dropped.
+
+    The first member of a key decides it: a later duplicate never replaces it, even when the
+    first was unusable.
+    """
+    found: dict[str, str | None] = {}
     for member in (value or "").split(","):
         key, sep, rest = member.split(";", 1)[0].partition("=")
-        decoded = unquote(rest.strip())
-        if sep and decoded and len(decoded) <= MAX_VALUE:
-            found.setdefault(key.strip(), decoded)
+        key = key.strip()
+        if sep and key not in found:
+            decoded = unquote(rest.strip())
+            found[key] = decoded if _usable(decoded) else None
     return Baggage(harness_id=found.get("harness.id"), session_id=found.get("session.id"))

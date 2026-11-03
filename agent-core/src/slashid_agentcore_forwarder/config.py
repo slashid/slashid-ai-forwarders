@@ -5,17 +5,20 @@ from __future__ import annotations
 from functools import cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
+from pydantic_settings import SettingsConfigDict
 from slashid_ai_forwarder_core.config_base import BaseConfig
 
 
 class Config(BaseConfig):
+    model_config = SettingsConfigDict(hide_input_in_errors=True)
+
     harness_hooks_enabled: bool = True
     gateway_hooks_enabled: bool = True
     # Answer when a check gives no answer. Allow: refusing to answer is self-inflicted downtime.
     verdict_fail_mode: Literal["allow", "deny"] = "allow"
-    # Bound on one check, under the hook timeout and the Lambda timeout (10 s each).
-    verdict_budget_ms: int = 3_500
+    # Bound on one check, under the hook and Lambda timeouts (10 s each).
+    verdict_budget_ms: int = Field(3_500, ge=100, le=9_000)
     # Evaluate and log, answer allow.
     shadow_mode: bool = False
 
