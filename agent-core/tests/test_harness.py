@@ -5,82 +5,24 @@ from collections.abc import Callable
 
 import pytest
 from pydantic import JsonValue
-from slashid_ai_forwarder_core.events import AIInvocationObservedV1, AWSIdentityDetails
 
-from slashid_agentcore_forwarder.cache import TtlCache
+from helpers import (
+    HARNESS_ROLE,
+    LOGGER,
+    FakeRoles,
+    checker_of,
+    events,
+    identity_of,
+    make_runtime,
+)
 from slashid_agentcore_forwarder.checks import POLICY_UNAVAILABLE, UNREADABLE, Outcome
-from slashid_agentcore_forwarder.config import Config
 from slashid_agentcore_forwarder.deny import derive_key, is_own_deny, with_reference
 from slashid_agentcore_forwarder.harness import handle
-from slashid_agentcore_forwarder.runtime import Runtime
 from slashid_agentcore_forwarder.tool_call import CachedInput
 
-ROLE = "arn:aws:iam::123456789012:role/harness-role"
-LOGGER = "slashid_agentcore_forwarder"
+ROLE = HARNESS_ROLE
 ALLOW = {"decision": "allow", "reason": "slashid"}
 Load = Callable[[str], dict[str, JsonValue]]
-
-
-def make_config(**overrides: object) -> Config:
-    return Config.model_validate(
-        {"endpoint": "http://test", "push_token": "push-token", **overrides}
-    )
-
-
-class FakeChecker:
-    """Records what it is asked and answers from a script (allow when it runs out)."""
-
-    def __init__(self, *outcomes: Outcome) -> None:
-        self.outcomes = list(outcomes)
-        self.invocations: list[AIInvocationObservedV1] = []
-        self.started: list[float] = []
-
-    async def check(self, invocation: AIInvocationObservedV1, *, started: float) -> Outcome:
-        self.invocations.append(invocation)
-        self.started.append(started)
-        return self.outcomes.pop(0) if self.outcomes else Outcome("allow")
-
-
-class FakeRoles:
-    def __init__(self, role: str | None = ROLE) -> None:
-        self.role = role
-        self.looked_up: list[str] = []
-
-    async def harness_role(self, harness_arn: str) -> str | None:
-        self.looked_up.append(harness_arn)
-        return self.role
-
-    async def gateway_role(self, gateway_arn: str) -> str | None:
-        raise AssertionError("not used by the Harness")
-
-    async def claimed_harness_role(self, harness_arn: str, *, fresh: bool = False) -> str | None:
-        raise AssertionError("not used by the Harness")
-
-
-def make_runtime(*outcomes: Outcome, roles: FakeRoles | None = None, **config: object) -> Runtime:
-    cfg = make_config(**config)
-    return Runtime(
-        config=cfg,
-        key=derive_key(cfg.push_token),
-        checker=FakeChecker(*outcomes),
-        roles=roles or FakeRoles(),
-        inputs=TtlCache[CachedInput](ttl_s=600, max_entries=1000),
-    )
-
-
-def checker_of(runtime: Runtime) -> FakeChecker:
-    assert isinstance(runtime.checker, FakeChecker)
-    return runtime.checker
-
-
-def identity_of(event: AIInvocationObservedV1) -> AWSIdentityDetails:
-    assert isinstance(event.identity_details, AWSIdentityDetails)
-    return event.identity_details
-
-
-def events(caplog: pytest.LogCaptureFixture, name: str) -> list[dict[str, object]]:
-    lines = [json.loads(r.getMessage()) for r in caplog.records if r.name == LOGGER]
-    return [line for line in lines if line["event"] == name]
 
 
 def drive_before(load: Load, **context: JsonValue) -> dict[str, JsonValue]:
@@ -139,9 +81,9 @@ async def test_the_role_lookup_comes_before_the_budget_starts(load: Load) -> Non
     roles = FakeRoles()
     runtime = make_runtime(roles=roles)
     await handle(runtime, load("harness_before_tool_call"))
-    assert len(roles.looked_up) == 1
+    [looked_up_at] = roles.looked_up_at
     [started] = checker_of(runtime).started
-    assert started > 0
+    assert started >= looked_up_at
 
 
 async def test_a_failed_role_lookup_leaves_the_principal_out(load: Load) -> None:
