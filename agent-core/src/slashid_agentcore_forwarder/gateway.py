@@ -295,6 +295,14 @@ async def _after(
         return _unreadable(runtime, "too_deep", check="result", rpc_id=None, echo=echo)
 
 
+def _request_rpc_id(raw_request: object) -> RpcId:
+    """The id of the request when it is readable, else ``None``."""
+    try:
+        return _rpc_id(GatewayRequest.model_validate(raw_request).body)
+    except ValidationError:
+        return None
+
+
 def _is_not_a_call(raw_request: object) -> bool:
     """A readable request that is anything but a ``tools/call``, a notification included: its
     RESPONSE is echoed whatever it looks like."""
@@ -315,7 +323,9 @@ async def _check_response(
     if _is_not_a_call(raw_request):
         return _out(mcp=echo)
     if "body" not in response.model_fields_set:  # only a tools/call needs one
-        return _no_answer(runtime, "error", check="result", rpc_id=None, echo={})
+        return _no_answer(
+            runtime, "error", check="result", rpc_id=_request_rpc_id(raw_request), echo={}
+        )
     if response.isStreamingResponse:
         logs.pass_through(surface=SURFACE, reason="streaming_response")
         return _out(mcp=echo)
