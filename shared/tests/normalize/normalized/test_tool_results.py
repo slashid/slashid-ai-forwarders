@@ -6,8 +6,10 @@ import hashlib
 
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import AIAccessedFile
+from slashid_ai_forwarder_core.normalize.normalized.connector_files import ConnectorFile
 from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
     claude_ai_upload_read,
+    connector_accessed_file,
     extract_tool_result_files,
 )
 from slashid_ai_forwarder_core.normalize.normalized.types import NormalizedMessage
@@ -128,3 +130,13 @@ def test_claude_ai_upload_read_names_the_upload_a_sandbox_call_reads() -> None:
     assert claude_ai_upload_read("view", {"path": "/mnt/user-data/uploads/../outputs/a"}) is None
     # Claude Code's tools are judged on their results, as before.
     assert claude_ai_upload_read("Read", {"file_path": "/mnt/user-data/uploads/a.txt"}) is None
+
+
+def test_a_connector_file_with_bytes_becomes_a_hashed_file_and_without_them_only_refs() -> None:
+    config = _config()
+    cf = ConnectorFile(refs=["google/A"], name="a.md", content=b"x")
+    full = connector_accessed_file(cf, config=config)
+    assert full.file_refs == ["google/A"]
+    assert full.content_hashes and full.content_hashes["sha256"] == hashlib.sha256(b"x").hexdigest()
+    bare = connector_accessed_file(ConnectorFile(refs=["google/A"], name="a.md"), config=config)
+    assert bare.file_refs == ["google/A"] and bare.content_hashes is None
