@@ -5,8 +5,8 @@ module issues HeadObject to get byte length and, when the object is within
 the configured inline threshold, GetObject to populate content hash and
 optionally raw bytes.
 
-All S3 calls use aioboto3 for native async I/O. The dependency is optional:
-``aioboto3`` is only pulled in when the ``[converse]`` extras group is
+All S3 calls use aiobotocore for native async I/O. The dependency is optional:
+``aiobotocore`` is only pulled in when the ``[converse]`` extras group is
 installed (via ``slashid-ai-forwarder-core[converse]`` — bedrock does this).
 Non-Converse forwarders (Vertex) don't need it.
 """
@@ -17,7 +17,7 @@ import logging
 from functools import cache
 from typing import Any
 
-import aioboto3
+from aiobotocore.session import AioSession, get_session
 
 from ...content_utils import SNAP_TOLERANCE
 
@@ -25,8 +25,8 @@ log = logging.getLogger(__name__)
 
 
 @cache
-def _get_session() -> aioboto3.Session:
-    return aioboto3.Session()
+def _get_session() -> AioSession:
+    return get_session()
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
@@ -64,7 +64,7 @@ async def _resolve_s3_attachment(source: dict[str, Any], *, max_content_size: in
         return
     bucket, key = parsed
 
-    async with _get_session().client("s3") as s3:
+    async with _get_session().create_client("s3") as s3:
         try:
             head = await s3.head_object(Bucket=bucket, Key=key)
         except ClientError:

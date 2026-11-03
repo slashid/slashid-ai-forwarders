@@ -16,12 +16,12 @@ from slashid_ai_forwarder_core.normalize.converse import s3
 
 @pytest.fixture(autouse=True)
 def _reset_session() -> None:
-    """Make sure no test leaks the cached aioboto3 session into another."""
+    """Make sure no test leaks the cached aiobotocore session into another."""
     s3._get_session.cache_clear()
 
 
 def _make_mock_s3_client(*, head_response: dict[str, Any] | None, get_body: bytes | None = None):
-    """Return a mock async context manager that acts like an aioboto3 S3 client."""
+    """Return a mock async context manager that acts like an aiobotocore S3 client."""
     from botocore.exceptions import ClientError
 
     client = AsyncMock()
@@ -54,7 +54,7 @@ async def test_resolve_s3_attachment_head_fails_no_keys_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cm, _ = _make_mock_s3_client(head_response=None)
-    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
+    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(create_client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
     await s3._resolve_s3_attachment(source, max_content_size=10 * 1024 * 1024)
@@ -72,7 +72,7 @@ async def test_resolve_s3_attachment_above_threshold_range_gets(
         head_response={"ContentLength": 200, "ContentType": "application/pdf"},
         get_body=chunk,
     )
-    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
+    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(create_client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
     await s3._resolve_s3_attachment(source, max_content_size=20)  # 200 > 20
@@ -99,7 +99,7 @@ async def test_resolve_s3_attachment_within_threshold_fetches_bytes(
         head_response={"ContentLength": len(content), "ContentType": "text/plain"},
         get_body=content,
     )
-    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
+    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(create_client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/key"}}
     await s3._resolve_s3_attachment(source, max_content_size=10 * 1024 * 1024)
@@ -114,7 +114,7 @@ async def test_resolve_s3_attachment_empty_file_no_get(monkeypatch: pytest.Monke
     cm, client = _make_mock_s3_client(
         head_response={"ContentLength": 0, "ContentType": "application/octet-stream"}
     )
-    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(client=lambda *_a, **_kw: cm))
+    monkeypatch.setattr(s3, "_get_session", lambda: MagicMock(create_client=lambda *_a, **_kw: cm))
 
     source: dict[str, Any] = {"s3Location": {"uri": "s3://bucket/empty"}}
     await s3._resolve_s3_attachment(source, max_content_size=10 * 1024 * 1024)

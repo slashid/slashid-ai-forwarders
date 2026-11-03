@@ -12,7 +12,7 @@ from slashid_bedrock_forwarder import mil_offload
 
 @pytest.fixture(autouse=True)
 def _reset_session() -> None:
-    """Make sure no test leaks the cached aioboto3 session into another."""
+    """Make sure no test leaks the cached aiobotocore session into another."""
     mil_offload._get_session.cache_clear()
 
 

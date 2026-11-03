@@ -9,9 +9,9 @@ and merges them back into the record so downstream code can read the
 
 Attachment resolution for document/image blocks (Converse ``s3Location``)
 lives in ``shared/normalize/converse/s3.py`` — it's vendor-format-specific
-and rides on the shared aioboto3 dependency.
+and rides on the shared aiobotocore dependency.
 
-All S3 calls use aioboto3 for native async I/O.
+All S3 calls use aiobotocore for native async I/O.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import logging
 from functools import cache
 from typing import Any
 
-import aioboto3
+from aiobotocore.session import AioSession, get_session
 from slashid_ai_forwarder_core.normalize._fetch_semaphore import get_fetch_semaphore
 from tenacity import (
     AsyncRetrying,
@@ -35,8 +35,8 @@ log = logging.getLogger(__name__)
 
 
 @cache
-def _get_session() -> aioboto3.Session:
-    return aioboto3.Session()
+def _get_session() -> AioSession:
+    return get_session()
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
@@ -98,7 +98,7 @@ async def fetch_offloaded_body(
     try:
         async for attempt in retrying:
             with attempt:
-                async with _get_session().client("s3") as s3:
+                async with _get_session().create_client("s3") as s3:
                     try:
                         resp = await s3.get_object(Bucket=bucket, Key=key)
                     except ClientError as e:
