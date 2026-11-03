@@ -82,8 +82,11 @@ def test_an_oversize_result_still_gives_the_ref() -> None:
 
 
 def test_claude_search_lists_every_hit() -> None:
-    result = json.dumps({"files": [{"id": "A", "title": "a.md"}, {"id": "B", "title": "b.pdf"}]})
-    got = connector_files(_claude("search_files"), {"query": "q"}, result)
+    files = [
+        {"id": "A", "title": "a.md", "mimeType": "text/markdown"},
+        {"id": "B", "title": "b.pdf", "mimeType": "application/pdf"},
+    ]
+    got = connector_files(_claude("search_files"), {"query": "q"}, json.dumps({"files": files}))
     assert _got(got) == [("google/A", "a.md", None), ("google/B", "b.pdf", None)]
 
 
@@ -405,3 +408,30 @@ def test_the_harness_content_list_reads_like_the_object() -> None:
 def test_an_mcp_result_with_no_readable_payload_names_nothing() -> None:
     assert connector_files(_claude("search_files"), {"query": "q"}, _mcp("not json")) == []
     assert connector_files(_claude("search_files"), {"query": "q"}, {"content": 3}) == []
+
+
+def test_a_drive_search_hit_without_a_mime_type_gives_nothing() -> None:
+    result = json.dumps({"files": [{"id": "A", "title": "a.md"}]})
+    assert connector_files(_claude("search_files"), {"query": "q"}, result) == []
+
+
+def test_a_codex_search_hit_without_file_or_folder_gives_nothing() -> None:
+    payload = {"results": [{"id": "A", "title": "a.md"}]}
+    assert connector_files(_codex("search"), {"query": "q"}, _envelope(payload)) == []
+
+
+def test_a_codex_fetch_result_id_needs_a_mime_type_or_kind() -> None:
+    url = {"url": "https://example.com/x"}
+    assert connector_files(_codex("fetch"), url, _envelope({"id": "ID9", "title": "t"})) == []
+    typed = {"id": "ID9", "title": "t", "mimeType": "text/plain"}
+    got = connector_files(_codex("fetch"), url, _envelope(typed))
+    assert _got(got) == [("google/ID9", "t", None)]
+
+
+def test_read_resource_needs_a_graph_drive_id() -> None:
+    assert connector_files(_m365("read_resource"), {"uri": "file:///home/u/x.txt"}, "t") == []
+
+
+def test_sourcedoc_is_read_only_on_a_microsoft_host() -> None:
+    url = f"https://example.com/Doc.aspx?sourcedoc=%7B{GUID}%7D"
+    assert connector_files(_sp("fetch"), {"url": url}, None) == []

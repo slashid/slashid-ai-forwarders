@@ -27,6 +27,13 @@ _FOLDER = "application/vnd.google-apps.folder"
 # A drive item's id, as opposed to a path segment.
 _ITEM_ID = re.compile(r"01[A-Z2-7]{30,}")
 _GRAPH_ITEM = re.compile(r"/drives/([^/]+)/items/([^/?#]+)")
+_MICROSOFT_HOSTS = (
+    "sharepoint.com",
+    "sharepoint.us",
+    "sharepoint.cn",
+    "office.com",
+    "microsoft.com",
+)
 _GUID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 # What reading a folder returns: ``<name> (file|folder, N bytes) file:///…`` per child.
 _LISTING = re.compile(r"\((?:file|folder), \d+ bytes\) file:///")
@@ -255,7 +262,7 @@ def _claude_drive(
         return [
             _file(_google(f.id), name=f.title)
             for f in (found.files if found else [])
-            if f.id and f.mimeType != _FOLDER
+            if f.id and f.mimeType and f.mimeType != _FOLDER
         ]
     if action not in {"read_file_content", "get_file_metadata", "download_file_content"}:
         return []
@@ -273,12 +280,14 @@ def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> 
         return [
             _file(_google(f.id), name=f.title)
             for f in (found.results if found else [])
-            if f.id and f.file_or_folder != "folder"
+            if f.id and f.file_or_folder and f.file_or_folder != "folder"
         ]
     file = _payload(_DriveFile, tool_output)
     if action == "fetch":
         url = _args(_UrlArgs, tool_input)
-        file_id = (file.id if file else None) or (_drive_id_of(url.url) if url else None)
+        file_id = (file.id if file and (file.mimeType or file.file_or_folder) else None) or (
+            _drive_id_of(url.url) if url else None
+        )
         if not file_id:
             return []
         name = (file.title or file.file_name) if file else None
@@ -302,15 +311,20 @@ def _item(drive_id: str, item_id: str) -> str:
     return f"m365/item/{drive_id}/{item_id}"
 
 
+def _microsoft_host(host: str | None) -> bool:
+    return host is not None and any(host == d or host.endswith(f".{d}") for d in _MICROSOFT_HOSTS)
+
+
 def _url_refs(url: str) -> list[str]:
     """The item a Graph URL names and the GUID a ``sourcedoc`` link carries."""
     parts = urlparse(url)
     refs: list[str] = []
     if parts.hostname == "graph.microsoft.com" and (match := _GRAPH_ITEM.search(parts.path)):
         refs.append(_item(unquote(match.group(1)), unquote(match.group(2))))
-    for value in parse_qs(parts.query).get("sourcedoc", []):
-        if _GUID.fullmatch(guid := value.strip("{}")):
-            refs.append(f"m365/guid/{guid.upper()}")
+    if _microsoft_host(parts.hostname):
+        for value in parse_qs(parts.query).get("sourcedoc", []):
+            if _GUID.fullmatch(guid := value.strip("{}")):
+                refs.append(f"m365/guid/{guid.upper()}")
     return refs
 
 
@@ -331,7 +345,7 @@ def _read_resource(tool_input: JsonValue, tool_output: JsonValue) -> list[Connec
         return []
     drive_id, sep, tail = args.uri.removeprefix("file:///").partition("/")
     rest = unquote(tail).strip("/")
-    if not drive_id or not sep or not rest:
+    if not drive_id.startswith("b!") or not sep or not rest:
         return []
     if "/" not in rest and _ITEM_ID.fullmatch(rest):
         return [_file(_item(drive_id, rest))]
