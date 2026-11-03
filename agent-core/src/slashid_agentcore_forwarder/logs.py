@@ -48,6 +48,16 @@ def fail_mode(*, surface: str, check: str, reason: FailReason, mode: str) -> Non
     _emit("fail_mode", surface=surface, check=check, reason=reason, mode=mode)
 
 
+def check(
+    surface: str,
+    check: Literal["call", "result"],
+    outcome: Literal["allow", "deny", "no_answer"],
+    latency_ms: int,
+) -> None:
+    """One check went to SlashID or ended without an answer; informational."""
+    _emit("check", surface=surface, check=check, outcome=outcome, latency_ms=latency_ms)
+
+
 def pass_through(*, surface: str, reason: PassThroughReason, keys: list[str] | None = None) -> None:
     """A payload we do not handle went through untouched."""
     bounded = None if keys is None else [key[:MAX_KEY] for key in keys[:MAX_KEYS]]

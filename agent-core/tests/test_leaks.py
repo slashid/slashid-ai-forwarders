@@ -230,6 +230,12 @@ async def test_no_path_leaks_a_payload(
     for secret in ["secret-token", *PAYLOAD_SECRETS, EXCEPTION_SECRET, REASON]:
         assert secret not in logged, secret
     assert all(r.exc_info is None for r in caplog.records)
+    assert all(
+        sorted(line) == ["check", "event", "latency_ms", "outcome", "surface"]
+        and line["check"] in ("call", "result")
+        and line["outcome"] in ("allow", "deny", "no_answer")
+        for line in events(caplog, "check")
+    )
 
     sent = [event.model_dump_json() for event in sent_events(runtime)]
     assert all("secret-token" not in event for event in sent)
