@@ -69,22 +69,20 @@ Parameters:
     Description: |
       Execution role ARNs of the AgentCore Gateways that call this function
       as an interceptor; each is allowed to invoke it. Leave empty if no
-      Gateway uses it. These roles and the AgentCore service (below) are the
-      principals the template permits. Any other principal of the account
-      whose identity policy allows lambda:InvokeFunction can also invoke the
-      function and could supply a forged client context (the identity it
-      reports), so restrict that permission.
+      Gateway uses it. These roles and the Harness roles (HarnessRoleArns)
+      are the principals the template permits. Any other principal of the
+      account whose identity policy allows lambda:InvokeFunction can also
+      invoke the function and could supply a forged client context (the
+      identity it reports), so restrict that permission.
 
-  AllowAgentCoreServiceInvoke:
-    Type: String
-    Default: "true"
-    AllowedValues: ["true", "false"]
+  HarnessRoleArns:
+    Type: CommaDelimitedList
+    Default: ""
     Description: |
-      Let the AgentCore service principal (bedrock-agentcore.amazonaws.com)
-      of this account invoke the function, for Harness lifecycle hooks.
-      Whether Harness hooks need this resource policy, and the principal's
-      name, are unconfirmed; set "false" if you only use Gateway
-      interceptors.
+      Execution role ARN of each AgentCore Harness that uses this function
+      as a lifecycle hook (get-harness, harness.executionRoleArn); the
+      Harness invokes the hook with that role, and each is allowed to invoke
+      the function. Leave empty if no Harness uses it.
 
   LambdaPackageS3Bucket:
     Type: String
@@ -113,7 +111,7 @@ Parameters:
 
 Conditions:
   HasGatewayRoles: !Not [!Equals [!Join ["", !Ref GatewayRoleArns], ""]]
-  AllowService: !Equals [!Ref AllowAgentCoreServiceInvoke, "true"]
+  HasHarnessRoles: !Not [!Equals [!Join ["", !Ref HarnessRoleArns], ""]]
 
 Resources:
   ForwarderRole:
@@ -173,16 +171,19 @@ Resources:
           SLASHID_VERDICT_BUDGET_MS: !Ref BudgetMs
           LOG_LEVEL: !Ref LogLevel
 
-  # Harness lifecycle hooks. Unconfirmed whether the service needs this
-  # statement; SourceAccount keeps it to AgentCore resources of this account.
-  HarnessHookInvokePermission:
-    Type: AWS::Lambda::Permission
-    Condition: AllowService
-    Properties:
-      FunctionName: !Ref ForwarderFunction
-      Action: lambda:InvokeFunction
-      Principal: bedrock-agentcore.amazonaws.com
-      SourceAccount: !Ref AWS::AccountId
+  # One statement per Harness execution role: a Harness invokes its hooks
+  # with that role, not as the service. &{HarnessRole} drops the ARN's
+  # non-alphanumeric characters to form the logical ID.
+  Fn::ForEach::HarnessInvoke:
+    - HarnessRole
+    - !Ref HarnessRoleArns
+    - HarnessInvokePermission&{HarnessRole}:
+        Type: AWS::Lambda::Permission
+        Condition: HasHarnessRoles
+        Properties:
+          FunctionName: !Ref ForwarderFunction
+          Action: lambda:InvokeFunction
+          Principal: !Sub ${HarnessRole}
 
   # One statement per Gateway role. &{GatewayRole} drops the ARN's
   # non-alphanumeric characters to form the logical ID.
