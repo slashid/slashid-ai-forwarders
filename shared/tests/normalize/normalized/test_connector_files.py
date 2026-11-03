@@ -12,6 +12,7 @@ import pytest
 from pydantic import JsonValue
 
 from slashid_ai_forwarder_core.config_base import BaseConfig
+from slashid_ai_forwarder_core.normalize.finalize import merge_by_refs
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import (
     ConnectorFile,
     connector_files,
@@ -525,3 +526,30 @@ def test_is_connector_tool_knows_the_exact_patterns_and_nothing_else() -> None:
     assert not is_connector_tool(_claude("share_file"))
     assert not is_connector_tool("Bash")
     assert not is_connector_tool("mcp__fs__write")
+
+
+def test_the_duplicates_of_the_any_server_rule_merge_into_one_file() -> None:
+    result = _envelope({"id": "ID5", "title": "m.md"})
+    got = connector_files("mcp__gdrive__get_file_metadata", {"fileId": "ID5"}, result)
+    assert len(got) == 2
+    [merged] = merge_by_refs([connector_stub(cf) for cf in got])
+    assert merged.file_refs == ["google/ID5"]
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "output"),
+    [
+        ("mcp__fs__read_resource", {"uri": "file:///home/u/x.txt"}, "text"),
+        ("web_search", {"query": "q"}, json.dumps({"results": [{"id": "1", "title": "t"}]})),
+        ("fetch", {"url": "https://example.com/doc"}, json.dumps({"id": "1", "title": "t"})),
+        (
+            "mcp__other__search_files",
+            {"query": "q"},
+            json.dumps({"files": [{"id": "A", "title": "a"}]}),
+        ),
+        ("mcp__box__get_file_metadata", {"path": "/a"}, json.dumps({"id": "1"})),
+        ("mcp__x__search", {"q": "q"}, _envelope({"results": [{"id": "1", "title": "t"}]})),
+    ],
+)
+def test_look_alikes_give_nothing(tool: str, args: JsonValue, output: JsonValue) -> None:
+    assert connector_files(tool, args, output) == []
