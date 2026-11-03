@@ -6,14 +6,18 @@ from pydantic import JsonValue, ValidationError
 
 from slashid_agentcore_forwarder.payloads import (
     ClientContext,
+    GatewayContext,
     GatewayPayload,
+    GatewayRequest,
+    GatewayResponse,
+    HarnessEventName,
     HarnessToolHook,
-    ResultBody,
     RpcReply,
     ToolsCall,
     classify_body,
     client_context,
     is_truncated,
+    parse_harness_result,
     parse_tool_result,
 )
 
@@ -23,7 +27,6 @@ SESSION = "00000000-0000-4000-8000-000000000001"
 
 def test_harness_before_hook(load: Load) -> None:
     hook = HarnessToolHook.model_validate(load("harness_before_tool_call"))
-    assert hook.event == "before_tool_call"
     assert hook.context.toolName == "gdrive___read_file_content"
     assert hook.context.toolType == "agentcore_gateway"
     assert hook.context.toolUseId == "tooluse_EXAMPLE0001"
@@ -35,9 +38,8 @@ def test_harness_before_hook(load: Load) -> None:
 
 def test_harness_after_hook_has_no_input(load: Load) -> None:
     hook = HarnessToolHook.model_validate(load("harness_after_tool_call"))
-    assert hook.event == "after_tool_call"
     assert hook.context.toolInput is None
-    result = parse_tool_result(hook.context.toolResult)
+    result = parse_harness_result(hook.context.toolResult)
     assert not result.is_error
     assert not is_truncated(hook.context.toolResult)
 
@@ -46,14 +48,14 @@ def test_truncated_result_is_flagged_and_unreadable(load: Load) -> None:
     hook = HarnessToolHook.model_validate(load("harness_after_truncated"))
     raw = hook.context.toolResult
     assert is_truncated(raw)
-    result = parse_tool_result(raw)
+    result = parse_harness_result(raw)
     assert result.content is None
     assert not result.is_error
 
 
 def test_inline_and_remote_mcp_hooks(load: Load) -> None:
     inline = HarnessToolHook.model_validate(load("harness_after_inline"))
-    assert (inline.event, inline.context.toolType) == ("after_tool_call", "inline_function")
+    assert inline.context.toolType == "inline_function"
     remote = HarnessToolHook.model_validate(load("harness_remote_mcp"))
     assert remote.context.toolType == "remote_mcp"
 
@@ -69,6 +71,22 @@ def test_inline_and_remote_mcp_hooks(load: Load) -> None:
         ([1], False),
         (None, False),
         ({"status": 3}, False),
+    ],
+)
+def test_harness_result_error_flag(raw: JsonValue, want: bool) -> None:
+    assert parse_harness_result(raw).is_error is want
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ({"isError": True, "content": []}, True),
+        ({"isError": False}, False),
+        ({"status": "error"}, False),  # MCP has no status
+        ({"content": []}, False),
+        ("text", False),
+        (None, False),
+        ({"isError": "maybe"}, False),
     ],
 )
 def test_tool_result_error_flag(raw: JsonValue, want: bool) -> None:
@@ -109,7 +127,6 @@ def test_hook_context_needs_a_name_and_call_id(load: Load, field: str, drop: boo
 # Pydantic shows up to ~50 chars of the failing value, so these payloads are short.
 def test_a_hook_error_does_not_echo_the_tool_input() -> None:
     payload: dict[str, JsonValue] = {
-        "event": "before_tool_call",
         "harnessArn": "arn:h",
         "sessionId": SESSION,
         "hookEventId": "e1",
@@ -129,21 +146,18 @@ def test_a_tools_call_error_does_not_echo_the_arguments() -> None:
 
 
 def test_a_gateway_error_does_not_echo_the_headers() -> None:
-    payload: dict[str, JsonValue] = {
-        "interceptorInputVersion": "1.0",
-        "mcp": {"gatewayRequest": {"headers": "SECRETVAL"}},
-    }
     with pytest.raises(ValidationError) as err:
-        GatewayPayload.model_validate(payload)
+        GatewayResponse.model_validate({"headers": "SECRETVAL"})
     assert "body" in str(err.value)
     assert "SECRETVAL" not in str(err.value)
 
 
-def test_hook_event_must_be_a_tool_event(load: Load) -> None:
+@pytest.mark.parametrize("event", ["before_tool_call", 7, None, ["x"], {}])
+def test_the_event_is_read_whatever_its_type(load: Load, event: JsonValue) -> None:
     payload = load("harness_before_tool_call")
-    payload["event"] = "before_invocation"
-    with pytest.raises(ValidationError):
-        HarnessToolHook.model_validate(payload)
+    payload["event"] = event
+    assert HarnessEventName.model_validate(payload).event == event
+    assert HarnessEventName.model_validate({}).event is None
 
 
 def test_gateway_request(load: Load) -> None:
@@ -152,16 +166,15 @@ def test_gateway_request(load: Load) -> None:
     assert payload.mcp is not None
     assert "gatewayResponse" in payload.mcp.model_fields_set
     assert payload.mcp.gatewayResponse is None
-    request = payload.mcp.gatewayRequest
-    assert request is not None
+    request = GatewayRequest.model_validate(payload.mcp.gatewayRequest)
     call = ToolsCall.model_validate(request.body)
     assert call.id == 2
     assert call.params.name == "gdrive___read_file_content"
     assert call.params.arguments == {"fileId": "ID1"}
     assert call.params.baggage == f"Self=example,session.id={SESSION}"
-    assert request.context is not None
-    assert request.context.identity is not None
-    assert request.context.identity.awsPrincipalArn == (
+    context = GatewayContext.model_validate(request.context)
+    assert context.identity is not None
+    assert context.identity.awsPrincipalArn == (
         "arn:aws:iam::123456789012:role/AgentCore-example-ApplicationRuntimeAgentRole"
     )
 
@@ -169,26 +182,27 @@ def test_gateway_request(load: Load) -> None:
 def test_gateway_jwt_request_has_no_context(load: Load) -> None:
     payload = GatewayPayload.model_validate(load("gateway_request_jwt"))
     assert payload.mcp is not None
-    assert payload.mcp.gatewayRequest is not None
-    assert payload.mcp.gatewayRequest.context is None
+    assert GatewayRequest.model_validate(payload.mcp.gatewayRequest).context is None
 
 
 def test_gateway_response(load: Load) -> None:
     payload = GatewayPayload.model_validate(load("gateway_response"))
     assert payload.mcp is not None
-    response = payload.mcp.gatewayResponse
-    assert response is not None
-    assert (response.statusCode, response.isStreamingResponse) == (200, False)
+    response = GatewayResponse.model_validate(payload.mcp.gatewayResponse)
+    assert response.statusCode == 200
+    assert "statusCode" in response.model_fields_set
+    assert response.isStreamingResponse is None
     reply = RpcReply.model_validate(response.body)
     assert reply.error is None
-    assert ResultBody.model_validate(reply.result).isError is False
+    assert parse_tool_result(reply.result).is_error is False
 
 
 def test_gateway_policy_denial_is_an_error_reply(load: Load) -> None:
     payload = GatewayPayload.model_validate(load("gateway_response_policy_denied"))
     assert payload.mcp is not None
-    assert payload.mcp.gatewayResponse is not None
-    reply = RpcReply.model_validate(payload.mcp.gatewayResponse.body)
+    reply = RpcReply.model_validate(
+        GatewayResponse.model_validate(payload.mcp.gatewayResponse).body
+    )
     assert reply.result is None
     assert isinstance(reply.error, dict)
     assert reply.error["code"] == -32002
@@ -199,6 +213,7 @@ def test_gateway_response_without_request(load: Load) -> None:
     assert payload.mcp is not None
     assert payload.mcp.gatewayRequest is None
     assert payload.mcp.gatewayResponse is not None
+    assert "gatewayRequest" in payload.mcp.model_fields_set
 
 
 def test_gateway_version_is_required(load: Load) -> None:
@@ -235,8 +250,7 @@ def _call(**params: JsonValue) -> dict[str, JsonValue]:
 def test_classify_tools_call(load: Load) -> None:
     payload = GatewayPayload.model_validate(load("gateway_request"))
     assert payload.mcp is not None
-    assert payload.mcp.gatewayRequest is not None
-    got = classify_body(payload.mcp.gatewayRequest.body)
+    got = classify_body(GatewayRequest.model_validate(payload.mcp.gatewayRequest).body)
     assert got.kind == "tools_call"
     assert got.call is not None
     assert got.call.params.name == "gdrive___read_file_content"
@@ -245,8 +259,7 @@ def test_classify_tools_call(load: Load) -> None:
 def test_classify_tools_list_is_other(load: Load) -> None:
     payload = GatewayPayload.model_validate(load("gateway_tools_list_request"))
     assert payload.mcp is not None
-    assert payload.mcp.gatewayRequest is not None
-    got = classify_body(payload.mcp.gatewayRequest.body)
+    got = classify_body(GatewayRequest.model_validate(payload.mcp.gatewayRequest).body)
     assert (got.kind, got.call) == ("other", None)
 
 
@@ -328,7 +341,49 @@ def test_a_blank_harness_tool_name_is_rejected(load: Load) -> None:
 def test_gateway_streaming_response(load: Load) -> None:
     payload = GatewayPayload.model_validate(load("gateway_response_streaming"))
     assert payload.mcp is not None
-    response = payload.mcp.gatewayResponse
-    assert response is not None
+    response = GatewayResponse.model_validate(payload.mcp.gatewayResponse)
     assert response.isStreamingResponse is True
     assert RpcReply.model_validate(response.body).error is None
+
+
+@pytest.mark.parametrize("flag", ["maybe", "true", 1, 0, [], {}])
+def test_a_streaming_flag_must_be_a_boolean(flag: JsonValue) -> None:
+    with pytest.raises(ValidationError):
+        GatewayResponse.model_validate({"body": None, "isStreamingResponse": flag})
+
+
+def test_a_response_needs_a_body_but_not_a_status_code() -> None:
+    response = GatewayResponse.model_validate({"body": None})
+    assert "statusCode" not in response.model_fields_set
+    for bad in ({}, {"statusCode": 200}):
+        with pytest.raises(ValidationError):
+            GatewayResponse.model_validate(bad)
+
+
+def test_strings_are_kept_as_they_came() -> None:
+    body = _call(name="t", arguments={"a": " x\n"}, _meta={"baggage": " k=v "})
+    body["id"] = " 7 "
+    got = classify_body(body)
+    assert got.call is not None
+    assert got.call.id == " 7 "
+    assert got.call.params.arguments == {"a": " x\n"}
+    assert got.call.params.baggage == " k=v "
+
+
+def test_pass_through_values_are_the_payloads_own_objects() -> None:
+    arguments: JsonValue = {"a": ["b"]}
+    got = classify_body(_call(name="t", arguments=arguments))
+    assert got.call is not None
+    assert got.call.params.arguments is arguments
+
+
+def test_a_nesting_far_past_the_validation_depth_is_held() -> None:
+    deep: JsonValue = "x"
+    for _ in range(5_000):
+        deep = {"a": deep}
+    got = classify_body(_call(name="t", arguments=deep))
+    assert got.kind == "tools_call"
+    assert got.call is not None
+    assert got.call.params.arguments is deep
+    assert is_truncated(deep) is False
+    assert parse_tool_result({"content": deep, "structuredContent": deep}).content is deep

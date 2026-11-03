@@ -17,7 +17,7 @@ from helpers import (
 )
 from slashid_agentcore_forwarder.checks import POLICY_UNAVAILABLE, UNREADABLE, Outcome
 from slashid_agentcore_forwarder.deny import derive_key, is_own_deny, with_reference
-from slashid_agentcore_forwarder.harness import handle
+from slashid_agentcore_forwarder.harness import cache_key, handle
 from slashid_agentcore_forwarder.tool_call import CachedInput
 
 ROLE = HARNESS_ROLE
@@ -49,7 +49,10 @@ def b64(data: bytes) -> str:
 
 READ = "gdrive___read_file_content"
 SESSION = "00000000-0000-4000-8000-000000000001"
-CACHE_KEY = f"{SESSION}:tooluse_EXAMPLE0001"
+FIXTURE_HARNESS = (
+    "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/AgentDemo_default_hdemo-EXAMPLE0001"
+)
+CACHE_KEY = cache_key(FIXTURE_HARNESS, SESSION, "tooluse_EXAMPLE0001")
 
 # before_tool_call
 
@@ -509,3 +512,107 @@ async def test_no_log_line_carries_payload_text(
     await handle(runtime, after_with(load, READ, drive_result("SECRET-ID")))
     assert "SECRET-ID" not in caplog.text
     assert "banana-bread" not in caplog.text
+
+
+# the raw payload, whitespace and all
+
+
+async def test_the_cached_input_and_its_key_are_not_stripped(load: Load) -> None:
+    payload = drive_before(load, toolInput={"fileId": "ID1 ", "note": "line\n"})
+    payload["sessionId"] = " abc "
+    runtime = make_runtime()
+    await handle(runtime, payload)
+    cached = runtime.inputs.get(cache_key(FIXTURE_HARNESS, " abc ", "tooluse_EXAMPLE0001"))
+    assert cached is not None
+    assert cached.tool_input == {"fileId": "ID1 ", "note": "line\n"}
+    assert runtime.inputs.get(cache_key(FIXTURE_HARNESS, "abc", "tooluse_EXAMPLE0001")) is None
+
+
+@pytest.mark.parametrize("field", ["toolName", "toolUseId"])
+async def test_a_blank_name_or_id_is_still_unreadable(load: Load, field: str) -> None:
+    payload = drive_before(load, **{field: " \t\n"})
+    runtime = make_runtime(verdict_fail_mode="allow")
+    answer = await handle(runtime, payload)
+    assert isinstance(answer, dict)
+    assert answer["decision"] == "deny"
+    assert checker_of(runtime).invocations == []
+
+
+# the event name
+
+BAD_EVENTS: list[JsonValue] = [
+    None,
+    7,
+    ["before_tool_call"],
+    {},
+    True,
+    "weird",
+    "",
+    "BEFORE_TOOL_CALL",
+]
+
+
+@pytest.mark.parametrize("event", BAD_EVENTS)
+@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
+async def test_an_event_that_is_not_a_tool_hook_takes_the_no_answer_path(
+    load: Load, caplog: pytest.LogCaptureFixture, event: JsonValue, fail_mode: str
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("harness_before_tool_call")
+    payload["event"] = event
+    runtime = make_runtime(verdict_fail_mode=fail_mode)
+    answer = await handle(runtime, payload)
+    assert isinstance(answer, dict)
+    assert answer["decision"] == fail_mode
+    assert checker_of(runtime).invocations == []
+    [line] = events(caplog, "fail_mode")
+    assert (line["check"], line["reason"]) == ("call", "unknown_event")
+    assert events(caplog, "unreadable") == []
+
+
+async def test_a_payload_without_an_event_takes_the_no_answer_path(load: Load) -> None:
+    payload = load("harness_before_tool_call")
+    del payload["event"]
+    runtime = make_runtime(verdict_fail_mode="deny")
+    answer = await handle(runtime, payload)
+    assert isinstance(answer, dict)
+    assert answer["decision"] == "deny"
+
+
+# the input cache key
+
+
+async def test_the_same_ids_on_two_harnesses_do_not_share_an_entry(load: Load) -> None:
+    runtime = make_runtime()
+    arns = {
+        "A": "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/harness-A",
+        "B": "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/harness-B",
+    }
+    for file_id, arn in arns.items():
+        payload = drive_before(load, toolInput={"fileId": file_id})
+        payload["harnessArn"] = arn
+        await handle(runtime, payload)
+    for file_id, arn in arns.items():
+        after = after_with(load, READ, {"truncated": True, "preview": "{"})
+        after["harnessArn"] = arn
+        await handle(runtime, after)
+        event = checker_of(runtime).invocations[-1]
+        assert [f.file_refs for f in event.accessed_files or []] == [[f"google/{file_id}"]]
+
+
+async def test_ids_that_join_to_the_same_text_do_not_share_an_entry(load: Load) -> None:
+    runtime = make_runtime()
+    pairs = [("a:b", "c", "X"), ("a", "b:c", "Y")]
+    for session, tool_use, file_id in pairs:
+        payload = drive_before(load, toolUseId=tool_use, toolInput={"fileId": file_id})
+        payload["sessionId"] = session
+        await handle(runtime, payload)
+    for session, tool_use, file_id in pairs:
+        after = after_with(load, READ, {"truncated": True, "preview": "{"})
+        after["sessionId"] = session
+        context = after["context"]
+        assert isinstance(context, dict)
+        context["toolUseId"] = tool_use
+        await handle(runtime, after)
+        event = checker_of(runtime).invocations[-1]
+        assert [f.file_refs for f in event.accessed_files or []] == [[f"google/{file_id}"]]

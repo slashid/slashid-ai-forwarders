@@ -2,21 +2,28 @@
 
 import json
 import time
+from collections.abc import Callable
 
 import pytest
+from pydantic import JsonValue
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1, AWSIdentityDetails
 
 from slashid_agentcore_forwarder.cache import TtlCache
 from slashid_agentcore_forwarder.checks import Outcome
 from slashid_agentcore_forwarder.config import Config
 from slashid_agentcore_forwarder.deny import derive_key
+from slashid_agentcore_forwarder.payloads import ClientContext
 from slashid_agentcore_forwarder.runtime import Runtime
 from slashid_agentcore_forwarder.tool_call import CachedInput
 
 LOGGER = "slashid_agentcore_forwarder"
+GATEWAY_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:gateway/gw-EXAMPLE"
+RID = "11111111-1111-4111-8111-111111111111"
 PRINCIPAL = "arn:aws:iam::123456789012:role/AgentCore-example-ApplicationRuntimeAgentRole"
 GATEWAY_ROLE = "arn:aws:iam::123456789012:role/gateway-role"
 HARNESS_ROLE = "arn:aws:iam::123456789012:role/harness-role"
+
+Load = Callable[[str], dict[str, JsonValue]]
 
 
 def make_config(**overrides: object) -> Config:
@@ -94,3 +101,42 @@ def identity_of(event: AIInvocationObservedV1) -> AWSIdentityDetails:
 def events(caplog: pytest.LogCaptureFixture, name: str) -> list[dict[str, object]]:
     lines = [json.loads(r.getMessage()) for r in caplog.records if r.name == LOGGER]
     return [line for line in lines if line["event"] == name]
+
+
+def ctx(**overrides: str | None) -> ClientContext:
+    return ClientContext.model_validate(
+        {"GATEWAY_ARN": GATEWAY_ARN, "REQUEST_ID": RID, **overrides}
+    )
+
+
+def obj(value: JsonValue) -> dict[str, JsonValue]:
+    assert isinstance(value, dict)
+    return value
+
+
+def mcp_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return obj(payload["mcp"])
+
+
+def request_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return obj(mcp_of(payload)["gatewayRequest"])
+
+
+def body_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return obj(request_of(payload)["body"])
+
+
+def params_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return obj(body_of(payload)["params"])
+
+
+def response_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    return obj(mcp_of(payload)["gatewayResponse"])
+
+
+def with_result(
+    load: Load, result: JsonValue, name: str = "gateway_response"
+) -> dict[str, JsonValue]:
+    payload = load(name)
+    obj(response_of(payload)["body"])["result"] = result
+    return payload
