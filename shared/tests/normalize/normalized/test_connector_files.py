@@ -435,3 +435,43 @@ def test_read_resource_needs_a_graph_drive_id() -> None:
 def test_sourcedoc_is_read_only_on_a_microsoft_host() -> None:
     url = f"https://example.com/Doc.aspx?sourcedoc=%7B{GUID}%7D"
     assert connector_files(_sp("fetch"), {"url": url}, None) == []
+
+
+def test_list_recent_files_reads_like_search() -> None:
+    result = json.dumps({"files": [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]})
+    got = connector_files(_claude("list_recent_files"), {}, result)
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+@pytest.mark.parametrize("action", ["copy_file", "get_file_permissions"])
+def test_copy_and_permissions_give_the_source_ref_on_both_checks(action: str) -> None:
+    assert _got(connector_refs(_claude(action), {"fileId": "ID1"})) == [("google/ID1", None, None)]
+    result = json.dumps({"id": "COPY", "title": "Copy of a", "mimeType": "text/plain"})
+    got = connector_files(_claude(action), {"fileId": "ID1"}, result)
+    assert _got(got) == [("google/ID1", None, None)]
+
+
+def test_a_read_result_names_its_file_without_the_arguments() -> None:
+    result = json.dumps({"id": "ID1", "title": "a.md", "mimeType": "text/markdown"})
+    got = connector_files(_claude("get_file_metadata"), None, result)
+    assert _got(got) == [("google/ID1", "a.md", None)]
+    view = json.dumps(
+        {
+            "fileContent": "x",
+            "title": "a.md",
+            "viewUrl": "https://docs.google.com/document/d/ID2/edit",
+        }
+    )
+    assert _got(connector_files(_claude("read_file_content"), None, view)) == [
+        ("google/ID2", "a.md", None)
+    ]
+
+
+def test_the_result_id_wins_over_the_arguments() -> None:
+    result = json.dumps({"id": "RESULT", "title": "a.md"})
+    got = connector_files(_claude("get_file_metadata"), {"fileId": "ARGS"}, result)
+    assert _got(got) == [("google/RESULT", "a.md", None)]
+
+
+def test_a_result_with_only_an_id_is_not_a_drive_file() -> None:
+    assert connector_files(_claude("get_file_metadata"), None, json.dumps({"id": "x"})) == []

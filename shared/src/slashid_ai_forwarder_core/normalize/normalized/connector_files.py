@@ -129,6 +129,7 @@ class _DriveFile(_Lenient):
     file_or_folder: str | None = None
     content: str | None = None
     b64_string: str | None = None
+    viewUrl: str | None = None
 
 
 class _DriveFiles(_Lenient):
@@ -254,24 +255,43 @@ def _drive_id_of(url: str) -> str | None:
     return ids[0] if ids else None
 
 
+_FILE_TOOLS = frozenset({"read_file_content", "get_file_metadata", "download_file_content"})
+_SOURCE_TOOLS = frozenset({"copy_file", "get_file_permissions"})
+_SEARCH_TOOLS = frozenset({"search_files", "list_recent_files"})
+
+
+def _result_file_id(file: _DriveFile | None) -> str | None:
+    """The id a Drive result repeats: its ``id`` beside a ``title`` or ``mimeType``, else the
+    one in a Drive ``viewUrl``."""
+    if file is None:
+        return None
+    if file.id and (file.title or file.mimeType):
+        return file.id
+    return _drive_id_of(file.viewUrl) if file.viewUrl else None
+
+
 def _claude_drive(
     action: str, tool_input: JsonValue, tool_output: JsonValue
 ) -> list[ConnectorFile]:
-    if action == "search_files":
+    if action in _SEARCH_TOOLS:
         found = _result(_DriveFiles, tool_output)
         return [
             _file(_google(f.id), name=f.title)
             for f in (found.files if found else [])
             if f.id and f.mimeType and f.mimeType != _FOLDER
         ]
-    if action not in {"read_file_content", "get_file_metadata", "download_file_content"}:
-        return []
     args = _args(_FileIdArgs, tool_input)
-    if args is None:
+    if action in _SOURCE_TOOLS:
+        # The result describes a copy or a permission list, not the file: no name.
+        return [_file(_google(args.fileId))] if args else []
+    if action not in _FILE_TOOLS:
         return []
     file = _result(_DriveFile, tool_output)
+    file_id = _result_file_id(file) or (args.fileId if args else None)
+    if not file_id:
+        return []
     content = _bytes(file.content) if file and action == "download_file_content" else None
-    return [_file(_google(args.fileId), name=file.title if file else None, content=content)]
+    return [_file(_google(file_id), name=file.title if file else None, content=content)]
 
 
 def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
