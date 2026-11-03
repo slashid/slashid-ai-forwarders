@@ -1,0 +1,1 @@
+Payload fixtures with synthetic ids (account `123456789012`, `EXAMPLE` suffixes). `harness_before_tool_call` and `gateway_request` follow findings Appendix A; the rest are hand-built from the Harness hook table, the demo handler and the findings' description of a truncated result.
