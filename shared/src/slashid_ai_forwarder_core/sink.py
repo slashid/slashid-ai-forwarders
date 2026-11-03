@@ -10,7 +10,7 @@ a one-trick pony.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import httpx
@@ -49,6 +49,16 @@ class PermanentPushError(Exception):
 class PreflightError(Exception):
     """Preflight gave no verdict: a transport failure, a non-200, or a body
     that is not ``{"deny_reasons": [str, ...]}``."""
+
+
+def join_deny_reasons(reasons: Sequence[str]) -> str:
+    """The endpoint's list as one string, for a surface that takes a single reason.
+
+    Joined with a space, because each reason is a standalone statement written to be read
+    by a person and the surface rendering it is not guaranteed to honour a line break. The
+    server already deduplicates, so nothing is dropped here but blanks.
+    """
+    return " ".join(reason.strip() for reason in reasons if reason.strip())
 
 
 def _classify(resp: httpx.Response) -> Exception:

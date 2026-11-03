@@ -139,3 +139,10 @@ async def test_transport_error_raises() -> None:
     async with client(handler) as c:
         with pytest.raises(PreflightError):
             await call(c)
+
+
+def test_deny_reasons_are_joined_with_a_space_and_blanks_dropped() -> None:
+    from slashid_ai_forwarder_core.sink import join_deny_reasons
+
+    assert join_deny_reasons(["a. ", "", "  ", "b."]) == "a. b."
+    assert join_deny_reasons([]) == ""
