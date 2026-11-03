@@ -1,53 +1,79 @@
-"""Models of both surfaces' payloads. Tool inputs and results stay free-form JSON.
+"""Models of both surfaces' payloads. Tool inputs, results and everything the Gateway echoes
+stay free-form JSON, held as it came (``Raw``): no field of these models validates its depth.
 
-A REQUEST/RESPONSE decision must read the raw dict, because ``GatewayPayload`` fails as a whole on
-one malformed field, and a RESPONSE's ``error`` is checked before its ``result`` is parsed.
+``McpPart`` keeps the request and the response raw, because a request that fails its envelope
+is unreadable and a response that fails its envelope is a no-answer.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
-from slashid_agentcore_forwarder.models import Lenient
+from slashid_agentcore_forwarder.models import Lenient, NonBlank, Raw
 
 # Harness hooks
 
 
+class HarnessEventName(Lenient):
+    """The event of any hook payload, whatever its type."""
+
+    event: object = None
+
+
 class HarnessContext(Lenient):
-    toolName: str = Field(min_length=1)
+    toolName: NonBlank
     toolType: str | None = None
-    toolUseId: str = Field(min_length=1)
-    toolInput: JsonValue = None
-    toolResult: JsonValue = None
+    toolUseId: NonBlank
+    toolInput: Raw = None
+    toolResult: Raw = None
 
 
 class HarnessToolHook(Lenient):
-    event: Literal["before_tool_call", "after_tool_call"]
-    harnessArn: str = Field(min_length=1)
-    sessionId: str = Field(min_length=1)
-    hookEventId: str = Field(min_length=1)
+    """The envelope of a ``before_tool_call`` or ``after_tool_call``; the event is read apart."""
+
+    harnessArn: NonBlank
+    sessionId: NonBlank
+    hookEventId: NonBlank
     context: HarnessContext
 
 
 class ToolResult(Lenient):
-    status: str | None = None
+    """A tool result as the Gateway carries it (MCP)."""
+
     isError: bool | None = None
-    content: JsonValue = None
-    structuredContent: JsonValue = None
+    content: Raw = None
+    structuredContent: Raw = None
+
+    @property
+    def is_error(self) -> bool:
+        return bool(self.isError)
+
+
+class HarnessToolResult(ToolResult):
+    """A Harness ``toolResult`` also says ``status``."""
+
+    status: str | None = None
 
     @property
     def is_error(self) -> bool:
         return bool(self.isError) or self.status == "error"
 
 
-def parse_tool_result(raw: JsonValue) -> ToolResult:
+def parse_tool_result(raw: object) -> ToolResult:
     """An empty result for anything that is not an object we can read: no references, no failure."""
     try:
         return ToolResult.model_validate(raw)
     except ValidationError:
         return ToolResult()
+
+
+def parse_harness_result(raw: object) -> HarnessToolResult:
+    try:
+        return HarnessToolResult.model_validate(raw)
+    except ValidationError:
+        return HarnessToolResult()
 
 
 class Truncated(Lenient):
@@ -57,7 +83,7 @@ class Truncated(Lenient):
     preview: str | None = None
 
 
-def is_truncated(raw: JsonValue) -> bool:
+def is_truncated(raw: object) -> bool:
     try:
         Truncated.model_validate(raw)
     except ValidationError:
@@ -73,9 +99,9 @@ class Meta(Lenient):
 
 
 class RpcParams(Lenient):
-    name: str = Field(min_length=1)
-    arguments: JsonValue = None
-    meta: JsonValue = Field(None, alias="_meta")
+    name: NonBlank
+    arguments: Raw = None
+    meta: Raw = Field(None, alias="_meta")
 
     @property
     def baggage(self) -> str | None:
@@ -101,27 +127,32 @@ class GatewayContext(Lenient):
 
 
 class GatewayRequest(Lenient):
-    headers: JsonValue = None
-    body: JsonValue
-    context: GatewayContext | None = None
+    headers: Raw = None
+    body: Raw = None
+    context: Raw = None
 
 
 class GatewayResponse(Lenient):
-    statusCode: int = 200
-    headers: JsonValue = None
-    body: JsonValue = None
-    isStreamingResponse: bool = False
+    """Read ``model_fields_set`` for a ``statusCode`` that was there. A flag that is not exactly
+    a boolean fails the envelope."""
+
+    statusCode: Raw = None
+    headers: Raw = None
+    body: Raw
+    isStreamingResponse: StrictBool | None = None
 
 
 class McpPart(Lenient):
-    gatewayRequest: GatewayRequest | None = None
-    gatewayResponse: GatewayResponse | None = None
+    """Read ``model_fields_set`` for a ``gatewayResponse`` that was there."""
+
+    gatewayRequest: Raw = None
+    gatewayResponse: Raw = None
 
 
 class GatewayPayload(Lenient):
     interceptorInputVersion: str
     mcp: McpPart | None = None
-    http: JsonValue = None
+    http: Raw = None
 
 
 class ClientContext(Lenient):
@@ -141,12 +172,8 @@ def client_context(context: object) -> ClientContext:
 
 
 class RpcReply(Lenient):
-    result: JsonValue = None
-    error: JsonValue = None
-
-
-class ResultBody(Lenient):
-    isError: bool = False
+    result: Raw = None
+    error: Raw = None
 
 
 # Request bodies
@@ -165,14 +192,14 @@ class Classified(BaseModel):
     call: ToolsCall | None = None
 
 
-def _is_tools_call(item: JsonValue) -> bool:
+def _is_tools_call(item: object) -> bool:
     try:
         return _Method.model_validate(item).method == "tools/call"
     except ValidationError:
         return False
 
 
-def classify_body(body: JsonValue) -> Classified:
+def classify_body(body: object) -> Classified:
     """Tells a ``tools/call`` apart from other messages, batches and what cannot be read."""
     if isinstance(body, list):
         return Classified(

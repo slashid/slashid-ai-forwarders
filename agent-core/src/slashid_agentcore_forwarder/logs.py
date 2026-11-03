@@ -31,7 +31,7 @@ RoleKind = Literal["harness", "gateway", "claimed_harness"]
 RoleLookupError = Literal[
     "timeout", "access_denied", "not_found", "throttled", "bad_shape", "other"
 ]
-UnreadableReason = Literal["bad_envelope", "bad_tool_call", "batch_with_call"]
+UnreadableReason = Literal["bad_envelope", "bad_tool_call", "batch_with_call", "too_deep"]
 
 MAX_KEYS = 20
 MAX_KEY = 64

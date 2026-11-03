@@ -25,6 +25,8 @@ from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
 )
 from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 
+from slashid_agentcore_forwarder.models import Raw
+
 
 class ToolCall(BaseModel):
     """One call as either surface saw it."""
@@ -35,7 +37,7 @@ class ToolCall(BaseModel):
     raw_name: str  # as the platform gave it; connector recognition uses this
     resolved_name: str  # names.resolve_name(...); tool/server identity only
     call_id: str
-    tool_input: JsonValue
+    tool_input: Raw
     request_id: str
     conversation_id: str | None
     user_agent: str | None
@@ -52,7 +54,7 @@ class CachedInput(BaseModel):
     model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     tool_name: str
-    tool_input: JsonValue
+    tool_input: Raw
 
     def matches(self, call: ToolCall) -> bool:
         return self.tool_name == call.raw_name
@@ -65,9 +67,17 @@ def call_files(call: ToolCall) -> list[AIAccessedFile]:
 
 
 def result_files(
-    call: ToolCall, tool_input: JsonValue, output: JsonValue, *, config: BaseConfig
+    call: ToolCall,
+    tool_input: JsonValue,
+    output: JsonValue,
+    *,
+    config: BaseConfig,
+    skip: bool = False,
 ) -> list[AIAccessedFile]:
-    """``output`` is the Gateway ``result`` object or the Harness ``content`` list."""
+    """``output`` is the Gateway ``result`` object or the Harness ``content`` list. ``skip``, for
+    an error or a result we cannot read, gives no files."""
+    if skip:
+        return []
     files = connector_files(call.raw_name, tool_input, output)
     return merge_by_refs([connector_accessed_file(cf, config=config) for cf in files])
 

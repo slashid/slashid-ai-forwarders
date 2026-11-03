@@ -1,75 +1,45 @@
 import base64
+import copy
 import json
 import logging
 import uuid
-from collections.abc import Callable
 
 import pytest
 from pydantic import JsonValue
+from slashid_ai_forwarder_core.normalize.normalized.connector_files import ConnectorFile
 
 from helpers import (
+    GATEWAY_ARN,
     GATEWAY_ROLE,
     LOGGER,
     PRINCIPAL,
+    RID,
     FakeRoles,
+    Load,
+    body_of,
     checker_of,
+    ctx,
     events,
     identity_of,
     make_runtime,
+    mcp_of,
+    obj,
+    params_of,
+    request_of,
+    response_of,
+    with_result,
 )
+from slashid_agentcore_forwarder import tool_call
 from slashid_agentcore_forwarder.checks import POLICY_UNAVAILABLE, UNREADABLE, Outcome
 from slashid_agentcore_forwarder.deny import derive_key, is_own_deny, with_reference
 from slashid_agentcore_forwarder.gateway import handle
-from slashid_agentcore_forwarder.payloads import ClientContext
 
-GATEWAY_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:gateway/gw-EXAMPLE"
 HARNESS_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/harness1-AbCdEfGhIj"
 SESSION = "00000000-0000-4000-8000-000000000001"
-RID = "11111111-1111-4111-8111-111111111111"
 READ = "gdrive___read_file_content"
 WITHHELD = "Content withheld: "
 VERSION = "1.0"
 SECRET = "SYNTHETIC-SIGNATURE"
-Load = Callable[[str], dict[str, JsonValue]]
-
-
-def ctx(**overrides: str | None) -> ClientContext:
-    return ClientContext.model_validate(
-        {"GATEWAY_ARN": GATEWAY_ARN, "REQUEST_ID": RID, **overrides}
-    )
-
-
-def obj(value: JsonValue) -> dict[str, JsonValue]:
-    assert isinstance(value, dict)
-    return value
-
-
-def mcp_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    return obj(payload["mcp"])
-
-
-def request_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    return obj(mcp_of(payload)["gatewayRequest"])
-
-
-def body_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    return obj(request_of(payload)["body"])
-
-
-def params_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    return obj(body_of(payload)["params"])
-
-
-def response_of(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    return obj(mcp_of(payload)["gatewayResponse"])
-
-
-def with_result(
-    load: Load, result: JsonValue, name: str = "gateway_response"
-) -> dict[str, JsonValue]:
-    payload = load(name)
-    obj(response_of(payload)["body"])["result"] = result
-    return payload
 
 
 def drive_result(file_id: str = "ID1") -> JsonValue:
@@ -118,6 +88,15 @@ def denied_text(answer: JsonValue) -> str:
     text = obj(block)["text"]
     assert isinstance(text, str)
     return text
+
+
+def denied(answer: JsonValue) -> bool:
+    """A deny answer. The shape of an allow with nothing to echo is unconfirmed (spec 6), so
+    the tests below do not pin it."""
+    mcp = obj(obj(answer)["mcp"])
+    return "transformedGatewayResponse" in mcp and "statusCode" in obj(
+        mcp["transformedGatewayResponse"]
+    )
 
 
 def echoed_response(payload: dict[str, JsonValue]) -> JsonValue:
@@ -457,10 +436,7 @@ async def test_an_mcp_part_that_is_not_an_object_takes_the_no_answer_path(
     caplog.set_level(logging.INFO, logger=LOGGER)
     payload: dict[str, JsonValue] = {"interceptorInputVersion": VERSION, "mcp": "oops"}
     runtime = make_runtime(verdict_fail_mode="allow")
-    assert await handle(runtime, payload, ctx()) == {
-        "interceptorOutputVersion": VERSION,
-        "mcp": {},
-    }
+    assert not denied(await handle(runtime, payload, ctx()))
     [line] = events(caplog, "fail_mode")
     assert line["reason"] == "error"
 
@@ -741,9 +717,8 @@ async def test_an_invalid_response_envelope_takes_the_no_answer_path(
     runtime = make_runtime(verdict_fail_mode=fail_mode)
     answer = await handle(runtime, payload, ctx())
     assert checker_of(runtime).invocations == []
-    if fail_mode == "allow":
-        assert answer == {"interceptorOutputVersion": VERSION, "mcp": {}}
-    else:
+    assert denied(answer) is (fail_mode == "deny")
+    if fail_mode == "deny":
         assert denied_text(answer).startswith(WITHHELD + POLICY_UNAVAILABLE)
     [line] = events(caplog, "fail_mode")
     assert (line["check"], line["reason"]) == ("result", "error")
@@ -867,3 +842,206 @@ async def test_no_log_line_carries_payload_text(
     assert "SECRET-ID" not in caplog.text
     assert "banana-bread" not in caplog.text
     assert "Synthetic file body" not in caplog.text
+
+
+# the echo is the raw payload
+
+
+PADDED: dict[str, JsonValue] = {
+    "note": "line\n",
+    "lead": "  indented",
+    "tail": "trail\t ",
+    "uni": "caf\u00e9 \u2713\u00a0",
+    "nested": ["  a ", {"k": " v\n"}],
+}
+
+
+async def test_the_request_echo_is_the_raw_body_whitespace_and_all(load: Load) -> None:
+    payload = load("gateway_request")
+    arguments: JsonValue = {"fileId": "ID1", **PADDED}
+    params_of(payload)["arguments"] = arguments
+    body_of(payload)["id"] = " req-7\n"
+    snapshot = copy.deepcopy(body_of(payload))
+    answer = await handle(make_runtime(), payload, ctx())
+    echoed = obj(obj(obj(answer)["mcp"])["transformedGatewayRequest"])["body"]
+    assert echoed == snapshot
+    assert echoed is body_of(payload)
+
+
+async def test_the_extractor_gets_the_arguments_unstripped(
+    load: Load, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[JsonValue] = []
+    real = tool_call.connector_refs
+
+    def spy(name: str, tool_input: JsonValue) -> list[ConnectorFile]:
+        seen.append(tool_input)
+        return real(name, tool_input)
+
+    monkeypatch.setattr(tool_call, "connector_refs", spy)
+    payload = load("gateway_request")
+    arguments: JsonValue = {"fileId": "ID1 ", **PADDED}
+    params_of(payload)["arguments"] = arguments
+    await handle(make_runtime(), payload, ctx())
+    [got] = seen
+    assert got is arguments
+    assert got == {"fileId": "ID1 ", **PADDED}
+
+
+async def test_a_deny_keeps_a_padded_string_id(load: Load) -> None:
+    payload = load("gateway_request")
+    body_of(payload)["id"] = " req-7\n"
+    answer = await handle(make_runtime(Outcome("deny", ("no",))), payload, ctx())
+    assert answer == deny_body(" req-7\n", denied_text(answer))
+
+
+async def test_the_response_echo_is_the_raw_response_whitespace_and_all(load: Load) -> None:
+    payload = load("gateway_response")
+    response = response_of(payload)
+    response["headers"] = {"content-type": " application/json\n", "x-pad": "  "}
+    body = obj(response["body"])
+    body["id"] = " 2 "
+    padded: JsonValue = {
+        "isError": False,
+        "content": [{"type": "text", "text": "  code\n"}],
+        "structuredContent": PADDED,
+    }
+    body["result"] = padded
+    snapshot = copy.deepcopy(response)
+    answer = await handle(make_runtime(), payload, ctx())
+    echoed = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
+    assert echoed == snapshot
+    assert echoed["body"] is response["body"]
+    assert echoed["headers"] is response["headers"]
+
+
+async def test_the_extractor_gets_the_result_unstripped(
+    load: Load, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[JsonValue] = []
+    real = tool_call.connector_files
+
+    def spy(name: str, tool_input: JsonValue, output: JsonValue) -> list[ConnectorFile]:
+        seen.append(output)
+        return real(name, tool_input, output)
+
+    monkeypatch.setattr(tool_call, "connector_files", spy)
+    text = json.dumps({"id": "ID1", "title": "t.md"}) + "\n\n"
+    result: JsonValue = {"isError": False, "content": [{"type": "text", "text": text}]}
+    await handle(make_runtime(), with_result(load, result), ctx())
+    [got] = seen
+    assert got is result
+
+
+async def test_a_tool_name_of_whitespace_is_still_unreadable(load: Load) -> None:
+    payload = load("gateway_request")
+    params_of(payload)["name"] = " \t\n"
+    runtime = make_runtime(verdict_fail_mode="allow")
+    answer = await handle(runtime, payload, ctx())
+    assert denied_text(answer).startswith(UNREADABLE)
+    assert checker_of(runtime).invocations == []
+
+
+async def test_a_tool_name_is_not_stripped(load: Load) -> None:
+    payload = load("gateway_request")
+    params_of(payload)["name"] = " gdrive___read_file_content "
+    runtime = make_runtime()
+    await handle(runtime, payload, ctx())
+    [event] = checker_of(runtime).invocations
+    assert event.accessed_files is None  # no connector tool by that exact name
+
+
+# REQUEST or RESPONSE: the key is present and null, or present and not null
+
+
+@pytest.mark.parametrize("falsy", [{}, [], "", 0, False])
+@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
+async def test_a_falsy_gateway_response_is_a_response_that_fails_its_envelope(
+    load: Load, caplog: pytest.LogCaptureFixture, falsy: JsonValue, fail_mode: str
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_response")
+    mcp_of(payload)["gatewayResponse"] = falsy
+    runtime = make_runtime(verdict_fail_mode=fail_mode)
+    answer = await handle(runtime, payload, ctx())
+    assert checker_of(runtime).invocations == []
+    assert denied(answer) is (fail_mode == "deny")
+    if fail_mode == "deny":
+        assert denied_text(answer).startswith(WITHHELD + POLICY_UNAVAILABLE)
+    [line] = events(caplog, "fail_mode")
+    assert (line["check"], line["reason"]) == ("result", "error")
+    assert events(caplog, "unreadable") == []
+
+
+@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
+async def test_an_absent_gateway_response_takes_the_no_answer_path(
+    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_request")
+    del mcp_of(payload)["gatewayResponse"]
+    runtime = make_runtime(verdict_fail_mode=fail_mode)
+    answer = await handle(runtime, payload, ctx())
+    assert checker_of(runtime).invocations == []
+    if fail_mode == "allow":
+        assert answer == allow_request(body_of(payload))  # the request the payload carries
+    else:
+        assert denied_text(answer).startswith(POLICY_UNAVAILABLE)
+    [line] = events(caplog, "fail_mode")
+    assert line["reason"] == "unknown_payload"
+    assert events(caplog, "unreadable") == []
+
+
+async def test_a_null_gateway_response_is_a_request(load: Load) -> None:
+    runtime = make_runtime()
+    payload = load("gateway_request")
+    assert obj(mcp_of(payload))["gatewayResponse"] is None
+    await handle(runtime, payload, ctx())
+    [event] = checker_of(runtime).invocations
+    assert event.requested_tool_uses is not None
+    assert event.used_tools is None
+
+
+@pytest.mark.parametrize("flag", ["maybe", "true", 1, 0, [], {}])
+@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
+async def test_a_malformed_streaming_flag_fails_the_response_envelope(
+    load: Load, caplog: pytest.LogCaptureFixture, flag: JsonValue, fail_mode: str
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    payload = load("gateway_response")
+    response_of(payload)["isStreamingResponse"] = flag
+    runtime = make_runtime(verdict_fail_mode=fail_mode)
+    answer = await handle(runtime, payload, ctx())
+    assert checker_of(runtime).invocations == []
+    assert denied(answer) is (fail_mode == "deny")
+    assert events(caplog, "pass_through") == []
+    [line] = events(caplog, "fail_mode")
+    assert (line["check"], line["reason"]) == ("result", "error")
+
+
+async def test_a_null_streaming_flag_is_not_streaming(load: Load) -> None:
+    payload = load("gateway_response")
+    response_of(payload)["isStreamingResponse"] = None
+    runtime = make_runtime()
+    await handle(runtime, payload, ctx())
+    assert len(checker_of(runtime).invocations) == 1
+
+
+async def test_a_response_without_a_status_code_echoes_none_either(load: Load) -> None:
+    payload = load("gateway_response")
+    del response_of(payload)["statusCode"]
+    answer = await handle(make_runtime(), payload, ctx())
+    echoed = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
+    assert "statusCode" not in echoed
+    assert echoed["body"] == response_of(payload)["body"]
+
+
+@pytest.mark.parametrize("status", [202, "200", None, 1.5])
+async def test_a_status_code_is_echoed_as_the_payload_gave_it(
+    load: Load, status: JsonValue
+) -> None:
+    payload = load("gateway_response")
+    response_of(payload)["statusCode"] = status
+    answer = await handle(make_runtime(), payload, ctx())
+    echoed = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
+    assert echoed["statusCode"] == status
