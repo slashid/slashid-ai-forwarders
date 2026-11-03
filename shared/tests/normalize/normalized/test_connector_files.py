@@ -12,10 +12,12 @@ import pytest
 from pydantic import JsonValue
 
 from slashid_ai_forwarder_core.config_base import BaseConfig
+from slashid_ai_forwarder_core.normalize.finalize import merge_by_refs
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import (
     ConnectorFile,
     connector_files,
     connector_refs,
+    is_connector_tool,
 )
 from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
     connector_stub,
@@ -82,8 +84,11 @@ def test_an_oversize_result_still_gives_the_ref() -> None:
 
 
 def test_claude_search_lists_every_hit() -> None:
-    result = json.dumps({"files": [{"id": "A", "title": "a.md"}, {"id": "B", "title": "b.pdf"}]})
-    got = connector_files(_claude("search_files"), {"query": "q"}, result)
+    files = [
+        {"id": "A", "title": "a.md", "mimeType": "text/markdown"},
+        {"id": "B", "title": "b.pdf", "mimeType": "application/pdf"},
+    ]
+    got = connector_files(_claude("search_files"), {"query": "q"}, json.dumps({"files": files}))
     assert _got(got) == [("google/A", "a.md", None), ("google/B", "b.pdf", None)]
 
 
@@ -104,6 +109,12 @@ def test_codex_fetch_gives_the_bytes_when_asked_for_them() -> None:
 )
 def test_codex_fetch_without_a_result_takes_the_id_from_the_url(url: str, ref: str) -> None:
     assert _got(connector_files(_codex("fetch"), {"url": url}, None)) == [(ref, None, None)]
+
+
+def test_codex_fetch_takes_the_result_id_beside_a_file_or_folder_alone() -> None:
+    payload = {"id": "ID7", "file_or_folder": "file"}
+    got = connector_files(_codex("fetch"), {"url": "https://example.com/x"}, _envelope(payload))
+    assert _got(got) == [("google/ID7", None, None)]
 
 
 def test_codex_metadata_and_search() -> None:
@@ -217,6 +228,7 @@ def test_folder_search_gives_an_item_per_hit() -> None:
         (SOURCEDOC, f"m365/guid/{GUID.upper()}"),
         ("https://t.sharepoint.com/sites/S/Shared%20Documents/a.md", None),
         ("https://example.com/drives/d/items/i", None),
+        (f"https://evilsharepoint.com/Doc.aspx?sourcedoc=%7B{GUID}%7D", None),
     ],
 )
 def test_codex_sharepoint_fetch_takes_the_ref_from_the_url(url: str, ref: str | None) -> None:
@@ -348,6 +360,230 @@ def test_claude_search_leaves_folders_out() -> None:
     assert _got(got) == [("google/A", "a.md", None)]
 
 
+def test_a_metadata_result_with_a_mime_type_alone_gives_its_id() -> None:
+    result = json.dumps({"id": "ID1", "mimeType": "text/plain"})
+    got = connector_files(_claude("get_file_metadata"), {}, result)
+    assert _got(got) == [("google/ID1", None, None)]
+
+
 def test_a_result_that_is_not_text_parts_names_nothing() -> None:
     assert connector_files(_claude("search_files"), {"query": "q"}, [1, "x"]) == []
     assert connector_files(_claude("search_files"), {"query": "q"}, {"a": 1}) == []
+
+
+def _mcp(text: str | None = None, structured: JsonValue = None) -> JsonValue:
+    """What a Gateway hands over as ``result``."""
+    out: dict[str, JsonValue] = {"content": [{"type": "text", "text": text}] if text else []}
+    if structured is not None:
+        out["structuredContent"] = structured
+    return out
+
+
+def test_an_mcp_result_object_is_read_from_its_first_text() -> None:
+    files = [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]
+    got = connector_files(
+        _claude("search_files"), {"query": "q"}, _mcp(json.dumps({"files": files}))
+    )
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_an_mcp_result_object_prefers_structured_content() -> None:
+    structured = {"files": [{"id": "S", "title": "s.md", "mimeType": "text/markdown"}]}
+    result = _mcp(json.dumps({"files": []}), structured)
+    got = connector_files(_claude("search_files"), {"query": "q"}, result)
+    assert _got(got) == [("google/S", "s.md", None)]
+
+
+def test_codex_shapes_travel_in_structured_content() -> None:
+    results = [{"id": "A", "title": "a.md", "file_or_folder": "file"}]
+    got = connector_files(_codex("search"), {"query": "q"}, _mcp(None, {"results": results}))
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_sharepoint_takes_structured_content_too() -> None:
+    results = [{"title": "a.txt", "drive_id": DRIVE, "item_id": ITEM}]
+    got = connector_files(_sp("search"), {"query": "q"}, _mcp(None, {"results": results}))
+    assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM}", "a.txt", None)]
+
+
+def test_an_mcp_object_without_structured_content_falls_back_to_the_codex_envelope() -> None:
+    payload = {"results": [{"id": "A", "title": "a.md", "file_or_folder": "file"}]}
+    text = json.dumps({"content": [], "structuredContent": payload, "isError": False})
+    got = connector_files(_codex("search"), {"query": "q"}, _mcp(text))
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_the_harness_content_list_reads_like_the_object() -> None:
+    files = [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]
+    result = [{"text": json.dumps({"files": files})}]
+    got = connector_files(_claude("search_files"), {"query": "q"}, result)
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_an_mcp_result_with_no_readable_payload_names_nothing() -> None:
+    assert connector_files(_claude("search_files"), {"query": "q"}, _mcp("not json")) == []
+    assert connector_files(_claude("search_files"), {"query": "q"}, {"content": 3}) == []
+
+
+def test_a_drive_search_hit_without_a_mime_type_gives_nothing() -> None:
+    result = json.dumps({"files": [{"id": "A", "title": "a.md"}]})
+    assert connector_files(_claude("search_files"), {"query": "q"}, result) == []
+
+
+def test_a_codex_search_hit_without_file_or_folder_gives_nothing() -> None:
+    payload = {"results": [{"id": "A", "title": "a.md"}]}
+    assert connector_files(_codex("search"), {"query": "q"}, _envelope(payload)) == []
+
+
+def test_a_codex_fetch_result_id_needs_a_mime_type_or_kind() -> None:
+    url = {"url": "https://example.com/x"}
+    assert connector_files(_codex("fetch"), url, _envelope({"id": "ID9", "title": "t"})) == []
+    typed = {"id": "ID9", "title": "t", "mimeType": "text/plain"}
+    got = connector_files(_codex("fetch"), url, _envelope(typed))
+    assert _got(got) == [("google/ID9", "t", None)]
+
+
+def test_read_resource_needs_a_graph_drive_id() -> None:
+    assert connector_files(_m365("read_resource"), {"uri": "file:///home/u/x.txt"}, "t") == []
+
+
+def test_sourcedoc_is_read_only_on_a_microsoft_host() -> None:
+    url = f"https://example.com/Doc.aspx?sourcedoc=%7B{GUID}%7D"
+    assert connector_files(_sp("fetch"), {"url": url}, None) == []
+
+
+def test_list_recent_files_reads_like_search() -> None:
+    result = json.dumps({"files": [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]})
+    got = connector_files(_claude("list_recent_files"), {}, result)
+    assert _got(got) == [("google/A", "a.md", None)]
+
+
+@pytest.mark.parametrize("action", ["copy_file", "get_file_permissions"])
+def test_copy_and_permissions_give_the_source_ref_on_both_checks(action: str) -> None:
+    assert _got(connector_refs(_claude(action), {"fileId": "ID1"})) == [("google/ID1", None, None)]
+    result = json.dumps({"id": "COPY", "title": "Copy of a", "mimeType": "text/plain"})
+    got = connector_files(_claude(action), {"fileId": "ID1"}, result)
+    assert _got(got) == [("google/ID1", None, None)]
+
+
+def test_a_read_result_names_its_file_without_the_arguments() -> None:
+    result = json.dumps({"id": "ID1", "title": "a.md", "mimeType": "text/markdown"})
+    got = connector_files(_claude("get_file_metadata"), None, result)
+    assert _got(got) == [("google/ID1", "a.md", None)]
+    view = json.dumps(
+        {
+            "fileContent": "x",
+            "title": "a.md",
+            "viewUrl": "https://docs.google.com/document/d/ID2/edit",
+        }
+    )
+    assert _got(connector_files(_claude("read_file_content"), None, view)) == [
+        ("google/ID2", "a.md", None)
+    ]
+
+
+def test_the_result_id_wins_over_the_arguments() -> None:
+    result = json.dumps({"id": "RESULT", "title": "a.md"})
+    got = connector_files(_claude("get_file_metadata"), {"fileId": "ARGS"}, result)
+    assert _got(got) == [("google/RESULT", "a.md", None)]
+
+
+def test_a_result_with_only_an_id_is_not_a_drive_file() -> None:
+    assert connector_files(_claude("get_file_metadata"), None, json.dumps({"id": "x"})) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "gdrive___read_file_content",
+        "mcp__gdrive__read_file_content",
+        "gdrive_read_file_content",
+        "read_file_content",
+    ],
+)
+def test_a_drive_tool_on_any_server_is_recognized(name: str) -> None:
+    got = connector_files(name, {"fileId": "ID1"}, None)
+    assert _got(got) == [("google/ID1", None, None)]
+    assert is_connector_tool(name)
+
+
+def test_a_known_suffix_needs_an_underscore_boundary() -> None:
+    assert connector_files("preread_file_content", {"fileId": "ID1"}, None) == []
+    assert not is_connector_tool("preread_file_content")
+
+
+def test_an_unknown_action_gives_nothing_even_with_a_known_suffix() -> None:
+    name = "mcp__claude_ai_Google_Drive__share_read_file_content"
+    assert connector_files(name, {"fileId": "ID1"}, None) == []
+
+
+def test_a_name_in_two_handlers_runs_both() -> None:
+    result = _envelope({"id": "ID5", "title": "m.md"})
+    got = connector_files("mcp__gdrive__get_file_metadata", {"fileId": "ID5"}, result)
+    assert {ref for f in got for ref in f.refs} == {"google/ID5"}
+    assert len(got) == 2  # one per handler; the caller merges them
+
+
+def test_the_longest_known_ending_wins() -> None:
+    # Ends in ``search`` and in ``sharepoint_folder_search``: only the second counts.
+    hit = _envelope({"results": [{"id": "A", "title": "a", "file_or_folder": "file"}]})
+    assert connector_files("x_sharepoint_folder_search", {"q": "q"}, hit) == []
+    assert is_connector_tool("x_sharepoint_folder_search")
+
+
+def test_is_connector_tool_knows_the_exact_patterns_and_nothing_else() -> None:
+    assert is_connector_tool(_claude("search_files"))
+    assert is_connector_tool(_sp("get_drive_item"))
+    assert not is_connector_tool(_claude("share_file"))
+    assert not is_connector_tool("Bash")
+    assert not is_connector_tool("mcp__fs__write")
+
+
+def test_the_duplicates_of_the_any_server_rule_merge_into_one_file() -> None:
+    result = _envelope({"id": "ID5", "title": "m.md"})
+    got = connector_files("mcp__gdrive__get_file_metadata", {"fileId": "ID5"}, result)
+    assert len(got) == 2
+    [merged] = merge_by_refs([connector_stub(cf) for cf in got])
+    assert merged.file_refs == ["google/ID5"]
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "output"),
+    [
+        ("mcp__fs__read_resource", {"uri": "file:///home/u/x.txt"}, "text"),
+        ("web_search", {"query": "q"}, _envelope({"results": [{"id": "1", "title": "t"}]})),
+        ("fetch", {"url": "https://example.com/doc"}, _envelope({"id": "1", "title": "t"})),
+        (
+            "mcp__other__search_files",
+            {"query": "q"},
+            json.dumps({"files": [{"id": "A", "title": "a"}]}),
+        ),
+        ("mcp__box__get_file_metadata", {"path": "/a"}, json.dumps({"id": "1"})),
+        ("mcp__x__search", {"q": "q"}, _envelope({"results": [{"id": "1", "title": "t"}]})),
+    ],
+)
+def test_look_alikes_give_nothing(tool: str, args: JsonValue, output: JsonValue) -> None:
+    assert connector_files(tool, args, output) == []
+
+
+@pytest.mark.parametrize("url", ["http://[::1", "https://exa℀mple.com/x"])
+@pytest.mark.parametrize("tool", [_codex("fetch"), _sp("fetch"), "mcp__web__fetch", "fetch"])
+def test_a_malformed_url_names_no_file(tool: str, url: str) -> None:
+    assert connector_files(tool, {"url": url}, None) == []
+
+
+@pytest.mark.parametrize("field", ["web_link", "document_id"])
+def test_a_malformed_result_url_leaves_the_argument_ref(field: str) -> None:
+    payload = {"title": "a.docx", field: "http://[::1"}
+    got = connector_files(_sp("fetch"), {"url": GRAPH}, _envelope(payload))
+    assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM}", "a.docx", None)]
+
+
+@pytest.mark.parametrize("tool", ["", "search", "_search"])
+def test_an_edge_name_gives_nothing_on_a_drive_shaped_result(tool: str) -> None:
+    result = json.dumps({"files": [{"id": "A", "title": "a", "mimeType": "text/plain"}]})
+    assert connector_files(tool, {"query": "q"}, result) == []
+
+
+def test_an_empty_name_is_no_connector_tool() -> None:
+    assert not is_connector_tool("")

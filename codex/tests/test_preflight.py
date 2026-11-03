@@ -321,6 +321,17 @@ async def test_connector_call_names_its_file_by_ref(
     assert env.store.for_round(SESSION, [], ["exec-3"]) == [entry]
 
 
+async def test_connector_tool_on_any_server_names_one_file(env: Env) -> None:
+    hook = _connector_ptu(
+        "mcp__gdrive__get_file_metadata", {"fileId": "ID1"}, "exec-5", env.tmp_path
+    )
+    await env.preflight.pre_tool_use(hook)
+    assert env.sent.accessed_files is not None
+    [entry] = env.sent.accessed_files
+    assert entry.file_refs == ["google/ID1"]
+    assert env.store.for_round(SESSION, [], ["exec-5"]) == [entry]
+
+
 async def test_connector_call_without_a_ref_names_no_file(env: Env) -> None:
     hook = _connector_ptu(
         "mcp__codex_apps__microsoft_sharepoint__search", {"query": "q"}, "exec-4", env.tmp_path
@@ -357,7 +368,9 @@ async def test_preflight_error_fail_mode(
     tmp_path: Path, make_config: Callable[..., CodexConfig], mode: str
 ) -> None:
     env = Env(
-        tmp_path, make_config(verdict_fail_mode=mode), FakeSink(error=PreflightError("HTTP 503"))
+        tmp_path,
+        make_config(verdict_fail_mode=mode),
+        FakeSink(error=PreflightError("HTTP 503", "status")),
     )
     verdict = await env.preflight.pre_tool_use(_ptu("ls", cwd=tmp_path))
     if mode == "allow":

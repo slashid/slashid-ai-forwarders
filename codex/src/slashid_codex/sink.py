@@ -48,7 +48,7 @@ class CodexSink:
         while True:
             remaining = deadline - time.monotonic()
             if remaining < PREFLIGHT_MIN_BUDGET_S:
-                raise PreflightError("deadline exceeded")
+                raise PreflightError("deadline exceeded", "timeout")
             try:
                 return await preflight_invocation(
                     self._client,
