@@ -1726,3 +1726,32 @@ async def test_requested_tool_uses_from_gemini_fixtures() -> None:
     server = cases["server_side_executable_code_marks_server"]
     event = await build_event_from_normalized(server, _plain_envelope(), config=_config())
     assert event.requested_tool_uses is None
+
+
+def test_aws_identity_accepts_any_one_of_agent_role_and_gateway() -> None:
+    from slashid_ai_forwarder_core.events import AWSIdentityDetails
+
+    for field in ("principal_arn", "agent_arn", "gateway_arn"):
+        got = AWSIdentityDetails.model_validate({field: "arn:aws:x"})
+        assert getattr(got, field) == "arn:aws:x"
+
+
+def test_aws_identity_naming_nobody_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    from slashid_ai_forwarder_core.events import AWSIdentityDetails
+
+    with pytest.raises(ValidationError):
+        AWSIdentityDetails()
+
+
+def test_aws_identity_wire_form_is_unchanged_for_a_principal_alone() -> None:
+    """Bedrock's events must not gain keys."""
+    from slashid_ai_forwarder_core.events import AWSIdentityDetails
+
+    got = AWSIdentityDetails(principal_arn="arn:aws:iam::1:role/r", access_key_id="AK")
+    assert got.model_dump(mode="json", exclude_none=True) == {
+        "kind": "aws",
+        "principal_arn": "arn:aws:iam::1:role/r",
+        "access_key_id": "AK",
+    }
