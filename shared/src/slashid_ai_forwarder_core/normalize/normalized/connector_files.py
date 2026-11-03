@@ -18,7 +18,7 @@ import base64
 import re
 from collections.abc import Callable
 from typing import Literal
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
@@ -233,9 +233,17 @@ def _google(file_id: str) -> str:
     return f"google/{file_id}"
 
 
+def _parse_url(url: str) -> ParseResult | None:
+    """``urlparse`` raises on some strings (``http://[::1``); such a URL names no file."""
+    try:
+        return urlparse(url)
+    except ValueError:
+        return None
+
+
 def _drive_id_of(url: str) -> str | None:
-    parts = urlparse(url)
-    if parts.hostname not in _DRIVE_HOSTS:
+    parts = _parse_url(url)
+    if parts is None or parts.hostname not in _DRIVE_HOSTS:
         return None
     if match := _DRIVE_ID.search(parts.path):
         return match.group(1)
@@ -325,8 +333,10 @@ def _microsoft_host(host: str | None) -> bool:
 
 def _url_refs(url: str) -> list[str]:
     """The item a Graph URL names and the GUID a ``sourcedoc`` link carries."""
-    parts = urlparse(url)
+    parts = _parse_url(url)
     refs: list[str] = []
+    if parts is None:
+        return refs
     if parts.hostname == "graph.microsoft.com" and (match := _GRAPH_ITEM.search(parts.path)):
         refs.append(_item(unquote(match.group(1)), unquote(match.group(2))))
     if _microsoft_host(parts.hostname):

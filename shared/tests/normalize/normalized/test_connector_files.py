@@ -566,3 +566,16 @@ def test_the_duplicates_of_the_any_server_rule_merge_into_one_file() -> None:
 )
 def test_look_alikes_give_nothing(tool: str, args: JsonValue, output: JsonValue) -> None:
     assert connector_files(tool, args, output) == []
+
+
+@pytest.mark.parametrize("url", ["http://[::1", "https://exa℀mple.com/x"])
+@pytest.mark.parametrize("tool", [_codex("fetch"), _sp("fetch"), "mcp__web__fetch", "fetch"])
+def test_a_malformed_url_names_no_file(tool: str, url: str) -> None:
+    assert connector_files(tool, {"url": url}, None) == []
+
+
+@pytest.mark.parametrize("field", ["web_link", "document_id"])
+def test_a_malformed_result_url_leaves_the_argument_ref(field: str) -> None:
+    payload = {"title": "a.docx", field: "http://[::1"}
+    got = connector_files(_sp("fetch"), {"url": GRAPH}, _envelope(payload))
+    assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM}", "a.docx", None)]
