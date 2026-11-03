@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from slashid_ai_forwarder_core.sink import join_deny_reasons
@@ -35,7 +36,7 @@ def is_own_deny(text: str, key: bytes) -> bool:
     )
 
 
-def deny_text(reasons: list[str], key: bytes, *, prefix: str = "") -> str:
+def deny_text(reasons: Sequence[str], key: bytes, *, prefix: str = "") -> str:
     """The reasons joined, behind ``prefix``, capped at 500 characters, then the reference."""
     text = prefix + (join_deny_reasons(reasons) or DEFAULT_REASON)
     if len(text) > MAX_REASON:

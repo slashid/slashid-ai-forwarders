@@ -162,7 +162,7 @@ async def test_a_remote_mcp_tool_goes_on_the_placeholder_server(load: Load) -> N
 
 
 async def test_a_deny_carries_the_reasons_and_a_verifying_reference(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["tagged file"]))
+    runtime = make_runtime(Outcome("deny", ("tagged file",)))
     answer = await handle(runtime, load("harness_before_tool_call"))
     assert isinstance(answer, dict)
     assert answer["decision"] == "deny"
@@ -176,7 +176,7 @@ async def test_shadow_mode_allows_a_deny_and_logs_it(
     load: Load, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     assert await handle(runtime, load("harness_before_tool_call")) == ALLOW
     [line] = events(caplog, "shadow")
     assert (line["surface"], line["check"], line["verdict"]) == ("harness", "call", "deny")
@@ -276,13 +276,13 @@ async def test_a_call_without_file_refs_is_not_cached(load: Load) -> None:
 
 
 async def test_a_denied_call_is_not_cached(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["no"]))
+    runtime = make_runtime(Outcome("deny", ("no",)))
     await handle(runtime, load("harness_before_tool_call"))
     assert runtime.inputs.get(CACHE_KEY) is None
 
 
 async def test_a_shadow_denied_call_is_cached(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     await handle(runtime, load("harness_before_tool_call"))
     assert runtime.inputs.get(CACHE_KEY) is not None
 
@@ -513,7 +513,7 @@ async def test_a_result_with_structured_content_is_read(load: Load) -> None:
 
 
 async def test_after_deny_has_no_withheld_prefix(load: Load) -> None:
-    runtime = make_runtime(Outcome("deny", ["no"]))
+    runtime = make_runtime(Outcome("deny", ("no",)))
     answer = await handle(runtime, load("harness_after_inline"))
     assert isinstance(answer, dict)
     assert answer["decision"] == "deny"
@@ -525,7 +525,7 @@ async def test_after_deny_has_no_withheld_prefix(load: Load) -> None:
 
 async def test_after_shadow_allows_a_deny(load: Load, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     assert await handle(runtime, load("harness_after_inline")) == ALLOW
     [line] = events(caplog, "shadow")
     assert line["check"] == "result"
@@ -562,7 +562,7 @@ async def test_no_log_line_carries_payload_text(
     load: Load, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=LOGGER)
-    runtime = make_runtime(Outcome("deny", ["no"]), shadow_mode=True)
+    runtime = make_runtime(Outcome("deny", ("no",)), shadow_mode=True)
     await handle(runtime, load("harness_before_tool_call"))
     await handle(runtime, after_with(load, READ, drive_result("SECRET-ID")))
     assert "SECRET-ID" not in caplog.text

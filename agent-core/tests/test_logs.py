@@ -46,6 +46,7 @@ def test_every_line_has_exactly_its_keys(caplog: pytest.LogCaptureFixture) -> No
     logs.truncated_input(surface="harness", tool="Bash", call_id="c1")
     logs.baggage_unverified("mismatch")
     logs.gateway_role_unavailable()
+    logs.role_lookup_failed("harness", "timeout")
     logs.cache_miss(tool="Bash", call_id="c1", known=True)
     logs.unreadable(surface="gateway", check="call", reason="bad_envelope")
     logs.missing_request_id()
@@ -56,6 +57,7 @@ def test_every_line_has_exactly_its_keys(caplog: pytest.LogCaptureFixture) -> No
         ("truncated_input", ["call_id", "event", "surface", "tool"]),
         ("baggage_unverified", ["event", "reason"]),
         ("gateway_role_unavailable", ["event"]),
+        ("role_lookup_failed", ["error", "event", "kind"]),
         ("cache_miss", ["call_id", "event", "known", "tool"]),
         ("unreadable", ["check", "event", "reason", "surface"]),
         ("missing_request_id", ["event"]),

@@ -27,6 +27,10 @@ PassThroughReason = Literal["unknown_payload", "surface_disabled", "streaming_re
 BaggageReason = Literal[
     "no_principal", "no_gateway_arn", "invalid_id", "lookup_failed", "mismatch", "rate_limited"
 ]
+RoleKind = Literal["harness", "gateway", "claimed_harness"]
+RoleLookupError = Literal[
+    "timeout", "access_denied", "not_found", "throttled", "bad_shape", "other"
+]
 UnreadableReason = Literal["bad_envelope", "bad_tool_call", "batch_with_call"]
 
 MAX_KEYS = 20
@@ -65,6 +69,10 @@ def baggage_unverified(reason: BaggageReason) -> None:
 
 def gateway_role_unavailable() -> None:
     _emit("gateway_role_unavailable")
+
+
+def role_lookup_failed(kind: RoleKind, error: RoleLookupError) -> None:
+    _emit("role_lookup_failed", level=logging.WARNING, kind=kind, error=error)
 
 
 def cache_miss(*, tool: str, call_id: str, known: bool) -> None:

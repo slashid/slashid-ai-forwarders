@@ -90,7 +90,9 @@ async def test_an_empty_list_allows() -> None:
 
 
 async def test_reasons_deny() -> None:
-    assert await Rig(verdict(["no"])).check() == Outcome("deny", ["no"])
+    outcome = await Rig(verdict(["no", "again"])).check()
+    assert outcome == Outcome("deny", ("no", "again"))
+    assert isinstance(outcome.reasons, tuple)
 
 
 @pytest.mark.parametrize(
@@ -101,14 +103,25 @@ async def test_reasons_deny() -> None:
         (httpx.Response(200, json={"other": 1}), "unparseable"),
     ],
 )
-async def test_no_verdict_is_a_no_answer(response: httpx.Response, why: FailReason) -> None:
-    assert await Rig(response).check() == Outcome("no_answer", why=why)
+async def test_no_verdict_is_a_no_answer_and_not_retried(
+    response: httpx.Response, why: FailReason
+) -> None:
+    rig = Rig(response, verdict([]))
+    assert await rig.check() == Outcome("no_answer", why=why)
+    assert len(rig.requests) == 1
 
 
 async def test_a_timeout_is_not_retried() -> None:
     rig = Rig(httpx.ReadTimeout("slow"))
     assert await rig.check() == Outcome("no_answer", why="timeout")
     assert len(rig.requests) == 1
+
+
+async def test_the_server_gets_the_budget_left_after_the_role_lookup() -> None:
+    rig = Rig(verdict([]))
+    rig.clock.now += 0.8  # the role lookup, before the budget starts
+    assert await rig.checker.check(INVOCATION, started=rig.clock.now) == Outcome("allow")
+    assert rig.requests[0].headers["slashid-request-timeout"] == "3.000"
 
 
 async def test_a_connect_error_is_retried_once_on_a_fresh_client() -> None:
@@ -169,6 +182,46 @@ async def test_an_idle_client_is_replaced() -> None:
     assert len(rig.clients) == 2 and rig.clients[0].is_closed
 
 
+@pytest.mark.parametrize(
+    ("first", "replaced"),
+    [
+        (httpx.Response(500, text="boom"), False),
+        (httpx.Response(200, text="not json"), False),
+        (httpx.ReadTimeout("slow"), True),
+    ],
+    ids=["status", "unparseable", "timeout"],
+)
+async def test_the_client_is_used_after_a_response_but_not_after_a_timeout(
+    first: httpx.Response | Exception, replaced: bool
+) -> None:
+    # A response proves the connection alive; a timeout does not.
+    rig = Rig(first, verdict([]))
+    await rig.check()
+    rig.clock.now += 3
+    await rig.check()
+    assert len(rig.clients) == (2 if replaced else 1)
+
+
+async def test_the_client_is_replaced_after_the_budget_cut_a_slow_response() -> None:
+    clock, clients = Clock(), []
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1)
+        return verdict([])
+
+    def make() -> httpx.AsyncClient:
+        clients.append(httpx.AsyncClient(transport=httpx.MockTransport(slow)))
+        return clients[-1]
+
+    checker = Checker(
+        make_config(verdict_budget_ms=100), clock=clock, monotonic=clock, make_client=make
+    )
+    assert await checker.check(INVOCATION, started=clock.now) == Outcome("no_answer", why="timeout")
+    clock.now += 3
+    await checker.check(INVOCATION, started=clock.now)
+    assert len(clients) == 2
+
+
 async def test_an_unexpected_exception_is_an_error() -> None:
     rig = Rig(RuntimeError("bug"))
     assert await rig.check() == Outcome("no_answer", why="error")
@@ -194,12 +247,12 @@ def test_allow_decides_none() -> None:
 
 
 def test_a_deny_carries_the_reasons_and_a_reference() -> None:
-    text = run_decide(Outcome("deny", ["Not allowed."])).deny
+    text = run_decide(Outcome("deny", ("Not allowed.",))).deny
     assert text is not None and text.startswith("Not allowed. (ref ") and is_own_deny(text, KEY)
 
 
 def test_a_result_deny_keeps_the_prefix() -> None:
-    text = run_decide(Outcome("deny", ["Not allowed."]), prefix="Content withheld: ").deny
+    text = run_decide(Outcome("deny", ("Not allowed.",)), prefix="Content withheld: ").deny
     assert text is not None
     assert text.startswith("Content withheld: Not allowed. (ref ") and is_own_deny(text, KEY)
 
@@ -236,7 +289,7 @@ def test_the_policy_unavailable_text() -> None:
 
 def test_shadow_turns_a_deny_into_allow(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
-    assert run_decide(Outcome("deny", ["no"]), shadow_mode=True) == Decision(None)
+    assert run_decide(Outcome("deny", ("no",)), shadow_mode=True) == Decision(None)
     assert lines(caplog) == [
         {
             "event": "shadow",
