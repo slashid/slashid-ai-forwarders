@@ -17,8 +17,9 @@ class Config(BaseConfig):
     gateway_hooks_enabled: bool = True
     # Answer when a check gives no answer. Allow: refusing to answer is self-inflicted downtime.
     verdict_fail_mode: Literal["allow", "deny"] = "allow"
-    # Bound on one check, under the hook and Lambda timeouts (10 s each).
-    verdict_budget_ms: int = Field(3_500, ge=100, le=9_000)
+    # Bound on one check. Role lookups before it take up to 2 s, so the worst case is 2 s + this +
+    # overhead, under the hook and Lambda timeouts (10 s each).
+    verdict_budget_ms: int = Field(3_500, ge=100, le=6_500)
     # Evaluate and log, answer allow.
     shadow_mode: bool = False
 

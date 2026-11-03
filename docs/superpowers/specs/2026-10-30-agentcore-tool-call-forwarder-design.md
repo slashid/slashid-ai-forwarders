@@ -77,7 +77,7 @@ All settings use the `SLASHID_` prefix, as in the other forwarders. The fail mod
 | `SLASHID_HARNESS_HOOKS_ENABLED` | `true` | when false the Harness adapter answers allow without calling SlashID |
 | `SLASHID_GATEWAY_HOOKS_ENABLED` | `true` | when false the Gateway adapter echoes the request or response |
 | `SLASHID_VERDICT_FAIL_MODE` | `allow` | `allow` or `deny`, as in the Anthropic hook |
-| `SLASHID_VERDICT_BUDGET_MS` | `3500` | bound on one check (100 to 9000), under the hook's `timeoutSeconds` and the Lambda timeout (10 s each in our captures) |
+| `SLASHID_VERDICT_BUDGET_MS` | `3500` | bound on one check (100 to 6500). The role lookups run before the budget starts and can take up to 1 s each (2 s on a Gateway call that claims a Harness), so the worst case is about 2 s + the budget + overhead, under the hook and Lambda timeouts (10 s each in our captures) |
 | `SLASHID_SHADOW_MODE` | `false` | evaluate and log, answer allow |
 
 `LOG_LEVEL` (unprefixed, default `INFO`) sets the Python log level; the lines to alert on are INFO.

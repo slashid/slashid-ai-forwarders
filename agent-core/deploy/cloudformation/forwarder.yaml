@@ -57,10 +57,11 @@ Parameters:
     Type: Number
     Default: 3500
     MinValue: 100
-    MaxValue: 9000
+    MaxValue: 6500
     Description: |
-      Time one check may take, in milliseconds. Keep it under the hook's
-      timeoutSeconds and the Lambda timeout (10 s each).
+      Time one check may take, in milliseconds. Role lookups before it can
+      take up to 2 s, so the worst case is 2 s + this + overhead, which must
+      stay under the hook's timeoutSeconds and the Lambda timeout (10 s each).
 
   GatewayRoleArns:
     Type: CommaDelimitedList

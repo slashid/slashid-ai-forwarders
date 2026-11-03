@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -385,3 +385,55 @@ async def test_a_successful_lookup_logs_nothing(caplog: pytest.LogCaptureFixture
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     await make_roles(FakeControl()).harness_role(HARNESS_ARN)
     assert failure_lines(caplog) == []
+
+
+def slow_provider(control: FakeControl, delay_s: float) -> Callable[[], Awaitable[FakeControl]]:
+    async def provide() -> FakeControl:
+        await asyncio.sleep(delay_s)
+        return control
+
+    return provide
+
+
+@pytest.mark.parametrize("kind", ["harness", "gateway", "claimed_harness"])
+async def test_creating_the_client_is_outside_the_lookup_ceiling(
+    kind: RoleKind, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first client costs more than the ceiling; only the call is bounded."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    control = FakeControl()
+    roles = Roles(slow_provider(control, 0.2), clock=Clock(), lookup_timeout_s=0.05)
+    if kind == "gateway":
+        assert await roles.gateway_role(GATEWAY_ARN) == GATEWAY_ROLE
+    elif kind == "harness":
+        assert await roles.harness_role(HARNESS_ARN) == HARNESS_ROLE
+    else:
+        assert await roles.claimed_harness_role(HARNESS_ARN) == HARNESS_ROLE
+    assert len(control.calls) == 1
+    assert failure_lines(caplog) == []
+
+
+async def test_a_slow_call_is_still_bounded_after_a_slow_client(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    roles = Roles(slow_provider(FakeControl(delay_s=1), 0.1), clock=Clock(), lookup_timeout_s=0.05)
+    assert await roles.harness_role(HARNESS_ARN) is None
+    assert failure_lines(caplog)[0]["error"] == "timeout"
+
+
+async def test_a_client_that_cannot_be_created_is_cached_for_30_seconds() -> None:
+    clock, attempts = Clock(), []
+
+    async def provide() -> FakeControl:
+        attempts.append(1)
+        raise RuntimeError("no credentials")
+
+    roles = Roles(provide, clock=clock, lookup_timeout_s=0.05)
+    assert await roles.harness_role(HARNESS_ARN) is None
+    clock.now += 29
+    assert await roles.harness_role(HARNESS_ARN) is None
+    assert len(attempts) == 1
+    clock.now += 2
+    await roles.harness_role(HARNESS_ARN)
+    assert len(attempts) == 2

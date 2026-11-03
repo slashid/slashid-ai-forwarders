@@ -238,6 +238,25 @@ async def test_a_call_allowed_by_the_fail_mode_is_cached(load: Load) -> None:
     assert runtime.inputs.get(CACHE_KEY) is not None
 
 
+@pytest.mark.parametrize(
+    "outcome", [Outcome("allow"), Outcome("deny", ("no",))], ids=["allowed", "denied"]
+)
+async def test_a_call_that_is_not_cached_drops_the_stale_entry_of_its_key(
+    load: Load, caplog: pytest.LogCaptureFixture, outcome: Outcome
+) -> None:
+    """A repeated ``call_0`` must not hand the earlier call's input to this call's result."""
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    runtime = make_runtime(outcome)
+    runtime.inputs.put(CACHE_KEY, CachedInput(tool_name=READ, tool_input={"fileId": "STALE"}))
+    await handle(runtime, drive_before(load, toolInput={"query": "no file ref here"}))
+    assert runtime.inputs.get(CACHE_KEY) is None
+    await handle(runtime, after_with(load, READ, drive_result("NEW")))
+    [line] = events(caplog, "cache_miss")
+    assert line["tool"] == READ
+    [event] = checker_of(runtime).invocations[-1:]
+    assert [f.file_refs for f in event.accessed_files or []] == [["google/NEW"]]
+
+
 async def test_a_repeated_call_id_across_turns_does_not_collide(load: Load) -> None:
     runtime = make_runtime()
     for turn, file_id in enumerate(["A", "B"]):

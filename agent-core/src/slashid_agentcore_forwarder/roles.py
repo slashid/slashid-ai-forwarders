@@ -101,30 +101,32 @@ class Roles:
         )
         self._claimed_lookups: deque[float] = deque()
 
-    async def _guarded(self, kind: logs.RoleKind, lookup: Awaitable[str]) -> str | None:
+    async def _guarded(
+        self, kind: logs.RoleKind, call: Callable[[ControlPlane], Awaitable[str]]
+    ) -> str | None:
         """The role, or ``None`` for any failure, a missing permission included; the failure is
-        logged by kind."""
+        logged by kind. The client comes first, outside the ceiling (its first creation can cost
+        more than the ceiling); only the call is bounded."""
         try:
-            return await asyncio.wait_for(lookup, self._timeout_s)
+            control = await self._control()
+            return await asyncio.wait_for(call(control), self._timeout_s)
         except Exception as exc:
             logs.role_lookup_failed(kind, _classify(exc))
             return None
 
     async def _harness(self, arn: str, kind: logs.RoleKind) -> str | None:
-        async def lookup() -> str:
-            control = await self._control()
+        async def lookup(control: ControlPlane) -> str:
             response = await control.get_harness(harnessId=_last_segment(arn))
             return _HarnessResponse.model_validate(response).harness.executionRoleArn
 
-        return await self._guarded(kind, lookup())
+        return await self._guarded(kind, lookup)
 
     async def _gateway(self, arn: str) -> str | None:
-        async def lookup() -> str:
-            control = await self._control()
+        async def lookup(control: ControlPlane) -> str:
             response = await control.get_gateway(gatewayIdentifier=_last_segment(arn))
             return _GatewayResponse.model_validate(response).roleArn
 
-        return await self._guarded("gateway", lookup())
+        return await self._guarded("gateway", lookup)
 
     async def _shared_lookup(
         self, arn: str, lookup: Callable[[str], Awaitable[str | None]]

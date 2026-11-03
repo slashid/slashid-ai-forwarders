@@ -23,7 +23,7 @@ Tagged releases (`agentcore-vX.Y.Z`) publish `slashid-ai-forwarder-agentcore-vX.
 | `FailMode`                    | (default `allow`) Answer when SlashID gives no answer                                                                                        |
 | `ShadowMode`                  | (default `false`) Evaluate and log, answer allow                                                                                             |
 | `HarnessHooksEnabled`, `GatewayHooksEnabled` | (default `true`) Turn a surface off without detaching it                                                                      |
-| `BudgetMs`                    | (default `3500`, 100-9000) Time one check may take                                                                                           |
+| `BudgetMs`                    | (default `3500`, 100-6500) Time one check may take                                                                                           |
 | `GatewayRoleArns`             | Execution role ARNs of the Gateways that use the function; each gets `lambda:InvokeFunction`. Empty for none                                  |
 | `AllowAgentCoreServiceInvoke` | (default `true`) Lets `bedrock-agentcore.amazonaws.com` of this account invoke the function. Unconfirmed that Harness hooks need it or that this is the principal's name; set `false` for Gateway-only use |
 | `LogLevel`, `LogRetentionDays` | (default `INFO`, 30) Keep `INFO` or lower: the lines to alert on are INFO                                                                   |
@@ -88,7 +88,7 @@ All are environment variables set by the template.
 | `SLASHID_HARNESS_HOOKS_ENABLED`  | `true`  | When false, Harness payloads are answered allow without calling SlashID                                    |
 | `SLASHID_GATEWAY_HOOKS_ENABLED`  | `true`  | When false, Gateway payloads are echoed without calling SlashID                                           |
 | `SLASHID_VERDICT_FAIL_MODE`      | `allow` | `allow` or `deny`: the answer when a check gets none                                                       |
-| `SLASHID_VERDICT_BUDGET_MS`      | `3500`  | Bound on one check (100-9000), under the hook's `timeoutSeconds` and the Lambda timeout                    |
+| `SLASHID_VERDICT_BUDGET_MS`      | `3500`  | Bound on one check (100-6500); role lookups before it take up to 2 s, so 2 s + budget + overhead stays under the 10 s hook and Lambda timeouts |
 | `SLASHID_SHADOW_MODE`            | `false` | Evaluate and log, answer allow                                                                            |
 | `LOG_LEVEL`                      | `INFO`  | Python log level                                                                                          |
 

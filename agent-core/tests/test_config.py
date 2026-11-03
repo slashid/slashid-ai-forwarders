@@ -25,7 +25,7 @@ def test_raw_content_is_always_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Config().include_raw_content is False
 
 
-@pytest.mark.parametrize("budget", ["99", "9001", "-1"])
+@pytest.mark.parametrize("budget", ["99", "6501", "-1"])
 def test_the_budget_stays_under_the_hook_timeout(
     monkeypatch: pytest.MonkeyPatch, budget: str
 ) -> None:
@@ -35,7 +35,7 @@ def test_the_budget_stays_under_the_hook_timeout(
         Config()
 
 
-@pytest.mark.parametrize("budget", ["100", "9000"])
+@pytest.mark.parametrize("budget", ["100", "6500"])
 def test_the_budget_bounds_are_inclusive(monkeypatch: pytest.MonkeyPatch, budget: str) -> None:
     monkeypatch.setenv("SLASHID_PUSH_TOKEN", "t")
     monkeypatch.setenv("SLASHID_VERDICT_BUDGET_MS", budget)
