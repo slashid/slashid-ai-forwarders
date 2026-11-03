@@ -130,9 +130,10 @@ def extract_tool_result_files(
     """Walk canonical messages for _READ_TOOLS-matching tool_use/tool_result pairs.
 
     Returns one AIAccessedFile per unique (path, sha256) — dedup within a
-    single call. Callers (typically ``finalize``) append to
-    ``normalized.accessed_files``. See module docstring for the is_error
-    guard and fresh-region rule.
+    single call. Connector entries are returned unmerged (a file can come back
+    once per handler); ``finalize`` merges them. Callers (typically ``finalize``)
+    append to ``normalized.accessed_files``. See module docstring for the
+    is_error guard and fresh-region rule.
     """
     if not messages:
         return []

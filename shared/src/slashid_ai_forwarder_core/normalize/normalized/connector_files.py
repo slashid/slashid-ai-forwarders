@@ -9,7 +9,8 @@ structuredContent}``.
 Tool names are those of Claude Code's claude.ai connectors (``mcp__claude_ai_Google_Drive__*``)
 and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them). Any other
 server's tool is recognized by its name's ending (``gdrive___read_file_content``,
-``mcp__gdrive__read_file_content``), under the same strict shapes.
+``mcp__gdrive__read_file_content``), under the same strict shapes; ``is_connector_tool`` says
+whether a name is one. A result can hold the same file more than once; the caller merges.
 """
 
 from __future__ import annotations

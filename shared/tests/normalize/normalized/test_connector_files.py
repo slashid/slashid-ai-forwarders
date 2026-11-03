@@ -512,9 +512,7 @@ def test_a_known_suffix_needs_an_underscore_boundary() -> None:
     assert not is_connector_tool("preread_file_content")
 
 
-def test_an_exact_pattern_with_an_unknown_action_gives_nothing_even_if_the_suffix_is_known() -> (
-    None
-):
+def test_an_unknown_action_gives_nothing_even_with_a_known_suffix() -> None:
     name = "mcp__claude_ai_Google_Drive__share_read_file_content"
     assert connector_files(name, {"fileId": "ID1"}, None) == []
 
@@ -553,8 +551,8 @@ def test_the_duplicates_of_the_any_server_rule_merge_into_one_file() -> None:
     ("tool", "args", "output"),
     [
         ("mcp__fs__read_resource", {"uri": "file:///home/u/x.txt"}, "text"),
-        ("web_search", {"query": "q"}, json.dumps({"results": [{"id": "1", "title": "t"}]})),
-        ("fetch", {"url": "https://example.com/doc"}, json.dumps({"id": "1", "title": "t"})),
+        ("web_search", {"query": "q"}, _envelope({"results": [{"id": "1", "title": "t"}]})),
+        ("fetch", {"url": "https://example.com/doc"}, _envelope({"id": "1", "title": "t"})),
         (
             "mcp__other__search_files",
             {"query": "q"},
@@ -579,3 +577,13 @@ def test_a_malformed_result_url_leaves_the_argument_ref(field: str) -> None:
     payload = {"title": "a.docx", field: "http://[::1"}
     got = connector_files(_sp("fetch"), {"url": GRAPH}, _envelope(payload))
     assert _got(got) == [(f"m365/item/{DRIVE}/{ITEM}", "a.docx", None)]
+
+
+@pytest.mark.parametrize("tool", ["", "search", "_search"])
+def test_an_edge_name_gives_nothing_on_a_drive_shaped_result(tool: str) -> None:
+    result = json.dumps({"files": [{"id": "A", "title": "a", "mimeType": "text/plain"}]})
+    assert connector_files(tool, {"query": "q"}, result) == []
+
+
+def test_an_empty_name_is_no_connector_tool() -> None:
+    assert not is_connector_tool("")
