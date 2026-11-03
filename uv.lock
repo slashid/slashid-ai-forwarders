@@ -1745,12 +1745,20 @@ version = "0.1.0"
 source = { editable = "agent-core" }
 dependencies = [
     { name = "aiobotocore" },
+    { name = "botocore" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "slashid-ai-forwarder-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiobotocore", specifier = ">=3.10" },
+    { name = "botocore", specifier = ">=1.35" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "slashid-ai-forwarder-core", editable = "shared" },
 ]
 
