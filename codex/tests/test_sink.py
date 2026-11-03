@@ -166,8 +166,9 @@ async def test_preflight_expired_deadline(
     monkeypatch.setattr(sink_module, "preflight_invocation", _never)
     async with httpx.AsyncClient() as client:
         sink = CodexSink(make_config(), client)
-        with pytest.raises(PreflightError):
+        with pytest.raises(PreflightError) as caught:
             await sink.preflight(invocation, deadline=time.monotonic() - 1)
+    assert caught.value.cause == "timeout"
 
 
 async def test_push_delegates(

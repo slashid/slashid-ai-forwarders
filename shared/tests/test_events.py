@@ -947,7 +947,8 @@ def test_gcp_identity_details_defaults_to_kind_gcp() -> None:
 def test_identity_details_union_dispatches_on_kind() -> None:
     """model_validate on AIInvocationObservedV1 dispatches identity_details
     via the "kind" discriminator — GCPIdentityDetails path validates
-    without an AWS principal_arn, AWSIdentityDetails path requires one."""
+    without an AWS principal_arn, AWSIdentityDetails path rejects an identity that carries
+    no identifier."""
     raw_gcp = {
         "request_id": "r",
         "timestamp": "t",
@@ -959,7 +960,7 @@ def test_identity_details_union_dispatches_on_kind() -> None:
     assert isinstance(event.identity_details, GCPIdentityDetails)
     assert event.identity_details.credential_chain is None
 
-    # AWS side still requires principal_arn — union stays strict per-variant.
+    # An AWS identity that carries no identifier is rejected — union stays strict per-variant.
     from pydantic import ValidationError
 
     raw_aws_missing_arn = {**raw_gcp, "identity_details": {"kind": "aws"}}
