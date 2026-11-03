@@ -16,6 +16,7 @@ from slashid_ai_forwarder_core.normalize.normalized.connector_files import (
     ConnectorFile,
     connector_files,
     connector_refs,
+    is_connector_tool,
 )
 from slashid_ai_forwarder_core.normalize.normalized.tool_results import (
     connector_stub,
@@ -475,3 +476,52 @@ def test_the_result_id_wins_over_the_arguments() -> None:
 
 def test_a_result_with_only_an_id_is_not_a_drive_file() -> None:
     assert connector_files(_claude("get_file_metadata"), None, json.dumps({"id": "x"})) == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "gdrive___read_file_content",
+        "mcp__gdrive__read_file_content",
+        "gdrive_read_file_content",
+        "read_file_content",
+    ],
+)
+def test_a_drive_tool_on_any_server_is_recognized(name: str) -> None:
+    got = connector_files(name, {"fileId": "ID1"}, None)
+    assert _got(got) == [("google/ID1", None, None)]
+    assert is_connector_tool(name)
+
+
+def test_a_known_suffix_needs_an_underscore_boundary() -> None:
+    assert connector_files("preread_file_content", {"fileId": "ID1"}, None) == []
+    assert not is_connector_tool("preread_file_content")
+
+
+def test_an_exact_pattern_with_an_unknown_action_gives_nothing_even_if_the_suffix_is_known() -> (
+    None
+):
+    name = "mcp__claude_ai_Google_Drive__share_read_file_content"
+    assert connector_files(name, {"fileId": "ID1"}, None) == []
+
+
+def test_a_name_in_two_handlers_runs_both() -> None:
+    result = _envelope({"id": "ID5", "title": "m.md"})
+    got = connector_files("mcp__gdrive__get_file_metadata", {"fileId": "ID5"}, result)
+    assert {ref for f in got for ref in f.refs} == {"google/ID5"}
+    assert len(got) == 2  # one per handler; the caller merges them
+
+
+def test_the_longest_known_ending_wins() -> None:
+    # Ends in ``search`` and in ``sharepoint_folder_search``: only the second counts.
+    hit = _envelope({"results": [{"id": "A", "title": "a", "file_or_folder": "file"}]})
+    assert connector_files("x_sharepoint_folder_search", {"q": "q"}, hit) == []
+    assert is_connector_tool("x_sharepoint_folder_search")
+
+
+def test_is_connector_tool_knows_the_exact_patterns_and_nothing_else() -> None:
+    assert is_connector_tool(_claude("search_files"))
+    assert is_connector_tool(_sp("get_drive_item"))
+    assert not is_connector_tool(_claude("share_file"))
+    assert not is_connector_tool("Bash")
+    assert not is_connector_tool("mcp__fs__write")

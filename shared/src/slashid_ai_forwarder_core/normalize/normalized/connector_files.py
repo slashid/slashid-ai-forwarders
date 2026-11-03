@@ -5,7 +5,9 @@ match it; the provider's own id can. ``connector_files`` reads the call (and its
 there is one); ``connector_refs`` reads the call alone, as a hook sees it before it runs.
 
 Tool names are those of Claude Code's claude.ai connectors (``mcp__claude_ai_Google_Drive__*``)
-and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them).
+and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them). Any other
+server's tool is recognized by its name's ending (``gdrive___read_file_content``,
+``mcp__gdrive__read_file_content``), under the same strict shapes.
 """
 
 from __future__ import annotations
@@ -137,23 +139,6 @@ class _DriveFiles(_Lenient):
 
     files: list[_DriveFile] = []
     results: list[_DriveFile] = []
-
-
-def connector_files(
-    tool_name: str, tool_input: JsonValue, tool_output: JsonValue
-) -> list[ConnectorFile]:
-    """The files of one connector call, ``[]`` for any other call. ``tool_output`` is ``None``
-    when there is no result."""
-    if match := _CLAUDE.fullmatch(tool_name):
-        source: Source = "claude"
-        family: Family = "drive" if match.group(1) == "Google_Drive" else "m365"
-    elif match := _CODEX.fullmatch(tool_name):
-        source = "codex"
-        family = "drive" if match.group(1) == "google_drive" else "m365"
-    else:
-        return []
-    handler = _HANDLERS.get((source, family))
-    return handler(match.group(2), tool_input, tool_output) if handler else []
 
 
 def connector_refs(tool_name: str, tool_input: JsonValue) -> list[ConnectorFile]:
@@ -414,9 +399,67 @@ def _codex_sharepoint(
 
 
 _Handler = Callable[[str, JsonValue, JsonValue], list[ConnectorFile]]
-_HANDLERS: dict[tuple[Source, Family], _Handler] = {
+# Each handler with the tool names it knows.
+_ACTIONS: tuple[tuple[_Handler, frozenset[str]], ...] = (
+    (_claude_drive, _SEARCH_TOOLS | _FILE_TOOLS | _SOURCE_TOOLS),
+    (_codex_drive, frozenset({"search", "fetch", "get_file_metadata"})),
+    (_claude_m365, frozenset({"read_resource", "sharepoint_folder_search"})),
+    (_codex_sharepoint, frozenset({"search", "get_drive_item", "fetch"})),
+)
+_KNOWN_ACTIONS = frozenset(a for _, actions in _ACTIONS for a in actions)
+_EXACT: dict[tuple[Source, Family], _Handler] = {
     ("claude", "drive"): _claude_drive,
     ("codex", "drive"): _codex_drive,
     ("claude", "m365"): _claude_m365,
     ("codex", "m365"): _codex_sharepoint,
 }
+
+
+def _exact(tool_name: str) -> tuple[_Handler, str] | None:
+    """The handler a claude.ai or Codex connector name picks, and its action."""
+    if match := _CLAUDE.fullmatch(tool_name):
+        key: tuple[Source, Family] = (
+            "claude",
+            "drive" if match.group(1) == "Google_Drive" else "m365",
+        )
+    elif match := _CODEX.fullmatch(tool_name):
+        key = ("codex", "drive" if match.group(1) == "google_drive" else "m365")
+    else:
+        return None
+    return _EXACT[key], match.group(2)
+
+
+def _actions_ending(tool_name: str) -> list[str]:
+    """The known tool names a name ends in, after nothing or a prefix ending in ``_``; of two
+    where one ends the other (``search``, ``sharepoint_folder_search``) only the longer."""
+    ending = [a for a in _KNOWN_ACTIONS if tool_name == a or tool_name.endswith(f"_{a}")]
+    return sorted(a for a in ending if not any(o != a and o.endswith(f"_{a}") for o in ending))
+
+
+def is_connector_tool(tool_name: str) -> bool:
+    """Whether some handler knows this tool name."""
+    if exact := _exact(tool_name):
+        handler, action = exact
+        return any(h is handler and action in actions for h, actions in _ACTIONS)
+    return bool(_actions_ending(tool_name))
+
+
+def connector_files(
+    tool_name: str, tool_input: JsonValue, tool_output: JsonValue
+) -> list[ConnectorFile]:
+    """The files of one connector call, ``[]`` for any other call. ``tool_output`` is ``None``
+    when there is no result.
+
+    A claude.ai or Codex connector name picks its handler. Any other name that ends in a known
+    tool name runs every handler that knows it, so the same file can come back more than once:
+    the caller merges them (``finalize.merge_by_refs``).
+    """
+    if exact := _exact(tool_name):
+        handler, action = exact
+        return handler(action, tool_input, tool_output)
+    files: list[ConnectorFile] = []
+    for action in _actions_ending(tool_name):
+        for handler, actions in _ACTIONS:
+            if action in actions:
+                files += handler(action, tool_input, tool_output)
+    return files
