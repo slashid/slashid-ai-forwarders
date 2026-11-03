@@ -25,16 +25,23 @@ Tagged releases (`agentcore-vX.Y.Z`) publish `slashid-ai-forwarder-agentcore-vX.
 | `HarnessHooksEnabled`, `GatewayHooksEnabled` | (default `true`) Turn a surface off without detaching it                                                                      |
 | `BudgetMs`                    | (default `3500`, 100-6500) Time one check may take                                                                                           |
 | `GatewayRoleArns`             | Execution role ARNs of the Gateways that use the function; each gets `lambda:InvokeFunction`. Empty for none                                  |
-| `AllowAgentCoreServiceInvoke` | (default `true`) Lets `bedrock-agentcore.amazonaws.com` of this account invoke the function. Unconfirmed that Harness hooks need it or that this is the principal's name; set `false` for Gateway-only use |
+| `HarnessRoleArns`             | Execution role ARNs of the Harnesses that use the function as a hook (`get-harness` → `harness.executionRoleArn`); each gets `lambda:InvokeFunction`. Empty for none |
 | `LogLevel`, `LogRetentionDays` | (default `INFO`, 30) `DEBUG` or `INFO`: the lines to alert on are INFO, so `WARNING` and `ERROR` are not offered                              |
 
-The function (Python 3.14, 512 MB, 10 s) has the basic execution role plus `bedrock-agentcore:GetHarness` on `harness/*` and `bedrock-agentcore:GetGateway` on `gateway/*` of the account and region. The template permits the listed Gateway roles and the AgentCore service principal to invoke it. Any other principal of the account whose identity policy allows `lambda:InvokeFunction` on it can invoke it too and could supply a forged client context (the identity the function reports), so restrict that permission.
+The function (Python 3.14, 512 MB, 10 s) has the basic execution role plus `bedrock-agentcore:GetHarness` on `harness/*` and `bedrock-agentcore:GetGateway` on `gateway/*` of the account and region. The template permits the listed Harness and Gateway roles to invoke it: a Harness invokes its hooks with its execution role, a Gateway its interceptors with its own. Any other principal of the account whose identity policy allows `lambda:InvokeFunction` on it can invoke it too and could supply a forged client context (the identity the function reports), so restrict that permission.
 
 The deployment prints the function ARN as `ForwarderFunctionArn`; below it is `$FN`.
 
 ## Attach to a Harness
 
-`UpdateHarness` replaces the whole hook list, so read, merge ours in, write. Hooks are not part of the `agentcore` project file, and **every `agentcore deploy` removes them: repeat this after each deploy.** Set `MODE` to the stack's `FailMode`, and to `allow` when `ShadowMode` is on (AWS applies `failureMode` to a Lambda error whatever the shadow setting says).
+First read the Harness's execution role and put it in the stack's `HarnessRoleArns` (a Harness invokes its hook with that role; without the statement AgentCore never calls the function):
+
+```bash
+aws bedrock-agentcore-control get-harness --harness-id "$HARNESS_ID" \
+  --query 'harness.executionRoleArn' --output text
+```
+
+Then `UpdateHarness` replaces the whole hook list, so read, merge ours in, write. Hooks are not part of the `agentcore` project file, and **every `agentcore deploy` removes them: repeat this after each deploy.** Set `MODE` to the stack's `FailMode`, and to `allow` when `ShadowMode` is on (AWS applies `failureMode` to a Lambda error whatever the shadow setting says).
 
 ```bash
 HARNESS_ID=...          # harness id, not the ARN
@@ -139,7 +146,6 @@ How a deny lands: Harness `before_tool_call` skips the call and the model receiv
 Not yet verified against AWS or the SlashID server (design spec, section 6):
 
 - that the server accepts a tool-only preflight with an unknown model, no `event_type`, and `agent_arn` or `gateway_arn` without `principal_arn` (this gates v1);
-- whether Harness hooks need a resource policy on the function and the service principal's name;
 - what the Gateway does when the interceptor Lambda errors, times out, receives a result over 6 MB or a streaming response;
 - that the baggage `harness.id` rebuilds the `harnessArn`, and that `REQUEST_ID` is the same on a call's REQUEST and RESPONSE;
 - that the deny reference survives each hop unchanged;
