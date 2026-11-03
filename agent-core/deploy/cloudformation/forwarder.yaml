@@ -101,11 +101,13 @@ Parameters:
   LogLevel:
     Type: String
     Default: INFO
-    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+    AllowedValues: [DEBUG, INFO]
     Description: |
-      Python log level for the forwarder Lambda. Keep INFO or lower: the
-      lines to alert on (fail_mode, pass_through, baggage_unverified) are
-      INFO.
+      Log level of the forwarder's own log lines. Only DEBUG and INFO are
+      allowed: the lines to alert on (fail_mode, pass_through,
+      baggage_unverified) are INFO. DEBUG adds only the forwarder's own
+      fixed-vocabulary lines; the AWS and HTTP libraries stay at their
+      default level.
 
 Conditions:
   HasGatewayRoles: !Not [!Equals [!Join ["", !Ref GatewayRoleArns], ""]]

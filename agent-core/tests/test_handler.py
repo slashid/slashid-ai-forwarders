@@ -1,8 +1,11 @@
 import asyncio
 import copy
 import inspect
+import json
 import logging
 import os
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import cast
@@ -655,3 +658,32 @@ def test_a_bad_configuration_escapes_as_a_lambda_error(
     monkeypatch.delenv("SLASHID_PUSH_TOKEN")
     with pytest.raises(ValidationError):
         lambda_handler(load("harness_before_tool_call"), None)
+
+
+def test_debug_logging_never_reaches_the_aws_and_http_libraries() -> None:
+    """At DEBUG aiobotocore logs the signed request, Authorization and session token included."""
+    probe = (
+        "import json, logging\n"
+        "root = logging.getLogger().level\n"
+        "import slashid_agentcore_forwarder.handler\n"
+        "debug = logging.DEBUG\n"
+        "print(json.dumps({\n"
+        "    'root_unchanged': logging.getLogger().level == root,\n"
+        "    'package': logging.getLogger('slashid_agentcore_forwarder').level == debug,\n"
+        "    'libraries': {n: logging.getLogger(n).isEnabledFor(debug)\n"
+        "                  for n in ('botocore', 'aiobotocore', 'httpx', 'httpcore')},\n"
+        "}))\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", probe],
+        env={**os.environ, "LOG_LEVEL": "debug"},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert json.loads(done.stdout) == {
+        "root_unchanged": True,
+        "package": True,
+        "libraries": {"botocore": False, "aiobotocore": False, "httpx": False, "httpcore": False},
+    }

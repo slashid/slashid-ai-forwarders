@@ -26,7 +26,7 @@ Tagged releases (`agentcore-vX.Y.Z`) publish `slashid-ai-forwarder-agentcore-vX.
 | `BudgetMs`                    | (default `3500`, 100-6500) Time one check may take                                                                                           |
 | `GatewayRoleArns`             | Execution role ARNs of the Gateways that use the function; each gets `lambda:InvokeFunction`. Empty for none                                  |
 | `AllowAgentCoreServiceInvoke` | (default `true`) Lets `bedrock-agentcore.amazonaws.com` of this account invoke the function. Unconfirmed that Harness hooks need it or that this is the principal's name; set `false` for Gateway-only use |
-| `LogLevel`, `LogRetentionDays` | (default `INFO`, 30) Keep `INFO` or lower: the lines to alert on are INFO                                                                   |
+| `LogLevel`, `LogRetentionDays` | (default `INFO`, 30) `DEBUG` or `INFO`: the lines to alert on are INFO, so `WARNING` and `ERROR` are not offered                              |
 
 The function (Python 3.14, 512 MB, 10 s) has the basic execution role plus `bedrock-agentcore:GetHarness` on `harness/*` and `bedrock-agentcore:GetGateway` on `gateway/*` of the account and region. Only the listed Gateway roles and the AgentCore service principal can invoke it: anyone who can invoke it can supply the identity it reports.
 
@@ -90,7 +90,7 @@ All are environment variables set by the template.
 | `SLASHID_VERDICT_FAIL_MODE`      | `allow` | `allow` or `deny`: the answer when a check gets none                                                       |
 | `SLASHID_VERDICT_BUDGET_MS`      | `3500`  | Bound on one check (100-6500); role lookups before it take up to 2 s, so 2 s + budget + overhead stays under the 10 s hook and Lambda timeouts |
 | `SLASHID_SHADOW_MODE`            | `false` | Evaluate and log, answer allow                                                                            |
-| `LOG_LEVEL`                      | `INFO`  | Python log level                                                                                          |
+| `LOG_LEVEL`                      | `INFO`  | `DEBUG` or `INFO`: the level of this package's own log lines                                              |
 
 `SLASHID_INCLUDE_RAW_CONTENT` is forced off: connector files carry no text.
 
@@ -102,7 +102,7 @@ When the Lambda itself errors or times out, **AWS decides, not this setting**: o
 
 ## What to alert on
 
-Logs are one JSON object per line with a fixed set of keys, never a payload, header, baggage value, tool argument or result. With the `allow` default an outage is otherwise silent. Alert on:
+Logs are one JSON object per line with a fixed set of keys, never a payload, header, baggage value, tool argument or result. `DEBUG` adds only the package's own fixed-vocabulary lines (the level is set on the package's logger, never the root, so `botocore`, `aiobotocore`, `httpx` and `httpcore` stay quiet and their signed-request logging is never switched on). With the `allow` default an outage is otherwise silent. Alert on:
 
 | `event`                    | Meaning                                                                                                              |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------- |

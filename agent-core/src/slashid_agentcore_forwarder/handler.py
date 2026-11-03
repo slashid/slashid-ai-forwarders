@@ -7,7 +7,6 @@ decides); any other exception is answered as a check that gave no answer.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from typing import Literal
 
@@ -19,7 +18,9 @@ from slashid_agentcore_forwarder.models import Lenient, Raw
 from slashid_agentcore_forwarder.payloads import ClientContext, client_context
 from slashid_agentcore_forwarder.runtime import Runtime, get_runtime
 
-logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+# The package logger only: at DEBUG the root level would make aiobotocore log the signed request
+# (Authorization and session token). Records still reach Lambda's handler on the root logger.
+logs.log.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
 
 Surface = Literal["harness", "gateway"]
 SURFACES: tuple[Surface, ...] = ("harness", "gateway")
