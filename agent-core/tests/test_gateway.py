@@ -1100,3 +1100,27 @@ async def test_a_call_response_without_a_body_takes_the_no_answer_path(
         assert denied_text(answer).startswith(WITHHELD + POLICY_UNAVAILABLE)
     [line] = events(caplog, "fail_mode")
     assert (line["check"], line["reason"]) == ("result", "error")
+
+
+@pytest.mark.parametrize("rpc_id", [7, "req-7"])
+async def test_a_call_response_without_a_body_is_denied_under_the_requests_id(
+    load: Load, rpc_id: JsonValue
+) -> None:
+    payload = load("gateway_response")
+    del response_of(payload)["body"]
+    body_of(payload)["id"] = rpc_id
+    answer = await handle(make_runtime(verdict_fail_mode="deny"), payload, ctx())
+    assert denied(answer)
+    assert obj(obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])["body"])["id"] == rpc_id
+
+
+@pytest.mark.parametrize("request_body", [None, "text", {"jsonrpc": "2.0", "method": "tools/call"}])
+async def test_a_body_less_response_with_an_unreadable_request_id_is_denied_under_null(
+    load: Load, request_body: JsonValue
+) -> None:
+    payload = load("gateway_response")
+    del response_of(payload)["body"]
+    request_of(payload)["body"] = request_body
+    answer = await handle(make_runtime(verdict_fail_mode="deny"), payload, ctx())
+    assert denied(answer)
+    assert obj(obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])["body"])["id"] is None
