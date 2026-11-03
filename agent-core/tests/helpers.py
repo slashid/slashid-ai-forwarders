@@ -93,6 +93,11 @@ def checker_of(runtime: Runtime) -> FakeChecker:
     return runtime.checker
 
 
+def looked_up(runtime: Runtime) -> list[tuple[str, str]]:
+    assert isinstance(runtime.roles, FakeRoles)
+    return runtime.roles.looked_up
+
+
 def identity_of(event: AIInvocationObservedV1) -> AWSIdentityDetails:
     assert isinstance(event.identity_details, AWSIdentityDetails)
     return event.identity_details
@@ -140,3 +145,40 @@ def with_result(
     payload = load(name)
     obj(response_of(payload)["body"])["result"] = result
     return payload
+
+
+def allow_request(body: JsonValue) -> JsonValue:
+    return {
+        "interceptorOutputVersion": "1.0",
+        "mcp": {"transformedGatewayRequest": {"body": body}},
+    }
+
+
+def deny_body(rpc_id: JsonValue, text: str) -> JsonValue:
+    return {
+        "interceptorOutputVersion": "1.0",
+        "mcp": {
+            "transformedGatewayResponse": {
+                "statusCode": 200,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "result": {"isError": True, "content": [{"type": "text", "text": text}]},
+                },
+            }
+        },
+    }
+
+
+def denied_text(answer: JsonValue) -> str:
+    """The text of a deny answer, whose shape is asserted along the way."""
+    response = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
+    assert response["statusCode"] == 200
+    body = obj(response["body"])
+    assert body["jsonrpc"] == "2.0"
+    result = obj(body["result"])
+    assert result["isError"] is True
+    [block] = result["content"] if isinstance(result["content"], list) else []
+    text = obj(block)["text"]
+    assert isinstance(text, str)
+    return text

@@ -24,6 +24,7 @@ from slashid_agentcore_forwarder.payloads import (
     GatewayPayload,
     GatewayRequest,
     GatewayResponse,
+    McpPart,
     RpcReply,
     ToolResult,
     ToolsCall,
@@ -86,6 +87,39 @@ def _echo_response(response: GatewayResponse) -> Mcp:
         echoed["headers"] = response.headers
     echoed["body"] = response.body
     return {"transformedGatewayResponse": echoed}
+
+
+def _check_and_echo(mcp: object) -> tuple[Check, Mcp]:
+    """The check a payload we cannot place stands for, and the best echo of what it carries:
+    the response when there is one, else the request, else nothing."""
+    try:
+        part = McpPart.model_validate(mcp)
+    except ValidationError:
+        return "call", {}
+    try:
+        if part.gatewayResponse is not None:
+            return "result", _echo_response(GatewayResponse.model_validate(part.gatewayResponse))
+        return "call", _echo_request(GatewayRequest.model_validate(part.gatewayRequest))
+    except ValidationError:
+        return ("call" if part.gatewayResponse is None else "result"), {}
+
+
+def passthrough(mcp: object, *, http: bool) -> JsonValue:
+    """The answer of a disabled surface, with no request to SlashID: an ``http`` payload gets
+    the ``http`` answer, any other the echo."""
+    return _out(http={}) if http else _out(mcp=_check_and_echo(mcp)[1])
+
+
+def unplaced(runtime: Runtime, mcp: object, why: logs.FailReason) -> JsonValue:
+    """A payload we cannot place (spec 3.2 rule 1) takes the no-answer path."""
+    check, echo = _check_and_echo(mcp)
+    return _no_answer(runtime, why, check=check, rpc_id=None, echo=echo)
+
+
+def deny_unreadable(runtime: Runtime, mcp: object, reason: logs.UnreadableReason) -> JsonValue:
+    """What the adapters answer when a payload is too deep, for one that reached the entry point."""
+    check, echo = _check_and_echo(mcp)
+    return _unreadable(runtime, reason, check=check, rpc_id=None, echo=echo)
 
 
 def _prefix(check: Check) -> str:
