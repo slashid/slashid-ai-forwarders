@@ -145,13 +145,14 @@ Each entry lists what it sees, what it can do, how identity appears, limits, and
   Every event also has `hookEventId, name, event, harnessArn, sessionId` and an **undocumented** `headers{traceparent, baggage(harness.id, session.id, endpoint qualifier), X-Amzn-Trace-Id}`. Context is capped at 64 KiB. A 90 KB `shell` output arrived in `after_tool_call` with the whole `toolResult` replaced by `{truncated: true, preview: "<first ~64 KiB of the result's JSON text, cut mid-string>"}` ✅: `status`, `isError` and `content` are only inside the preview text, while `toolUseId` stays in the context. Whether a large `toolInput` is truncated the same way is untested 📖 (the demo model, Haiku 5.5, would not write a 64 KiB command).
 - **Can act:** `before_tool_call` deny skips the call; the model receives the reason as the tool result, tells the user and does not work around it ✅. `after_tool_call` deny stops the run (`stopReason: hook_stopped`, no answer) ✅, **but the result stays in the session: on the next request in the same session the model quoted it** ✅. It does not keep the content from the model. `failureMode` allow|deny (default deny), timeout 1-900 s 📖.
 - **Absent:** the caller / `--user-id`, any principal, the model id, per-call tokens, system prompt and history, assistant text.
+- **Who invokes the Lambda:** the Harness's execution role, not the service: a resource-policy statement for `bedrock-agentcore.amazonaws.com` never got an invocation, one `lambda:InvokeFunction` statement per execution role did (section 13) ✅.
 - **Quirks:** `after_tool_call` fires even after a denied `before_tool_call`, with `status:"error"` and the deny text, and nothing marks who denied. A failed model call still fires `before_invocation` and `after_invocation` with `stopReason:"interrupted"` and zero tokens.
 - **Inline functions span two invocations** ✅: request 1 fires `before_invocation`, `before_tool_call` and `after_invocation` (`stopReason: tool_use`) and **no** `after_tool_call`; the caller runs the function and sends a follow-up request with the same session id, which fires `before_invocation` (its message is the `toolResult`), `after_tool_call` (with the client-supplied result) and `after_invocation`, and **no** `before_tool_call`. A consumer must pair the two halves by `toolUseId` across invocations. The `after_tool_call` confirms only that the harness accepted the caller's result, not that the caller did the work 📖.
 
 ### S2. Gateway interceptors, MCP shape ✅
 
 - **What:** the Gateway invokes the interceptor Lambda for **every MCP message** (initialize, notifications, `tools/list`, `tools/call`), once before (REQUEST) and once after (RESPONSE) the target.
-- **Payload (`event.mcp`):** `gatewayRequest{path, httpMethod, headers (only with passRequestHeaders), body (parsed JSON-RPC), context.identity.awsPrincipalArn}`; `gatewayResponse` is **null on REQUEST**; `rawGatewayRequest`. Lambda client context adds `GATEWAY_ARN, GATEWAY_ACCOUNT_ID, REQUEST_ID, SOURCE_IP`. Tool names are `<target>___<tool>`. `REQUEST_ID` equals the `bedrockAgentCoreAwsRequestId` the tool Lambda receives, so the layers join.
+- **Payload (`event.mcp`):** `gatewayRequest{path, httpMethod, headers (only with passRequestHeaders), body (parsed JSON-RPC), context.identity.awsPrincipalArn}`; `gatewayResponse` is **null on REQUEST**, and for an MCP notification (`notifications/initialized`) it has **no `body`** (only headers, httpMethod, isStreamingResponse, path, statusCode) while the request body is `{jsonrpc, method}` with no `id` or `params` ✅; `rawGatewayRequest`. Lambda client context adds `GATEWAY_ARN, GATEWAY_ACCOUNT_ID, REQUEST_ID, SOURCE_IP`. Tool names are `<target>___<tool>`. `REQUEST_ID` equals the `bedrockAgentCoreAwsRequestId` the tool Lambda receives, so the layers join.
 - **What it gives beyond tool calls:** the `tools/list` RESPONSE is the whole catalog (name, description, inputSchema; Google adds annotations and outputSchema); `initialize` RESPONSE has server info and capabilities. These map onto our `AITool` and `AIToolServer` event structures.
 - **Catalog size.** A Gateway is one MCP endpoint aggregating N *targets* (MCP servers, Lambdas with declared schemas, OpenAPI or Smithy specs, API Gateway stages, connectors; inference targets add no tools), and `tools/list` is the union, prefixed `<target>___`. We saw 7 tools / 7 KB for two small targets ✅ and **8 tools / 39 KB from the real Google Drive server alone** (`search_files` is 7.4 KB) ✅, with no pagination cursor. Every model request carries these definitions (they count as input tokens), so large catalogs are costly. Ways to shrink them: Policy hides unpermitted tools (7 became 4) ✅, an interceptor can filter 📖, Harness `allowedTools` patterns, Gateway semantic search 📖, and a setting that disables list pagination 📖.
 - **Can act:** a REQUEST interceptor that returns `transformedGatewayResponse` short-circuits: the tool is not called, **the RESPONSE interceptor still runs**. A body `{"result":{"isError":true,"content":[{"type":"text","text":reason}]}}` reaches the model verbatim; a JSON-RPC `error` body is wrapped as "Tool execution failed: <message>". A RESPONSE interceptor can rewrite results ✅ (we replaced the `read_file_content` result of the tagged file with a notice and the model saw only the notice) or hide tools from `tools/list` 📖 (not tested). **The rewrite must cover every result that carries the file, not only the read tools:** `search_files` returned a `contentSnippet` of the tagged file and the model quoted it even with the read redacted ✅.
@@ -391,6 +392,7 @@ OneDrive/SharePoint was considered and set aside: Microsoft's hosted server appe
 | 13 | Harness model traffic through the Gateway with `apiBase` | ✅ works; static-credential limits |
 | 14 | Runtime agent calling the Gateway (MCP client, SigV4) | ✅ role principal, baggage `session.id`, no code of ours |
 | 15 | AgentCore Policy: LOG_ONLY then ENFORCE; decision logs | ✅ |
+| 16 | The AgentCore forwarder (Lambda) on a Harness and a Gateway, against production SlashID (section 13) | ✅ allow path, forced denies; ⛔ server deny verdict not exercised |
 
 ---
 
@@ -421,9 +423,9 @@ All `agentdemo-*` in account `<account>`, `us-east-2`; none are production.
 ## 11. Not known yet
 
 - How the Google Drive MCP gating resolves (user membership of the Preview program group? propagation? another entitlement).
-- Whether an interceptor's latency budget is comfortable: Policy adds ~38 ms; interceptor and hook Lambda latency were not measured.
+- Whether an interceptor's latency budget is comfortable: Policy adds ~38 ms; a forwarder check measured 170-195 ms warm (section 13).
 - Behavior when an interceptor Lambda errors or times out (Gateway side); Harness hooks have `failureMode`, the Gateway's behavior is undocumented to us.
-- Whether the server's preflight endpoint answers for tool calls from a source with no model.
+- Whether the server resolves a gateway-only identity, treats a result check as a content check, and applies a deny verdict (its preflight answers 200 for tool calls from a source with no model, section 13).
 - Streaming-on interceptor behavior; Policy temporal and guardrail conditions; Gateway metrics.
 - A Runtime agent with non-Bedrock models, and a Strands agent with in-process hooks.
 
@@ -444,6 +446,39 @@ These are facts from the tests, not decisions.
 9. **Model-call detail** is optional and depends on traces, MIL or an agent change.
 10. **Latency and failure mode** are in the user's critical path; fail-open versus fail-closed must be a deliberate setting on both surfaces.
 11. **Keeping a sensitive result from the model works on one surface only.** Pre-call deny works on both (S1 `before_tool_call`, S2 REQUEST). Result-side protection works through the S2 RESPONSE interceptor, for Gateway tools only, and it has to inspect every result (search snippets leak). S1's `after_tool_call` deny stops the run but the result is retained and reaches the model on the next request; Harness tools that bypass a Gateway (`shell`, `remote_mcp`, inline functions) therefore have no result-side control, only the pre-call check.
+
+---
+
+## 13. Live run of the AgentCore forwarder against production SlashID ✅
+
+**Setup.** 2026-11-03. The forwarder (`agent-core/`, CloudFormation stack from `agent-core/deploy/cloudformation/forwarder.yaml`; Python 3.14, 512 MB, 10 s) in the demo account (`<account>`, `us-east-2`), attached to a demo Harness and a demo IAM-authorized Gateway, pointed at the production SlashID endpoint with the push token of a test connection; synthetic ids only. The Harness's model called the Drive stand-in tools (`gdrive___search_files`, `gdrive___read_file_content`). Nothing was tagged sensitive, so every server verdict was allow.
+
+**Server acceptance.** Production `/preflight` returned HTTP 200 for tool-only events with an unknown model and no `event_type`, `used_tools` on a result check, `agent_arn` with `principal_arn`, and an identity with only `gateway_arn`. The local live tests (`SLASHID_LIVE=1`, `tests/live`) passed, 5 of 5. Not settled: whether the server resolves a gateway-only identity to anything, whether a result check is treated as a content check (all verdicts were allow), and the deny path of a server verdict.
+
+**Who invokes a Harness hook.** AgentCore invokes the hook Lambda with the Harness's execution role as the principal. A resource-policy statement for `bedrock-agentcore.amazonaws.com` did not work (no invocation reached the function); one `lambda:InvokeFunction` statement per Harness execution role fixed it. The Gateway invokes with its own role (a statement per role). The template takes `HarnessRoleArns`.
+
+**Order and count.** One tool call through a Harness that uses a Gateway tool produced four invocations in the documented order: Harness `before_tool_call`, Gateway REQUEST, Gateway RESPONSE, Harness `after_tool_call`, each a check of about 170-195 ms from the Lambda in `us-east-2` (warm). A session also produced six cheap pass-through invocations on the Gateway (`initialize`, `notifications/initialized` and `tools/list`, each REQUEST and RESPONSE), 2-6 ms each. A cold 512 MB container took 2.3 s to initialize and 1.4 s for its first request (TLS and the first role lookup); the first Harness check took 875 ms.
+
+**Notifications.** For `notifications/initialized` the Gateway's `gatewayResponse` has no `body` (only headers, httpMethod, isStreamingResponse, path, statusCode) and the request body is `{jsonrpc, method}`, with no `id` or `params`. A forwarder that required a body failed these; fixed.
+
+**Allow shapes accepted.** The Gateway accepted the allow echo (`transformedGatewayRequest` and `transformedGatewayResponse` built from the raw payload, response headers as received, the body-less notification response included) for every message of a full session: `initialize`, notifications, `tools/list`, `tools/call`. The Harness accepted `{"decision":"allow","reason":"slashid"}`.
+
+**Deny shapes accepted.** With fail mode `deny` and an unreachable SlashID endpoint, which forces denies:
+- A Harness `before_tool_call` deny `{"decision":"deny","reason":<text>}` blocked the tool call, and the model quoted the text back verbatim, including the `(ref <12 hex>)` suffix.
+- A Gateway REQUEST deny (`transformedGatewayResponse`, status 200, `result.isError` true, one text block) reached the model as an error tool result, quoted verbatim with the reference.
+- The follow-up Gateway RESPONSE and Harness `after_tool_call` that carry our own deny text were recognized by the reference and answered without a check, so the reference survives the Harness `before_tool_call` to `after_tool_call` hop and the Gateway REQUEST to RESPONSE hop.
+- The transport failure was retried once: 680 ms for the failed check, retry included.
+
+**Role lookup.** `GetHarness` worked on the real Harness (no `role_lookup_failed` line); a synthetic harness id gave `access_denied`.
+
+**Not exercised (still unknown).**
+- A RESPONSE replacement (`Content withheld: ...`) and `isError` true on it.
+- A Harness `after_tool_call` deny (`hook_stopped`) by the forwarder.
+- What the Gateway does when the Lambda errors or times out, with a result over 6 MB, or with streaming.
+- A truncated `toolInput`.
+- A deny from a real server verdict (needs a tagged file).
+- Real Drive and Microsoft result shapes (only the stand-in ran), and `remote_mcp` tools.
+- The baggage-based `agent_arn` check on a real Harness-to-Gateway call: no `baggage_unverified` line was logged, which fits success or no claim, so it is not proven.
 
 ---
 
