@@ -69,9 +69,11 @@ Parameters:
     Description: |
       Execution role ARNs of the AgentCore Gateways that call this function
       as an interceptor; each is allowed to invoke it. Leave empty if no
-      Gateway uses it. Only these roles and the AgentCore service (below)
-      may invoke the function: anyone who can invoke it can supply the
-      identity it reports.
+      Gateway uses it. These roles and the AgentCore service (below) are the
+      principals the template permits. Any other principal of the account
+      whose identity policy allows lambda:InvokeFunction can also invoke the
+      function and could supply a forged client context (the identity it
+      reports), so restrict that permission.
 
   AllowAgentCoreServiceInvoke:
     Type: String

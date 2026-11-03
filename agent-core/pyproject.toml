@@ -7,6 +7,10 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "SlashID" }]
 dependencies = [
     "aiobotocore>=3.10",
+    "botocore>=1.35",
+    "httpx>=0.28",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
     "slashid-ai-forwarder-core",
 ]
 

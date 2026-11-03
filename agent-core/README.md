@@ -28,7 +28,7 @@ Tagged releases (`agentcore-vX.Y.Z`) publish `slashid-ai-forwarder-agentcore-vX.
 | `AllowAgentCoreServiceInvoke` | (default `true`) Lets `bedrock-agentcore.amazonaws.com` of this account invoke the function. Unconfirmed that Harness hooks need it or that this is the principal's name; set `false` for Gateway-only use |
 | `LogLevel`, `LogRetentionDays` | (default `INFO`, 30) `DEBUG` or `INFO`: the lines to alert on are INFO, so `WARNING` and `ERROR` are not offered                              |
 
-The function (Python 3.14, 512 MB, 10 s) has the basic execution role plus `bedrock-agentcore:GetHarness` on `harness/*` and `bedrock-agentcore:GetGateway` on `gateway/*` of the account and region. Only the listed Gateway roles and the AgentCore service principal can invoke it: anyone who can invoke it can supply the identity it reports.
+The function (Python 3.14, 512 MB, 10 s) has the basic execution role plus `bedrock-agentcore:GetHarness` on `harness/*` and `bedrock-agentcore:GetGateway` on `gateway/*` of the account and region. The template permits the listed Gateway roles and the AgentCore service principal to invoke it. Any other principal of the account whose identity policy allows `lambda:InvokeFunction` on it can invoke it too and could supply a forged client context (the identity the function reports), so restrict that permission.
 
 The deployment prints the function ARN as `ForwarderFunctionArn`; below it is `$FN`.
 
@@ -106,13 +106,14 @@ Logs are one JSON object per line with a fixed set of keys, never a payload, hea
 
 | `event`                    | Meaning                                                                                                              |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `fail_mode`                | A check got no answer, or a payload was unreadable; `surface`, `check`, `reason`, `mode` say which and what was applied |
+| `fail_mode`                | A check got no answer, or a payload was unreadable; `surface`, `check`, `reason`, `mode` say which and what was applied. Reasons: `transport`, `timeout`, `status`, `unparseable`, `budget` (SlashID did not answer); `no_identity` (a Gateway call with neither a Gateway ARN nor a principal); `no_request` (a Gateway RESPONSE with no request, so no tool name); `unknown_payload`, `unknown_version`, `unknown_event` (a format we cannot place); `error` (an exception); `unreadable` (denied whatever the mode) |
+| `unreadable`               | A payload we cannot read, denied whatever the fail mode; `reason` is `bad_envelope` (a malformed hook or `tools/call`), `bad_tool_call`, `batch_with_call` (a JSON-RPC batch containing a `tools/call`) or `too_deep` (nested past the limit); a `fail_mode` line with reason `unreadable` follows |
 | `pass_through`             | A payload went through unchecked: `unknown_payload`, `surface_disabled` (once per container start), `streaming_response` |
 | `baggage_unverified`       | A Gateway call claimed a Harness (baggage `harness.id`) that could not be verified; `agent_arn` is left out           |
 | `role_lookup_failed`       | `GetHarness` or `GetGateway` failed (`access_denied`, `not_found`, `throttled`, `timeout`, ...); WARNING             |
 | `gateway_role_unavailable` | A Gateway call without a principal got no role from `GetGateway`                                                     |
 
-Others: `shadow`, `truncated_input`, `cache_miss`, `unreadable`, `missing_request_id`, `unexpected_error` (ERROR). A format change on AWS's side shows up as `fail_mode` with reason `unknown_payload`, `unknown_version` or `unknown_event`; with the `allow` default only that line says result checks stopped.
+Others: `shadow`, `truncated_input`, `cache_miss`, `missing_request_id`, `unexpected_error` (ERROR). A format change on AWS's side shows up as `fail_mode` with reason `unknown_payload`, `unknown_version` or `unknown_event`; with the `allow` default only that line says result checks stopped.
 
 ## Deny references
 
@@ -125,6 +126,7 @@ How a deny lands: Harness `before_tool_call` skips the call and the model receiv
 - **64 KiB.** A Harness hook's context is capped at 64 KiB: a larger tool result arrives replaced by `{truncated, preview}` (captured), so its status is lost (it is sent as not an error) and its file references come only from the cached call input. Whether a large tool input is truncated the same way is unconfirmed; if it is, a call padded past the limit loses its file references, and a `truncated_input` log line says so. The Gateway payload limit is 6 MB; what the Gateway does beyond it is unconfirmed.
 - **Region.** Role lookups go to `bedrock-agentcore-control` in the Lambda's own region, not the ARN's. Deploy the function in the region of its Harnesses and Gateways; a Harness in another account or region fails its lookup.
 - **Missing permission.** Until the SlashID server accepts `agent_arn` and `gateway_arn` and a missing `principal_arn`, an event with no role has no identifier the server recognizes. A missing `GetHarness` or `GetGateway` permission (or a failed lookup) is therefore a fail-mode outcome, logged as `role_lookup_failed` and `fail_mode`.
+- **Idle connections.** A role lookup that lands on a connection that died while the Lambda was frozen fails once (no retry, `total_max_attempts` 1) and is cached for 30 s, so the first call after a long idle may lack `principal_arn` until that cache entry expires; the fail mode applies until the server accepts events without a principal.
 - **`agent_arn` on the Gateway path is weak.** It is rebuilt from the caller-set baggage `harness.id` and set only when `GetHarness` for that Harness returns the caller's own role. That shows the claimed Harness shares the role, not that the caller is that Harness: another Harness or Runtime agent with the same role can claim it. Treat it as no stronger than the role. `conversation_id` (baggage `session.id`) is a claim too.
 - **Error results.** An `isError` result (or an `error` reply) is still checked, with `is_error` set and no file references.
 - **Two surfaces, one call.** A Harness with Gateway tools fires both surfaces for one call: up to four serial checks, each bounded by the budget (14 s at the default, plus up to 1 s per cold role lookup, with a slow but reachable server) and no circuit breaker. Both are checked; either deny blocks. Turn one surface off if that is not worth it.
