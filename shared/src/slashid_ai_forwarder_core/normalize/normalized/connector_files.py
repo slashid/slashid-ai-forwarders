@@ -2,7 +2,9 @@
 
 A connector returns a re-rendering of a file, not its stored bytes, so a content hash cannot
 match it; the provider's own id can. ``connector_files`` reads the call (and its result, when
-there is one); ``connector_refs`` reads the call alone, as a hook sees it before it runs.
+there is one); ``connector_refs`` reads the call alone, as a hook sees it before it runs. A
+result is a string, a list of ``{text}`` parts, or an MCP result object ``{content,
+structuredContent}``.
 
 Tool names are those of Claude Code's claude.ai connectors (``mcp__claude_ai_Google_Drive__*``)
 and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them). Any other
@@ -159,6 +161,7 @@ def _args[M: BaseModel](model: type[M], tool_input: JsonValue) -> M | None:
 
 
 def _mcp_result(tool_output: JsonValue) -> _McpResult | None:
+    """A dict is an MCP result only if it has ``content`` or ``structuredContent``."""
     if (
         not isinstance(tool_output, dict)
         or not {"content", "structuredContent"} & tool_output.keys()
@@ -448,7 +451,8 @@ def connector_files(
     tool_name: str, tool_input: JsonValue, tool_output: JsonValue
 ) -> list[ConnectorFile]:
     """The files of one connector call, ``[]`` for any other call. ``tool_output`` is ``None``
-    when there is no result.
+    when there is no result, else a string, a list of ``{text}`` parts, or an MCP result object
+    ``{content, structuredContent}``.
 
     A claude.ai or Codex connector name picks its handler. Any other name that ends in a known
     tool name runs every handler that knows it, so the same file can come back more than once:

@@ -111,6 +111,12 @@ def test_codex_fetch_without_a_result_takes_the_id_from_the_url(url: str, ref: s
     assert _got(connector_files(_codex("fetch"), {"url": url}, None)) == [(ref, None, None)]
 
 
+def test_codex_fetch_takes_the_result_id_beside_a_file_or_folder_alone() -> None:
+    payload = {"id": "ID7", "file_or_folder": "file"}
+    got = connector_files(_codex("fetch"), {"url": "https://example.com/x"}, _envelope(payload))
+    assert _got(got) == [("google/ID7", None, None)]
+
+
 def test_codex_metadata_and_search() -> None:
     meta = connector_files(
         _codex("get_file_metadata"),
@@ -222,6 +228,7 @@ def test_folder_search_gives_an_item_per_hit() -> None:
         (SOURCEDOC, f"m365/guid/{GUID.upper()}"),
         ("https://t.sharepoint.com/sites/S/Shared%20Documents/a.md", None),
         ("https://example.com/drives/d/items/i", None),
+        (f"https://evilsharepoint.com/Doc.aspx?sourcedoc=%7B{GUID}%7D", None),
     ],
 )
 def test_codex_sharepoint_fetch_takes_the_ref_from_the_url(url: str, ref: str | None) -> None:
@@ -351,6 +358,12 @@ def test_claude_search_leaves_folders_out() -> None:
     ]
     got = connector_files(_claude("search_files"), {"query": "q"}, json.dumps({"files": files}))
     assert _got(got) == [("google/A", "a.md", None)]
+
+
+def test_a_metadata_result_with_a_mime_type_alone_gives_its_id() -> None:
+    result = json.dumps({"id": "ID1", "mimeType": "text/plain"})
+    got = connector_files(_claude("get_file_metadata"), {}, result)
+    assert _got(got) == [("google/ID1", None, None)]
 
 
 def test_a_result_that_is_not_text_parts_names_nothing() -> None:
