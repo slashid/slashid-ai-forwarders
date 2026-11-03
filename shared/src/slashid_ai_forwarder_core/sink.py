@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import ValidationError
@@ -46,9 +46,17 @@ class PermanentPushError(Exception):
     """Non-retryable upstream failure (other 4xx)."""
 
 
+PreflightFailure = Literal["transport", "timeout", "status", "unparseable"]
+
+
 class PreflightError(Exception):
-    """Preflight gave no verdict: a transport failure, a non-200, or a body
-    that is not ``{"deny_reasons": [str, ...]}``."""
+    """Preflight gave no verdict: a transport failure, a timeout, a non-200, or a body that is
+    not ``{"deny_reasons": [str, ...]}``. ``cause`` says which, so a caller can retry only a
+    transport error."""
+
+    def __init__(self, message: str, cause: PreflightFailure) -> None:
+        super().__init__(message)
+        self.cause = cause
 
 
 def join_deny_reasons(reasons: Sequence[str]) -> str:
@@ -202,11 +210,13 @@ async def preflight_invocation(
             },
             timeout=timeout_s,
         )
+    except httpx.TimeoutException as exc:
+        raise PreflightError(repr(exc), "timeout") from exc
     except httpx.HTTPError as exc:
-        raise PreflightError(repr(exc)) from exc
+        raise PreflightError(repr(exc), "transport") from exc
     if response.status_code != 200:
-        raise PreflightError(f"HTTP {response.status_code}")
+        raise PreflightError(f"HTTP {response.status_code}", "status")
     try:
         return AIPreflightResponse.model_validate_json(response.content).deny_reasons
     except ValidationError as exc:
-        raise PreflightError("unparseable verdict") from exc
+        raise PreflightError("unparseable verdict", "unparseable") from exc

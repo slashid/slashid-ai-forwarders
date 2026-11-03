@@ -357,7 +357,9 @@ async def test_preflight_error_fail_mode(
     tmp_path: Path, make_config: Callable[..., CodexConfig], mode: str
 ) -> None:
     env = Env(
-        tmp_path, make_config(verdict_fail_mode=mode), FakeSink(error=PreflightError("HTTP 503"))
+        tmp_path,
+        make_config(verdict_fail_mode=mode),
+        FakeSink(error=PreflightError("HTTP 503", "status")),
     )
     verdict = await env.preflight.pre_tool_use(_ptu("ls", cwd=tmp_path))
     if mode == "allow":

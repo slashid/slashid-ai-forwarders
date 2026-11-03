@@ -29,7 +29,7 @@ def sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 def _fail(exc: Exception) -> PreflightError:
     try:
-        raise PreflightError(repr(exc)) from exc
+        raise PreflightError(repr(exc), "transport") from exc
     except PreflightError as err:
         return err
 
@@ -114,7 +114,7 @@ async def test_preflight_retries_once_on_connection_error(
 @pytest.mark.parametrize(
     "error",
     [
-        PreflightError("HTTP 503"),
+        PreflightError("HTTP 503", "status"),
         _fail(httpx.ReadTimeout("slow")),
     ],
 )
