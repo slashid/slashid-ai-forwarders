@@ -1,4 +1,8 @@
-"""Models of both surfaces' payloads. Tool inputs and results stay free-form JSON."""
+"""Models of both surfaces' payloads. Tool inputs and results stay free-form JSON.
+
+A REQUEST/RESPONSE decision must read the raw dict, because ``GatewayPayload`` fails as a whole on
+one malformed field, and a RESPONSE's ``error`` is checked before its ``result`` is parsed.
+"""
 
 from __future__ import annotations
 
@@ -71,7 +75,15 @@ class Meta(Lenient):
 class RpcParams(Lenient):
     name: str = Field(min_length=1)
     arguments: JsonValue = None
-    meta: Meta | None = Field(None, alias="_meta")
+    meta: JsonValue = Field(None, alias="_meta")
+
+    @property
+    def baggage(self) -> str | None:
+        """None unless ``_meta`` is an object with a string ``baggage``."""
+        try:
+            return Meta.model_validate(self.meta).baggage
+        except ValidationError:
+            return None
 
 
 class ToolsCall(Lenient):
@@ -147,7 +159,7 @@ class _Method(Lenient):
 class Classified(BaseModel):
     """``call`` is set only for ``tools_call``."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     kind: Literal["tools_call", "other", "unreadable", "batch_with_call", "batch_other"]
     call: ToolsCall | None = None

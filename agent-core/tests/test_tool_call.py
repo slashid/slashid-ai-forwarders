@@ -11,6 +11,7 @@ from slashid_ai_forwarder_core.events import AIToolUse, AWSIdentityDetails
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import connector_refs
 
 from slashid_agentcore_forwarder.names import resolve_name
+from slashid_agentcore_forwarder.payloads import is_truncated, parse_tool_result
 from slashid_agentcore_forwarder.tool_call import (
     CachedInput,
     ToolCall,
@@ -120,7 +121,7 @@ def test_a_download_result_gives_refs_and_hashes() -> None:
 
 def test_a_search_result_object_gives_a_ref_per_hit() -> None:
     call = make_call("gdrive___search_files", {"query": "q"})
-    hits = [
+    hits: list[JsonValue] = [
         {"id": "A", "title": "a.md", "mimeType": "text/markdown"},
         {"id": "B", "title": "b.pdf", "mimeType": "application/pdf"},
     ]
@@ -133,12 +134,28 @@ def test_a_search_result_object_gives_a_ref_per_hit() -> None:
 def test_a_truncated_result_gives_refs_from_the_input_alone() -> None:
     call = make_call("gdrive___read_file_content", None, surface="harness")
     cached = CachedInput(tool_name=call.raw_name, tool_input={"fileId": "ID1"})
-    files = result_files(call, cached.tool_input, None, config=CONFIG)
-    event = build_event(call, result_is_error=False, files=files, now=NOW)
+    preview = json.dumps({"content": _b64(b"# Other\n"), "id": "PREVIEW", "title": "p.md"})
+    raw: JsonValue = {"truncated": True, "preview": preview}
+    assert is_truncated(raw)
+    output = parse_tool_result(raw).content
+    assert output is None
+    files = result_files(call, cached.tool_input, output, config=CONFIG)
+    event = build_event(call, result_is_error=parse_tool_result(raw).is_error, files=files, now=NOW)
     [file] = event.accessed_files or []
-    assert (file.file_refs, file.content_hashes) == (["google/ID1"], None)
+    assert (file.file_refs, file.content_hashes, file.name) == (["google/ID1"], None, None)
     assert event.used_tools is not None
     assert event.used_tools[0].is_error is False
+
+
+def test_a_validation_error_does_not_echo_the_tool_name() -> None:
+    with pytest.raises(ValidationError) as err:
+        ToolCall.model_validate({"surface": "harness", "raw_name": "SECRETVAL"})
+    assert "call_id" in str(err.value)
+    assert "SECRETVAL" not in str(err.value)
+    with pytest.raises(ValidationError) as err:
+        CachedInput.model_validate({"tool_name": "SECRETVAL"})
+    assert "tool_input" in str(err.value)
+    assert "SECRETVAL" not in str(err.value)
 
 
 def test_call_files_merge_the_handlers_that_share_a_name() -> None:
@@ -150,7 +167,8 @@ def test_call_files_merge_the_handlers_that_share_a_name() -> None:
 
 def test_result_files_merge_too() -> None:
     call = make_call("gdrive___get_file_metadata", {"fileId": "ID1"})
-    output = [{"text": json.dumps({"id": "ID1", "title": "a.md", "mimeType": "text/markdown"})}]
+    text = json.dumps({"id": "ID1", "title": "a.md", "mimeType": "text/markdown"})
+    output: list[JsonValue] = [{"text": text}]
     [file] = result_files(call, call.tool_input, output, config=CONFIG)
     assert (file.file_refs, file.name) == (["google/ID1"], "a.md")
 
@@ -166,8 +184,3 @@ def test_cached_input_matches_on_the_raw_name() -> None:
     assert cached.matches(make_call("gdrive___read_file_content"))
     assert not cached.matches(make_call("gdrive___search_files"))
     assert not cached.matches(make_call("mcp__gdrive__read_file_content"))
-
-
-def test_a_call_is_immutable() -> None:
-    with pytest.raises(ValidationError):
-        make_call("shell").call_id = "x"

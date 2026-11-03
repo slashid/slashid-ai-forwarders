@@ -29,7 +29,7 @@ from slashid_ai_forwarder_core.normalize.normalized.tools import resolve_tool
 class ToolCall(BaseModel):
     """One call as either surface saw it."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     surface: Literal["harness", "gateway"]
     raw_name: str  # as the platform gave it; connector recognition uses this
@@ -49,7 +49,7 @@ class ToolCall(BaseModel):
 class CachedInput(BaseModel):
     """What an allowed ``before_tool_call`` leaves for its ``after_tool_call``."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     tool_name: str
     tool_input: JsonValue
