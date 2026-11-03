@@ -102,9 +102,41 @@ def test_hook_context_needs_a_name_and_call_id(load: Load, field: str, drop: boo
         del context[field]
     else:
         context[field] = ""
+    with pytest.raises(ValidationError):
+        HarnessToolHook.model_validate(payload)
+
+
+# Pydantic shows up to ~50 chars of the failing value, so these payloads are short.
+def test_a_hook_error_does_not_echo_the_tool_input() -> None:
+    payload: dict[str, JsonValue] = {
+        "event": "before_tool_call",
+        "harnessArn": "arn:h",
+        "sessionId": SESSION,
+        "hookEventId": "e1",
+        "context": {"toolInput": "SECRETVAL", "toolUseId": "t1"},
+    }
     with pytest.raises(ValidationError) as err:
         HarnessToolHook.model_validate(payload)
-    assert "tooluse_EXAMPLE0001" not in str(err.value)
+    assert "toolName" in str(err.value)
+    assert "SECRETVAL" not in str(err.value)
+
+
+def test_a_tools_call_error_does_not_echo_the_arguments() -> None:
+    body = _call(arguments="SECRETVAL")
+    with pytest.raises(ValidationError) as err:
+        ToolsCall.model_validate(body)
+    assert "SECRETVAL" not in str(err.value)
+
+
+def test_a_gateway_error_does_not_echo_the_headers() -> None:
+    payload: dict[str, JsonValue] = {
+        "interceptorInputVersion": "1.0",
+        "mcp": {"gatewayRequest": {"headers": "SECRETVAL"}},
+    }
+    with pytest.raises(ValidationError) as err:
+        GatewayPayload.model_validate(payload)
+    assert "body" in str(err.value)
+    assert "SECRETVAL" not in str(err.value)
 
 
 def test_hook_event_must_be_a_tool_event(load: Load) -> None:
@@ -126,8 +158,7 @@ def test_gateway_request(load: Load) -> None:
     assert call.id == 2
     assert call.params.name == "gdrive___read_file_content"
     assert call.params.arguments == {"fileId": "ID1"}
-    assert call.params.meta is not None
-    assert call.params.meta.baggage == f"Self=example,session.id={SESSION}"
+    assert call.params.baggage == f"Self=example,session.id={SESSION}"
     assert request.context is not None
     assert request.context.identity is not None
     assert request.context.identity.awsPrincipalArn == (
@@ -252,9 +283,52 @@ def test_classify_other(body: JsonValue) -> None:
 
 
 def test_classify_batches() -> None:
-    ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
-    assert classify_body([ping, _call(name="t")]).kind == "batch_with_call"
-    assert classify_body([ping, ping]).kind == "batch_other"
+    ping: JsonValue = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    with_call: list[JsonValue] = [ping, _call(name="t")]
+    other: list[JsonValue] = [ping, ping]
+    junk: list[JsonValue] = [ping, "x", None]
+    unreadable_call: list[JsonValue] = [_call(name="")]
+    assert classify_body(with_call).kind == "batch_with_call"
+    assert classify_body(other).kind == "batch_other"
     assert classify_body([]).kind == "batch_other"
-    assert classify_body([ping, "x", None]).kind == "batch_other"
-    assert classify_body([_call(name="")]).kind == "batch_with_call"
+    assert classify_body(junk).kind == "batch_other"
+    assert classify_body(unreadable_call).kind == "batch_with_call"
+
+
+@pytest.mark.parametrize("meta", [{"baggage": 5}, "x", 7, [1], None, {}])
+def test_a_malformed_meta_leaves_the_call_readable(meta: JsonValue) -> None:
+    got = classify_body(_call(name="t", _meta=meta))
+    assert got.kind == "tools_call"
+    assert got.call is not None
+    assert (got.call.params.name, got.call.id) == ("t", 5)
+    assert got.call.params.baggage is None
+
+
+def test_a_call_without_an_id_is_a_notification() -> None:
+    got = classify_body({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "t"}})
+    assert got.kind == "tools_call"
+    assert got.call is not None
+    assert got.call.id is None
+
+
+@pytest.mark.parametrize("name", ["", " ", " \t\n"])
+def test_a_blank_tool_name_is_unreadable(name: str) -> None:
+    assert classify_body(_call(name=name)).kind == "unreadable"
+
+
+def test_a_blank_harness_tool_name_is_rejected(load: Load) -> None:
+    payload = load("harness_before_tool_call")
+    context = payload["context"]
+    assert isinstance(context, dict)
+    context["toolName"] = "  "
+    with pytest.raises(ValidationError):
+        HarnessToolHook.model_validate(payload)
+
+
+def test_gateway_streaming_response(load: Load) -> None:
+    payload = GatewayPayload.model_validate(load("gateway_response_streaming"))
+    assert payload.mcp is not None
+    response = payload.mcp.gatewayResponse
+    assert response is not None
+    assert response.isStreamingResponse is True
+    assert RpcReply.model_validate(response.body).error is None

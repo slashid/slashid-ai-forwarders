@@ -30,7 +30,7 @@ def test_another_key_or_trailing_text_does_not_verify() -> None:
 
 def test_reasons_are_joined_prefixed_and_capped_before_the_reference() -> None:
     text = deny_text(["a.", "b."], KEY, prefix="Content withheld: ")
-    assert text.startswith("Content withheld: a. b. (ref ") and is_own_deny(text, KEY)
+    assert text.startswith("Content withheld: a; b. (ref ") and is_own_deny(text, KEY)
     long = deny_text(["é" * 900], KEY, prefix="Content withheld: ")
     body = long.rsplit(" (ref ", 1)[0]
     assert len(body) == 500 and is_own_deny(long, KEY)
