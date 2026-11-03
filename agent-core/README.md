@@ -133,24 +133,26 @@ How a deny lands: Harness `before_tool_call` skips the call and the model receiv
 
 - **64 KiB.** A Harness hook's context is capped at 64 KiB: a larger tool result arrives replaced by `{truncated, preview}` (captured), so its status is lost (it is sent as not an error) and its file references come only from the cached call input. Whether a large tool input is truncated the same way is unconfirmed; if it is, a call padded past the limit loses its file references, and a `truncated_input` log line says so. The Gateway payload limit is 6 MB; what the Gateway does beyond it is unconfirmed.
 - **Region.** Role lookups go to `bedrock-agentcore-control` in the Lambda's own region, not the ARN's. Deploy the function in the region of its Harnesses and Gateways; a Harness in another account or region fails its lookup.
-- **Missing permission.** Until the SlashID server accepts `agent_arn` and `gateway_arn` and a missing `principal_arn`, an event with no role has no identifier the server recognizes. A missing `GetHarness` or `GetGateway` permission (or a failed lookup) is therefore a fail-mode outcome, logged as `role_lookup_failed` and `fail_mode`.
-- **Idle connections.** A role lookup that lands on a connection that died while the Lambda was frozen fails once (no retry, `total_max_attempts` 1) and is cached for 30 s, so the first call after a long idle may lack `principal_arn` until that cache entry expires; the fail mode applies until the server accepts events without a principal.
+- **Missing permission.** A missing `GetHarness` or `GetGateway` permission (or a failed lookup) leaves the event without `principal_arn`, logged as `role_lookup_failed`. The server returned 200 for an event with only `gateway_arn`; whether it resolves that to anything is unconfirmed, and an `agent_arn` without `principal_arn` was not sent to it.
+- **Idle connections.** A role lookup that lands on a connection that died while the Lambda was frozen fails once (no retry, `total_max_attempts` 1) and is cached for 30 s, so the first call after a long idle may lack `principal_arn` until that cache entry expires.
 - **`agent_arn` on the Gateway path is weak.** It is rebuilt from the caller-set baggage `harness.id` and set only when `GetHarness` for that Harness returns the caller's own role. That shows the claimed Harness shares the role, not that the caller is that Harness: another Harness or Runtime agent with the same role can claim it. Treat it as no stronger than the role. `conversation_id` (baggage `session.id`) is a claim too.
 - **Error results.** An `isError` result (or an `error` reply) is still checked, with `is_error` set and no file references.
-- **Two surfaces, one call.** A Harness with Gateway tools fires both surfaces for one call: up to four serial checks, each bounded by the budget (14 s at the default, plus up to 1 s per cold role lookup, with a slow but reachable server) and no circuit breaker. Both are checked; either deny blocks. Turn one surface off if that is not worth it.
+- **Two surfaces, one call.** A Harness with Gateway tools fires both surfaces for one call: four serial checks (measured: about 170-195 ms each when warm, in the Lambda's region), each bounded by the budget (14 s at the default, plus up to 1 s per cold role lookup, with a slow but reachable server) and no circuit breaker. Both are checked; either deny blocks. Turn one surface off if that is not worth it.
+- **Cold start.** The first invocation of a cold 512 MB container took 2.3 s to initialize and 1.4 s for its first request (TLS and the first role lookup); the first Harness check took 875 ms.
 - **Input cache.** A Harness `after_tool_call` carries no tool input, so the input of an allowed `before_tool_call` that had file references is kept in the container's memory (10 minutes, 1000 entries, never sent or logged). A result handled by another or a recycled container is checked from the result alone, logged as `cache_miss`.
 - **Streaming and batches.** A RESPONSE flagged `isStreamingResponse` is echoed unchecked (`pass_through`; untested). A JSON-RPC batch containing a `tools/call` is denied (checking each element is deferred); one without is echoed.
 - **File references** are extracted only for recognized connector tools (Drive, Microsoft 365, SharePoint names, on any server name). Only the Drive shapes were seen on AgentCore, through a stand-in.
 
 ### Unconfirmed
 
-Not yet verified against AWS or the SlashID server (design spec, section 6):
+Not yet verified against AWS or the SlashID server (design spec, section 6). A live run on 2026-11-03 (demo account, production SlashID, no tagged files) settled that the server accepts these preflights, that a Harness invokes its hook with its execution role, and the allow and deny shapes of both surfaces:
 
-- that the server accepts a tool-only preflight with an unknown model, no `event_type`, and `agent_arn` or `gateway_arn` without `principal_arn` (this gates v1);
+- whether the server resolves a gateway-only identity to anything, treats a result check as a content check, and applies a deny verdict (all verdicts in the run were allow);
 - what the Gateway does when the interceptor Lambda errors, times out, receives a result over 6 MB or a streaming response;
-- that the baggage `harness.id` rebuilds the `harnessArn`, and that `REQUEST_ID` is the same on a call's REQUEST and RESPONSE;
-- that the deny reference survives each hop unchanged;
-- the shape of an allow echo without response headers, of a JSON-RPC batch deny, and of an `isError` replacement on a RESPONSE.
+- that the baggage `harness.id` rebuilds the `harnessArn` on a real Harness-to-Gateway call (no `baggage_unverified` line appeared, which fits success or no claim), and that `REQUEST_ID` is the same on a call's REQUEST and RESPONSE;
+- that the deny reference survives a Gateway REQUEST deny into the Harness `after_tool_call` and a RESPONSE replacement into the Harness (the Harness `before_tool_call` to `after_tool_call` and Gateway REQUEST to RESPONSE hops held);
+- an `isError` replacement on a RESPONSE (`Content withheld: ...`), a Harness `after_tool_call` deny (`hook_stopped`), the shape of an allow echo without response headers and of a JSON-RPC batch deny;
+- a truncated `toolInput`, `remote_mcp` tools, and real Drive and Microsoft result shapes (only the stand-in was run).
 
 ## Development
 
