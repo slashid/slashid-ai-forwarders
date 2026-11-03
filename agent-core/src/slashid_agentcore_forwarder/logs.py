@@ -92,3 +92,8 @@ def unreadable(*, surface: str, check: str, reason: UnreadableReason) -> None:
 
 def missing_request_id() -> None:
     _emit("missing_request_id")
+
+
+def unexpected_error(*, surface: str, error: str) -> None:
+    """An exception reached the entry point: its type name only, never its message."""
+    _emit("unexpected_error", level=logging.ERROR, surface=surface, error=error[:MAX_NAME])

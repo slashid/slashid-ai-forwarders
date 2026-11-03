@@ -33,6 +33,10 @@ def _answer(decision: Decision) -> JsonValue:
     return {"decision": "deny", "reason": decision.deny}
 
 
+def allow() -> JsonValue:
+    return _answer(Decision(None))
+
+
 def _call(hook: HarnessToolHook, identity: AWSIdentityDetails) -> ToolCall:
     ctx = hook.context
     return ToolCall(
@@ -57,14 +61,14 @@ def _key(hook: HarnessToolHook) -> str:
     return cache_key(hook.harnessArn, hook.sessionId, hook.context.toolUseId)
 
 
-def _no_answer(runtime: Runtime, why: logs.FailReason, check: Check) -> JsonValue:
+def no_answer(runtime: Runtime, why: logs.FailReason, check: Check) -> JsonValue:
     outcome = Outcome("no_answer", why=why)
     return _answer(
         decide(outcome, config=runtime.config, key=runtime.key, surface=SURFACE, check=check)
     )
 
 
-def _unreadable(runtime: Runtime, reason: logs.UnreadableReason, check: Check) -> JsonValue:
+def deny_unreadable(runtime: Runtime, reason: logs.UnreadableReason, check: Check) -> JsonValue:
     decision = unreadable(
         config=runtime.config, key=runtime.key, surface=SURFACE, check=check, reason=reason
     )
@@ -76,18 +80,18 @@ async def handle(runtime: Runtime, payload: dict[str, JsonValue]) -> JsonValue:
     event but the two tool hooks is a format we cannot place and takes the no-answer path."""
     event = HarnessEventName.model_validate(payload).event
     if event not in ("before_tool_call", "after_tool_call"):
-        return _no_answer(runtime, "unknown_event", "call")
+        return no_answer(runtime, "unknown_event", "call")
     check: Check = "call" if event == "before_tool_call" else "result"
     try:
         hook = HarnessToolHook.model_validate(payload)
     except ValidationError:
         if check == "call":
-            return _unreadable(runtime, "bad_envelope", check)
-        return _no_answer(runtime, "error", check)
+            return deny_unreadable(runtime, "bad_envelope", check)
+        return no_answer(runtime, "error", check)
     try:
         return await (_before if check == "call" else _after)(runtime, hook)
     except RecursionError:
-        return _unreadable(runtime, "too_deep", check)
+        return deny_unreadable(runtime, "too_deep", check)
 
 
 async def _before(runtime: Runtime, hook: HarnessToolHook) -> JsonValue:

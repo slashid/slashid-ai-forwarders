@@ -16,9 +16,12 @@ from helpers import (
     RID,
     FakeRoles,
     Load,
+    allow_request,
     body_of,
     checker_of,
     ctx,
+    denied_text,
+    deny_body,
     events,
     identity_of,
     make_runtime,
@@ -51,43 +54,6 @@ def drive_result(file_id: str = "ID1") -> JsonValue:
         }
     )
     return {"isError": False, "content": [{"type": "text", "text": text}]}
-
-
-def allow_request(body: JsonValue) -> JsonValue:
-    return {
-        "interceptorOutputVersion": VERSION,
-        "mcp": {"transformedGatewayRequest": {"body": body}},
-    }
-
-
-def deny_body(rpc_id: JsonValue, text: str) -> JsonValue:
-    return {
-        "interceptorOutputVersion": VERSION,
-        "mcp": {
-            "transformedGatewayResponse": {
-                "statusCode": 200,
-                "body": {
-                    "jsonrpc": "2.0",
-                    "id": rpc_id,
-                    "result": {"isError": True, "content": [{"type": "text", "text": text}]},
-                },
-            }
-        },
-    }
-
-
-def denied_text(answer: JsonValue) -> str:
-    """The text of a deny answer, whose shape is asserted along the way."""
-    response = obj(obj(obj(answer)["mcp"])["transformedGatewayResponse"])
-    assert response["statusCode"] == 200
-    body = obj(response["body"])
-    assert body["jsonrpc"] == "2.0"
-    result = obj(body["result"])
-    assert result["isError"] is True
-    [block] = result["content"] if isinstance(result["content"], list) else []
-    text = obj(block)["text"]
-    assert isinstance(text, str)
-    return text
 
 
 def denied(answer: JsonValue) -> bool:
