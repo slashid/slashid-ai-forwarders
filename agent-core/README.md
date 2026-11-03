@@ -155,6 +155,16 @@ uv run ruff check             # lint
 uv run ruff format            # format
 ```
 
+## Live checks
+
+`tests/live` sends the fixtures through the handlers to a real SlashID server: a call check with a connector ref, a result check, a gateway-only identity, an `agent_arn` event and the deny round trip. They are collected but skipped unless `SLASHID_LIVE=1`.
+
+```bash
+SLASHID_LIVE=1 SLASHID_PUSH_TOKEN_FILE=path/to/token uv run pytest tests/live -s
+```
+
+The token is read from that file and never printed; `SLASHID_ENDPOINT` overrides the endpoint. Use the test tenant: every id is synthetic (`live-test-...`, `123456789012`, `EXAMPLE`), but the server records each preflight it receives. With `-s` each test prints the HTTP status, the outcome, the number of deny reasons (not their text) and the latency.
+
 ## Releases
 
 `agentcore-vX.Y.Z` tags (matching `version` in `pyproject.toml`) publish:
