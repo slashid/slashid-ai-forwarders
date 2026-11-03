@@ -1744,11 +1744,15 @@ name = "slashid-ai-forwarder-agentcore"
 version = "0.1.0"
 source = { editable = "agent-core" }
 dependencies = [
+    { name = "aiobotocore" },
     { name = "slashid-ai-forwarder-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "slashid-ai-forwarder-core", editable = "shared" }]
+requires-dist = [
+    { name = "aiobotocore", specifier = ">=3.10" },
+    { name = "slashid-ai-forwarder-core", editable = "shared" },
+]
 
 [[package]]
 name = "slashid-ai-forwarder-anthropic"

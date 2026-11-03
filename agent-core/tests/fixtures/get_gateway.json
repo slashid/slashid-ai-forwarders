@@ -1,0 +1,12 @@
+{
+  "gatewayArn": "arn:aws:bedrock-agentcore:us-east-2:123456789012:gateway/demo-gateway-abcdefghij",
+  "gatewayId": "demo-gateway-abcdefghij",
+  "gatewayUrl": "https://demo-gateway-abcdefghij.gateway.bedrock-agentcore.us-east-2.amazonaws.com/mcp",
+  "name": "demo-gateway",
+  "status": "READY",
+  "roleArn": "arn:aws:iam::123456789012:role/demo-gateway-role",
+  "protocolType": "MCP",
+  "authorizerType": "CUSTOM_JWT",
+  "createdAt": "2026-10-20T09:00:00+00:00",
+  "updatedAt": "2026-10-20T09:00:00+00:00"
+}
