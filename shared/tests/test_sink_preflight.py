@@ -141,10 +141,12 @@ async def test_transport_error_raises() -> None:
             await call(c)
 
 
-def test_deny_reasons_are_joined_with_a_space_and_blanks_dropped() -> None:
+def test_deny_reasons_are_joined_with_a_semicolon_and_blanks_dropped() -> None:
     from slashid_ai_forwarder_core.sink import join_deny_reasons
 
-    assert join_deny_reasons(["a. ", "", "  ", "b."]) == "a. b."
+    assert join_deny_reasons(["a. ", "", "  ", "b."]) == "a; b."
+    assert join_deny_reasons(["a", "b", "c."]) == "a; b; c."
+    assert join_deny_reasons(["only."]) == "only."
     assert join_deny_reasons([]) == ""
 
 

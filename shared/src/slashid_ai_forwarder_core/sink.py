@@ -62,11 +62,12 @@ class PreflightError(Exception):
 def join_deny_reasons(reasons: Sequence[str]) -> str:
     """The endpoint's list as one string, for a surface that takes a single reason.
 
-    Joined with a space, because each reason is a standalone statement written to be read
-    by a person and the surface rendering it is not guaranteed to honour a line break. The
-    server already deduplicates, so nothing is dropped here but blanks.
+    Joined with "; " (a full stop closing a reason that is not the last is dropped), because
+    the surface rendering it is not guaranteed to honour a line break. The server already
+    deduplicates, so nothing is dropped here but blanks.
     """
-    return " ".join(reason.strip() for reason in reasons if reason.strip())
+    parts = [reason.strip() for reason in reasons if reason.strip()]
+    return "; ".join([*(part.removesuffix(".") for part in parts[:-1]), *parts[-1:]])
 
 
 def _classify(resp: httpx.Response) -> Exception:
