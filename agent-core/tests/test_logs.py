@@ -42,7 +42,7 @@ def test_every_line_has_exactly_its_keys(caplog: pytest.LogCaptureFixture) -> No
     caplog.set_level(logging.DEBUG, logger="slashid_agentcore_forwarder")
     logs.fail_mode(surface="harness", check="call", reason="timeout", mode="allow")
     logs.pass_through(surface="gateway", reason="unknown_payload", keys=["a"])
-    logs.check("gateway", "result", "no_answer", 12)
+    logs.check("gateway", "result", "no_answer", 12, "demo___add_numbers")
     logs.shadow(surface="gateway", check="result", verdict="deny", answered="allow")
     logs.truncated_input(surface="harness", tool="Bash", call_id="c1")
     logs.baggage_unverified("mismatch")
@@ -54,7 +54,7 @@ def test_every_line_has_exactly_its_keys(caplog: pytest.LogCaptureFixture) -> No
     assert [(r["event"], sorted(r)) for r in rows(caplog)] == [
         ("fail_mode", ["check", "event", "mode", "reason", "surface"]),
         ("pass_through", ["event", "keys", "reason", "surface"]),
-        ("check", ["check", "event", "latency_ms", "outcome", "surface"]),
+        ("check", ["check", "event", "latency_ms", "outcome", "surface", "tool"]),
         ("shadow", ["answered", "check", "event", "surface", "verdict"]),
         ("truncated_input", ["call_id", "event", "surface", "tool"]),
         ("baggage_unverified", ["event", "reason"]),

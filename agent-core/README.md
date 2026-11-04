@@ -119,7 +119,7 @@ Logs are one JSON object per line with a fixed set of keys, never a payload, hea
 | `baggage_unverified`       | A Gateway call claimed a Harness (baggage `harness.id`) that could not be verified; the Harness id is left out        |
 | `role_lookup_failed`       | `GetHarness` or `GetGateway` failed (`access_denied`, `not_found`, `throttled`, `timeout`, ...); WARNING             |
 | `gateway_role_unavailable` | A Gateway call without a principal got no role from `GetGateway`                                                     |
-| `check`                    | Informational, not an alert: one per check that went to SlashID or ended without an answer; `surface`, `check` (`call` or `result`), `outcome` (`allow`, `deny`, `no_answer`) and `latency_ms` (start of the check to its outcome) |
+| `check`                    | Informational, not an alert: one per check that went to SlashID or ended without an answer; `surface`, `check` (`call` or `result`), `tool` (the tool's name as the platform gave it, cut at 128 characters), `outcome` (`allow`, `deny`, `no_answer`) and `latency_ms` (start of the check to its outcome) |
 
 Others: `shadow`, `truncated_input`, `cache_miss`, `missing_request_id`, `unexpected_error` (ERROR). A format change on AWS's side shows up as `fail_mode` with reason `unknown_payload`, `unknown_version` or `unknown_event`; with the `allow` default only that line says result checks stopped.
 

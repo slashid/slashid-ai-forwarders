@@ -39,7 +39,9 @@ async def run_check(
     event = build_event(call, result_is_error=result_is_error, files=files)
     outcome = await runtime.checker.check(event, started=started)
     check = "call" if result_is_error is None else "result"
-    logs.check(call.surface, check, outcome.kind, int((time.monotonic() - started) * 1000))
+    logs.check(
+        call.surface, check, outcome.kind, int((time.monotonic() - started) * 1000), call.raw_name
+    )
     return decide(
         outcome,
         config=runtime.config,

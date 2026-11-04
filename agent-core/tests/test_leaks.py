@@ -231,7 +231,7 @@ async def test_no_path_leaks_a_payload(
         assert secret not in logged, secret
     assert all(r.exc_info is None for r in caplog.records)
     assert all(
-        sorted(line) == ["check", "event", "latency_ms", "outcome", "surface"]
+        sorted(line) == ["check", "event", "latency_ms", "outcome", "surface", "tool"]
         and line["check"] in ("call", "result")
         and line["outcome"] in ("allow", "deny", "no_answer")
         for line in events(caplog, "check")

@@ -52,9 +52,17 @@ def check(
     check: Literal["call", "result"],
     outcome: Literal["allow", "deny", "no_answer"],
     latency_ms: int,
+    tool: str,
 ) -> None:
     """One check went to SlashID or ended without an answer; informational."""
-    _emit("check", surface=surface, check=check, outcome=outcome, latency_ms=latency_ms)
+    _emit(
+        "check",
+        surface=surface,
+        check=check,
+        tool=tool[:MAX_NAME],
+        outcome=outcome,
+        latency_ms=latency_ms,
+    )
 
 
 def pass_through(*, surface: str, reason: PassThroughReason, keys: list[str] | None = None) -> None:

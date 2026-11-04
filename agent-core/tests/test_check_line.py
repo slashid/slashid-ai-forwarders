@@ -71,6 +71,7 @@ async def test_one_line_per_check_with_exactly_its_keys(
             "event": "check",
             "surface": surface,
             "check": check,
+            "tool": "gdrive___read_file_content",
             "outcome": outcome,
             "latency_ms": 123,
         }
