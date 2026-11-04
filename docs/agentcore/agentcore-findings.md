@@ -471,12 +471,16 @@ These are facts from the tests, not decisions.
 
 **Role lookup.** `GetHarness` worked on the real Harness (no `role_lookup_failed` line); a synthetic harness id gave `access_denied`.
 
+**Second run, with a sensitive-file policy (production, same demo account).** The agent moved from `identity_details.agent_arn` to `available_agents`/`used_agent_ids` (the Harness ARN as `id`) and the package was redeployed. With the policy in place and the tagged file (`<tagged-file-id>`):
+- The server answers 200 with a deny: `A file in this request is classified as sensitive in your organization ("SENSITIVE_DATA").` on a call check (a reference only) and the same text with the file name on a result check, with hashes or with a reference and name, and with an unknown or a named model.
+- **Identity matters.** An identity the server cannot resolve gets `Your identity could not be resolved in your organization's directory.` as the deny, even for a file it would deny anyway. That is the result for an empty identity, `agent_arn` alone (the old shape), an agent in `available_agents` with no `principal_arn`, and `gateway_arn` alone. A `principal_arn` (the Harness execution role, or the Gateway's role) resolves it, with or without `gateway_arn` and the agent. So the role lookup (`GetHarness`, `GetGateway`) decides whether a check can be answered, and a failed lookup turns every check of that call into a deny.
+- Once a check answered `Some files in this request could not be checked.`; the same request passed on the next two tries.
+- Through AgentCore, one surface at a time: a Harness `before_tool_call` deny (the model quoted the server's reason and the reference); a Gateway REQUEST deny of the same call; a Gateway RESPONSE replacement on a search whose result named the file (`Content withheld: ...` with the file name and a reference, `isError` true, reaching the model); a Harness `after_tool_call` deny on the same search, which ended the run with `stopReason: hook_stopped` and no text. With both surfaces on, a Harness `before_tool_call` deny stops the call before the Gateway sees it, and its `after_tool_call` is recognized as our own and not checked.
+- Latency of a check: 300 to 940 ms (the first check of a container the slowest).
+
 **Not exercised (still unknown).**
-- A RESPONSE replacement (`Content withheld: ...`) and `isError` true on it.
-- A Harness `after_tool_call` deny (`hook_stopped`) by the forwarder.
 - What the Gateway does when the Lambda errors or times out, with a result over 6 MB, or with streaming.
 - A truncated `toolInput`.
-- A deny from a real server verdict (needs a tagged file).
 - Real Drive and Microsoft result shapes (only the stand-in ran), and `remote_mcp` tools.
 - The baggage-based Harness id check on a real Harness-to-Gateway call: no `baggage_unverified` line was logged, which fits success or no claim, so it is not proven.
 
