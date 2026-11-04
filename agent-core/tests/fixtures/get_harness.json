@@ -1,0 +1,12 @@
+{
+  "harness": {
+    "harnessId": "demo_harness-AbCdEfGhIj",
+    "harnessName": "demo_harness",
+    "harnessVersion": "3",
+    "arn": "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/demo_harness-AbCdEfGhIj",
+    "status": "READY",
+    "executionRoleArn": "arn:aws:iam::123456789012:role/demo-harness-execution-role",
+    "createdAt": "2026-10-20T09:00:00+00:00",
+    "updatedAt": "2026-10-20T09:00:00+00:00"
+  }
+}

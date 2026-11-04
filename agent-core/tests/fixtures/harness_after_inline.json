@@ -1,0 +1,24 @@
+{
+  "event": "after_tool_call",
+  "name": "example_after_tool_call",
+  "hookEventId": "00000000-0000-4000-8000-000000000004",
+  "harnessArn": "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/AgentDemo_default_hdemo-EXAMPLE0001",
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "context": {
+    "toolName": "get_weather",
+    "toolType": "inline_function",
+    "toolUseId": "tooluse_EXAMPLE0003",
+    "toolResult": {
+      "status": "success",
+      "content": [
+        {
+          "text": "sunny"
+        }
+      ]
+    }
+  },
+  "headers": {
+    "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+    "baggage": "Self=example,harness.endpoint.qualifier=DEFAULT,harness.id=AgentDemo_default_hdemo-EXAMPLE0001,session.id=00000000-0000-4000-8000-000000000001"
+  }
+}

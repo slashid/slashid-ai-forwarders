@@ -960,12 +960,9 @@ def test_identity_details_union_dispatches_on_kind() -> None:
     assert isinstance(event.identity_details, GCPIdentityDetails)
     assert event.identity_details.credential_chain is None
 
-    # An AWS identity that carries no identifier is rejected — union stays strict per-variant.
-    from pydantic import ValidationError
-
-    raw_aws_missing_arn = {**raw_gcp, "identity_details": {"kind": "aws"}}
-    with pytest.raises(ValidationError):
-        AIInvocationObservedV1.model_validate(raw_aws_missing_arn)
+    # An AWS identity may be empty.
+    raw_aws_empty = {**raw_gcp, "identity_details": {"kind": "aws"}}
+    assert AIInvocationObservedV1.model_validate(raw_aws_empty).identity_details.kind == "aws"
 
 
 def test_gcp_identity_details_wire_form_round_trips_on_envelope() -> None:
@@ -1729,21 +1726,18 @@ async def test_requested_tool_uses_from_gemini_fixtures() -> None:
     assert event.requested_tool_uses is None
 
 
-def test_aws_identity_accepts_any_one_of_agent_role_and_gateway() -> None:
+def test_aws_identity_accepts_any_one_of_role_and_gateway() -> None:
     from slashid_ai_forwarder_core.events import AWSIdentityDetails
 
-    for field in ("principal_arn", "agent_arn", "gateway_arn"):
+    for field in ("principal_arn", "gateway_arn"):
         got = AWSIdentityDetails.model_validate({field: "arn:aws:x"})
         assert getattr(got, field) == "arn:aws:x"
 
 
-def test_aws_identity_naming_nobody_is_rejected() -> None:
-    from pydantic import ValidationError
-
+def test_aws_identity_naming_nobody_is_accepted() -> None:
     from slashid_ai_forwarder_core.events import AWSIdentityDetails
 
-    with pytest.raises(ValidationError):
-        AWSIdentityDetails()
+    assert AWSIdentityDetails().model_dump(mode="json", exclude_none=True) == {"kind": "aws"}
 
 
 def test_aws_identity_wire_form_is_unchanged_for_a_principal_alone() -> None:
