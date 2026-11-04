@@ -478,7 +478,7 @@ These are facts from the tests, not decisions.
 - A truncated `toolInput`.
 - A deny from a real server verdict (needs a tagged file).
 - Real Drive and Microsoft result shapes (only the stand-in ran), and `remote_mcp` tools.
-- The baggage-based `agent_arn` check on a real Harness-to-Gateway call: no `baggage_unverified` line was logged, which fits success or no claim, so it is not proven.
+- The baggage-based Harness id check on a real Harness-to-Gateway call: no `baggage_unverified` line was logged, which fits success or no claim, so it is not proven.
 
 ---
 

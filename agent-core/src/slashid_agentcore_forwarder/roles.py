@@ -12,7 +12,7 @@ from typing import Protocol
 from aiobotocore.config import AioConfig
 from aiobotocore.session import get_session
 from botocore.exceptions import ClientError
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from slashid_agentcore_forwarder import logs
 from slashid_agentcore_forwarder.cache import TtlCache
@@ -36,8 +36,19 @@ class RateLimited(Exception):
     """A claimed lookup was refused: the per-minute limit is spent."""
 
 
+class HarnessDetails(BaseModel):
+    """What ``GetHarness`` says about a Harness besides its role."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str | None
+    version: str | None
+
+
 class _Harness(Lenient):
     executionRoleArn: str = Field(min_length=1)
+    harnessName: str | None = None
+    harnessVersion: str | None = None
 
 
 class _HarnessResponse(Lenient):
@@ -99,6 +110,9 @@ class Roles:
         self._claimed = TtlCache[str | None](
             ttl_s=CLAIMED_TTL_S, max_entries=claimed_max_entries, clock=clock
         )
+        self._details = TtlCache[HarnessDetails](
+            ttl_s=ROLE_TTL_S, max_entries=shared_max_entries, clock=clock
+        )
         self._claimed_lookups: deque[float] = deque()
 
     async def _guarded(
@@ -117,7 +131,11 @@ class Roles:
     async def _harness(self, arn: str, kind: logs.RoleKind) -> str | None:
         async def lookup(control: ControlPlane) -> str:
             response = await control.get_harness(harnessId=_last_segment(arn))
-            return _HarnessResponse.model_validate(response).harness.executionRoleArn
+            harness = _HarnessResponse.model_validate(response).harness
+            if kind == "harness":
+                details = HarnessDetails(name=harness.harnessName, version=harness.harnessVersion)
+                self._details.put(arn, details)
+            return harness.executionRoleArn
 
         return await self._guarded(kind, lookup)
 
@@ -139,6 +157,10 @@ class Roles:
 
     async def harness_role(self, harness_arn: str) -> str | None:
         return await self._shared_lookup(harness_arn, lambda arn: self._harness(arn, "harness"))
+
+    def harness_details(self, harness_arn: str) -> HarnessDetails | None:
+        """Name and version from the lookup ``harness_role`` made; ``None`` when it failed."""
+        return self._details.get(harness_arn)
 
     async def gateway_role(self, gateway_arn: str) -> str | None:
         return await self._shared_lookup(gateway_arn, self._gateway)

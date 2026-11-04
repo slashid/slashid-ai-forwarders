@@ -6,12 +6,11 @@ import json
 from typing import Literal
 
 from pydantic import JsonValue, ValidationError
-from slashid_ai_forwarder_core.events import AWSIdentityDetails
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import is_connector_tool
 
 from slashid_agentcore_forwarder import logs
 from slashid_agentcore_forwarder.checks import Decision, Outcome, decide, unreadable
-from slashid_agentcore_forwarder.identity import harness_identity
+from slashid_agentcore_forwarder.identity import Caller, harness_identity
 from slashid_agentcore_forwarder.names import resolve_name
 from slashid_agentcore_forwarder.payloads import (
     HarnessEventName,
@@ -37,7 +36,7 @@ def allow() -> JsonValue:
     return _answer(Decision(None))
 
 
-def _call(hook: HarnessToolHook, identity: AWSIdentityDetails) -> ToolCall:
+def _call(hook: HarnessToolHook, caller: Caller) -> ToolCall:
     ctx = hook.context
     return ToolCall(
         surface=SURFACE,
@@ -48,7 +47,8 @@ def _call(hook: HarnessToolHook, identity: AWSIdentityDetails) -> ToolCall:
         request_id=f"{hook.sessionId}:{hook.hookEventId}",
         conversation_id=hook.sessionId,
         user_agent=None,
-        identity=identity,
+        identity=caller.identity,
+        agent=caller.agent,
     )
 
 

@@ -3,11 +3,11 @@ import logging
 
 import pytest
 from botocore.session import get_session
-from slashid_ai_forwarder_core.events import AWSIdentityDetails
+from slashid_ai_forwarder_core.events import AIAgentDetails, AWSIdentityDetails
 
 from slashid_agentcore_forwarder.headers import Baggage
 from slashid_agentcore_forwarder.identity import HARNESS_ID, gateway_identity, harness_identity
-from slashid_agentcore_forwarder.roles import RateLimited
+from slashid_agentcore_forwarder.roles import HarnessDetails, RateLimited
 
 LOGGER = "slashid_agentcore_forwarder"
 HARNESS_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/h-1"
@@ -29,11 +29,15 @@ class FakeRoles:
         self.harness = harness
         self.gateway = gateway
         self.claimed = list(claimed or [])
+        self.details: HarnessDetails | None = HarnessDetails(name="hdemo", version="3")
         self.calls: list[tuple[str, str, bool]] = []
 
     async def harness_role(self, harness_arn: str) -> str | None:
         self.calls.append(("harness", harness_arn, False))
         return self.harness
+
+    def harness_details(self, harness_arn: str) -> HarnessDetails | None:
+        return self.details
 
     async def gateway_role(self, gateway_arn: str) -> str | None:
         self.calls.append(("gateway", gateway_arn, False))
@@ -53,21 +57,29 @@ def logged(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
 
 
 async def test_harness_hook_identity() -> None:
-    identity = await harness_identity(FakeRoles(harness=ROLE), HARNESS_ARN)
-    assert identity == AWSIdentityDetails(agent_arn=HARNESS_ARN, principal_arn=ROLE)
+    caller = await harness_identity(FakeRoles(harness=ROLE), HARNESS_ARN)
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE)
+    assert caller.agent == AIAgentDetails(
+        id=HARNESS_ARN, provider="aws-agentcore", raw_agent_id="h-1", name="hdemo", version="3"
+    )
 
 
 async def test_harness_hook_identity_survives_a_failed_lookup() -> None:
-    identity = await harness_identity(FakeRoles(harness=None), HARNESS_ARN)
-    assert identity == AWSIdentityDetails(agent_arn=HARNESS_ARN)
+    roles = FakeRoles(harness=None)
+    roles.details = None
+    caller = await harness_identity(roles, HARNESS_ARN)
+    assert caller.identity == AWSIdentityDetails()
+    assert caller.agent == AIAgentDetails(
+        id=HARNESS_ARN, provider="aws-agentcore", raw_agent_id="h-1"
+    )
 
 
 async def test_iam_call_keeps_the_principal_and_the_gateway() -> None:
     roles = FakeRoles()
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage()
     )
-    assert identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
     assert roles.calls == []
 
 
@@ -76,10 +88,11 @@ async def test_jwt_call_gets_the_gateway_role_and_no_agent(
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     roles = FakeRoles(gateway=OTHER_ROLE)
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=None, baggage=Baggage(harness_id=CLAIMED_ID)
     )
-    assert identity == AWSIdentityDetails(principal_arn=OTHER_ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.identity == AWSIdentityDetails(principal_arn=OTHER_ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.agent is None
     assert roles.calls == [("gateway", GATEWAY_ARN, False)]
     assert logged(caplog) == [{"event": "baggage_unverified", "reason": "no_principal"}]
 
@@ -88,20 +101,21 @@ async def test_a_failed_gateway_role_lookup_keeps_the_gateway(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         FakeRoles(gateway=None), gateway_arn=GATEWAY_ARN, principal=None, baggage=Baggage()
     )
-    assert identity == AWSIdentityDetails(gateway_arn=GATEWAY_ARN)
+    assert caller.identity == AWSIdentityDetails(gateway_arn=GATEWAY_ARN)
     assert logged(caplog) == [{"event": "gateway_role_unavailable"}]
 
 
-async def test_a_verified_harness_id_rebuilds_the_agent_arn() -> None:
+async def test_a_verified_harness_id_is_the_agent() -> None:
     roles = FakeRoles(claimed=[ROLE])
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage(harness_id=CLAIMED_ID)
     )
-    assert identity == AWSIdentityDetails(
-        agent_arn=CLAIMED_ARN, principal_arn=ROLE, gateway_arn=GATEWAY_ARN
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.agent == AIAgentDetails(
+        id=CLAIMED_ARN, provider="aws-agentcore", raw_agent_id=CLAIMED_ID
     )
     assert roles.calls == [("claimed", CLAIMED_ARN, False)]
 
@@ -109,43 +123,44 @@ async def test_a_verified_harness_id_rebuilds_the_agent_arn() -> None:
 async def test_a_mismatch_is_re_read_once_then_dropped(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     roles = FakeRoles(claimed=[OTHER_ROLE, OTHER_ROLE])
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage(harness_id=CLAIMED_ID)
     )
-    assert identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.agent is None
     assert roles.calls == [("claimed", CLAIMED_ARN, False), ("claimed", CLAIMED_ARN, True)]
     assert logged(caplog) == [{"event": "baggage_unverified", "reason": "mismatch"}]
 
 
 async def test_a_stale_mismatch_that_the_re_read_fixes_verifies() -> None:
     roles = FakeRoles(claimed=[OTHER_ROLE, ROLE])
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage(harness_id=CLAIMED_ID)
     )
-    assert identity is not None and identity.agent_arn == CLAIMED_ARN
+    assert caller.agent is not None and caller.agent.raw_agent_id == CLAIMED_ID
 
 
 async def test_a_failed_claimed_lookup_is_unverified(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         FakeRoles(claimed=[None]),
         gateway_arn=GATEWAY_ARN,
         principal=ROLE,
         baggage=Baggage(harness_id=CLAIMED_ID),
     )
-    assert identity is not None and identity.agent_arn is None
+    assert caller.agent is None
     assert logged(caplog) == [{"event": "baggage_unverified", "reason": "lookup_failed"}]
 
 
 async def test_the_rate_limit_is_unverified(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         FakeRoles(claimed=[RateLimited]),
         gateway_arn=GATEWAY_ARN,
         principal=ROLE,
         baggage=Baggage(harness_id=CLAIMED_ID),
     )
-    assert identity is not None and identity.agent_arn is None
+    assert caller.agent is None
     assert logged(caplog) == [{"event": "baggage_unverified", "reason": "rate_limited"}]
 
 
@@ -172,10 +187,10 @@ async def test_an_invalid_id_is_not_looked_up(
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     roles = FakeRoles()
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage(harness_id=harness_id)
     )
-    assert identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
     assert roles.calls == []
     assert logged(caplog) == [{"event": "baggage_unverified", "reason": "invalid_id"}]
 
@@ -183,28 +198,28 @@ async def test_an_invalid_id_is_not_looked_up(
 @pytest.mark.parametrize("harness_id", [CLAIMED_ID, "x" * 40 + "-AbCdEfGhIj", "a-AbCdEfGhIj"])
 async def test_a_well_formed_id_is_looked_up(harness_id: str) -> None:
     roles = FakeRoles(claimed=[ROLE])
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage(harness_id=harness_id)
     )
-    assert identity is not None and identity.agent_arn is not None
+    assert caller.agent is not None and caller.agent.raw_agent_id == harness_id
     assert len(roles.calls) == 1
 
 
 async def test_a_role_differing_only_in_case_does_not_verify() -> None:
     roles = FakeRoles(claimed=[ROLE.upper(), ROLE.upper()])
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=GATEWAY_ARN, principal=ROLE, baggage=Baggage(harness_id=CLAIMED_ID)
     )
-    assert identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE, gateway_arn=GATEWAY_ARN)
 
 
 async def test_no_gateway_arn_skips_verification(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     roles = FakeRoles()
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         roles, gateway_arn=None, principal=ROLE, baggage=Baggage(harness_id=CLAIMED_ID)
     )
-    assert identity == AWSIdentityDetails(principal_arn=ROLE)
+    assert caller.identity == AWSIdentityDetails(principal_arn=ROLE)
     assert roles.calls == []
     assert logged(caplog) == [{"event": "baggage_unverified", "reason": "no_gateway_arn"}]
 
@@ -217,11 +232,10 @@ async def test_a_baggage_without_a_claim_logs_nothing(caplog: pytest.LogCaptureF
     assert logged(caplog) == []
 
 
-async def test_neither_gateway_arn_nor_principal_is_no_identity() -> None:
+async def test_neither_gateway_arn_nor_principal_is_an_empty_identity() -> None:
     roles = FakeRoles()
-    assert (
-        await gateway_identity(roles, gateway_arn=None, principal=None, baggage=Baggage()) is None
-    )
+    caller = await gateway_identity(roles, gateway_arn=None, principal=None, baggage=Baggage())
+    assert (caller.identity, caller.agent) == (AWSIdentityDetails(), None)
     assert roles.calls == []
 
 

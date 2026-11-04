@@ -177,8 +177,8 @@ def _principal(raw: object) -> str | None:
 
 async def _call(
     runtime: Runtime, ctx: ClientContext, request: GatewayRequest, call: ToolsCall, check: Check
-) -> ToolCall | None:
-    """The call as the Gateway saw it; ``None`` with neither a Gateway ARN nor a principal.
+) -> ToolCall:
+    """The call as the Gateway saw it.
 
     A request with no ``context`` (a JWT Gateway) takes its principal from the Gateway role. A
     RESPONSE with no ``context`` is treated the same way, so its principal can differ from the
@@ -186,14 +186,12 @@ async def _call(
     """
     headers = parse_headers(request.headers)
     baggage = parse_baggage(headers.baggage).merged(parse_baggage(call.params.baggage))
-    identity = await gateway_identity(
+    caller = await gateway_identity(
         runtime.roles,
         gateway_arn=ctx.GATEWAY_ARN or None,
         principal=_principal(request.context),
         baggage=baggage,
     )
-    if identity is None:
-        return None
     call_id = ctx.REQUEST_ID
     if not call_id:
         call_id = str(uuid.uuid4())
@@ -209,7 +207,8 @@ async def _call(
         request_id=f"{scope}{call_id}:{suffix}",
         conversation_id=baggage.session_id,
         user_agent=headers.user_agent,
-        identity=identity,
+        identity=caller.identity,
+        agent=caller.agent,
     )
 
 
@@ -259,8 +258,6 @@ async def _check_request(
         return _not_a_call(runtime, request, check="call", echo=echo)
     rpc_id = _rpc_id(request.body)
     call = await _call(runtime, ctx, request, parsed, "call")
-    if call is None:
-        return _no_answer(runtime, "no_identity", check="call", rpc_id=rpc_id, echo=echo)
     log_if_truncated(call)
     decision = await run_check(runtime, call, files=call_files(call), result_is_error=None)
     return _answer(decision, rpc_id=rpc_id, echo=echo)
@@ -346,8 +343,6 @@ async def _check_response(
         return _not_a_call(runtime, request, check="result", echo=echo)
     rpc_id = _rpc_id(request.body)
     call = await _call(runtime, ctx, request, parsed, "result")
-    if call is None:
-        return _no_answer(runtime, "no_identity", check="result", rpc_id=rpc_id, echo=echo)
     files: list[AIAccessedFile] = result_files(
         call,
         call.tool_input,

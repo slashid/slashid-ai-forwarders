@@ -437,3 +437,37 @@ async def test_a_client_that_cannot_be_created_is_cached_for_30_seconds() -> Non
     clock.now += 2
     await roles.harness_role(HARNESS_ARN)
     assert len(attempts) == 2
+
+
+async def test_harness_details_come_from_the_role_lookup() -> None:
+    control = FakeControl()
+    roles = make_roles(control)
+    assert roles.harness_details(HARNESS_ARN) is None
+    await roles.harness_role(HARNESS_ARN)
+    details = roles.harness_details(HARNESS_ARN)
+    assert details is not None and (details.name, details.version) == ("demo_harness", "3")
+    assert control.calls == [("harness", "demo_harness-AbCdEfGhIj")]
+
+
+async def test_harness_details_are_not_kept_for_a_claimed_id() -> None:
+    roles = make_roles(FakeControl())
+    await roles.claimed_harness_role(HARNESS_ARN)
+    assert roles.harness_details(HARNESS_ARN) is None
+
+
+async def test_harness_details_expire_with_the_role() -> None:
+    clock = Clock()
+    roles = make_roles(FakeControl(), clock)
+    await roles.harness_role(HARNESS_ARN)
+    clock.now += 301
+    assert roles.harness_details(HARNESS_ARN) is None
+
+
+async def test_a_response_without_a_name_or_version_still_gives_the_role() -> None:
+    def response(_: str) -> object:
+        return {"harness": {"executionRoleArn": HARNESS_ROLE}}
+
+    roles = make_roles(FakeControl(harness=response))
+    assert await roles.harness_role(HARNESS_ARN) == HARNESS_ROLE
+    details = roles.harness_details(HARNESS_ARN)
+    assert details is not None and (details.name, details.version) == (None, None)

@@ -7,7 +7,7 @@ from typing import Literal
 import pytest
 from pydantic import JsonValue, ValidationError
 from slashid_ai_forwarder_core.config_base import BaseConfig
-from slashid_ai_forwarder_core.events import AIToolUse, AWSIdentityDetails
+from slashid_ai_forwarder_core.events import AIAgentDetails, AIToolUse, AWSIdentityDetails
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import connector_refs
 
 from slashid_agentcore_forwarder.names import resolve_name
@@ -22,9 +22,8 @@ from slashid_agentcore_forwarder.tool_call import (
 
 CONFIG = BaseConfig(endpoint="http://test", push_token="test")
 NOW = datetime(2026, 11, 3, 12, 0, 0, tzinfo=UTC)
-IDENTITY = AWSIdentityDetails(
-    agent_arn="arn:aws:bedrock-agentcore:us-east-2:123456789012:harness/h"
-)
+AGENT = AIAgentDetails(id="h-AbCdEfGhIj", provider="aws-agentcore")
+IDENTITY = AWSIdentityDetails(principal_arn="arn:aws:iam::123456789012:role/r")
 
 
 def make_call(
@@ -34,6 +33,7 @@ def make_call(
     surface: Literal["harness", "gateway"] = "gateway",
     tool_type: str | None = None,
     call_id: str = "call-1",
+    agent: AIAgentDetails | None = AGENT,
 ) -> ToolCall:
     return ToolCall(
         surface=surface,
@@ -45,6 +45,7 @@ def make_call(
         conversation_id="session-1",
         user_agent="example-agent/1.0",
         identity=IDENTITY,
+        agent=agent,
     )
 
 

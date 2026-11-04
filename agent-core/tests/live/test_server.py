@@ -217,15 +217,15 @@ async def test_gateway_only_identity(live: Live, load: Load) -> None:
     assert getattr(identity, "principal_arn", None) is None
 
 
-async def test_agent_arn_with_principal_arn(live: Live, load: Load) -> None:
+async def test_harness_id_with_principal_arn(live: Live, load: Load) -> None:
     payload = with_harness(load("harness_before_tool_call"))
     result = await live.send(payload, roles=harness_roles())
-    report("harness call check, agent_arn + principal_arn", result)
+    report("harness call check, harness id + principal_arn", result)
     assert_answered(result)
     event = result.trip.invocation
     assert event is not None
     identity = event.identity_details
-    assert getattr(identity, "agent_arn", None) == HARNESS
+    assert event.used_agent_ids == [HARNESS]
     assert getattr(identity, "principal_arn", None) == HARNESS_ROLE
 
 

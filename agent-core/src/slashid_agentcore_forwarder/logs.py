@@ -15,7 +15,6 @@ FailReason = Literal[
     "status",
     "unparseable",
     "budget",
-    "no_identity",
     "no_request",
     "error",
     "unknown_payload",

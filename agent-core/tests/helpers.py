@@ -13,6 +13,7 @@ from slashid_agentcore_forwarder.checks import Outcome
 from slashid_agentcore_forwarder.config import Config
 from slashid_agentcore_forwarder.deny import derive_key
 from slashid_agentcore_forwarder.payloads import ClientContext
+from slashid_agentcore_forwarder.roles import HarnessDetails
 from slashid_agentcore_forwarder.runtime import Runtime
 from slashid_agentcore_forwarder.tool_call import CachedInput
 
@@ -58,6 +59,7 @@ class FakeRoles:
         self.role = role
         self.gateway = gateway
         self.claimed = claimed
+        self.details: HarnessDetails | None = HarnessDetails(name="hdemo", version="3")
         self.looked_up: list[tuple[str, str]] = []
         self.looked_up_at: list[float] = []
 
@@ -65,6 +67,9 @@ class FakeRoles:
         self.looked_up.append(("harness", harness_arn))
         self.looked_up_at.append(time.monotonic())
         return self.role
+
+    def harness_details(self, harness_arn: str) -> HarnessDetails | None:
+        return self.details
 
     async def gateway_role(self, gateway_arn: str) -> str | None:
         self.looked_up.append(("gateway", gateway_arn))
