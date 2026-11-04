@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import (
     AIAccessedFile,
+    AIAgentDetails,
     AIInvocationObservedV1,
     AIModel,
     AIToolUse,
@@ -42,6 +43,7 @@ class ToolCall(BaseModel):
     conversation_id: str | None
     user_agent: str | None
     identity: AWSIdentityDetails
+    agent: AIAgentDetails | None
 
     @property
     def parsed_as(self) -> str:
@@ -103,6 +105,8 @@ def build_event(
         requested_tool_uses=[use] if result_is_error is None else None,
         used_tools=[use] if result_is_error is not None else None,
         accessed_files=files or None,
+        available_agents=None if call.agent is None else [call.agent],
+        used_agent_ids=None if call.agent is None else [call.agent.id],
         available_tools=[tool],
         available_tool_servers=[server],
     )

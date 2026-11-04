@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 import pytest
 from pydantic import JsonValue
+from slashid_ai_forwarder_core.events import AWSIdentityDetails
 
 from helpers import (
     HARNESS_ROLE,
@@ -66,10 +67,12 @@ async def test_before_sends_one_call_check_and_allows(load: Load) -> None:
     assert event.conversation_id == SESSION
     assert event.parsed_as == "agentcore-harness-hook"
     assert event.user_agent is None
-    identity = identity_of(event)
-    assert identity.agent_arn is not None
-    assert identity.agent_arn.endswith("harness/AgentDemo_default_hdemo-EXAMPLE0001")
-    assert identity.principal_arn == ROLE
+    assert identity_of(event).principal_arn == ROLE
+    [agent] = event.available_agents or []
+    assert event.used_agent_ids == [agent.id]
+    assert agent.id.endswith("harness/AgentDemo_default_hdemo-EXAMPLE0001")
+    assert (agent.provider, agent.name, agent.version) == ("aws-agentcore", "hdemo", "3")
+    assert agent.raw_agent_id == "AgentDemo_default_hdemo-EXAMPLE0001"
     assert event.used_tools is None
     [use] = event.requested_tool_uses or []
     assert use.tool_use_id == "tooluse_EXAMPLE0001"
@@ -90,12 +93,14 @@ async def test_the_role_lookup_comes_before_the_budget_starts(load: Load) -> Non
 
 
 async def test_a_failed_role_lookup_leaves_the_principal_out(load: Load) -> None:
-    runtime = make_runtime(roles=FakeRoles(None))
+    roles = FakeRoles(None)
+    roles.details = None  # a failed lookup leaves no details either
+    runtime = make_runtime(roles=roles)
     await handle(runtime, load("harness_before_tool_call"))
     [event] = checker_of(runtime).invocations
-    identity = identity_of(event)
-    assert identity.principal_arn is None
-    assert identity.agent_arn is not None
+    assert identity_of(event) == AWSIdentityDetails()
+    [agent] = event.available_agents or []
+    assert (agent.name, agent.version) == (None, None)
 
 
 async def test_a_remote_mcp_tool_goes_on_the_placeholder_server(load: Load) -> None:

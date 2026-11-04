@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 from pydantic import JsonValue
+from slashid_ai_forwarder_core.events import AWSIdentityDetails
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import ConnectorFile
 
 from helpers import (
@@ -90,7 +91,7 @@ async def test_request_sends_one_call_check_and_echoes_the_body(load: Load) -> N
     identity = identity_of(event)
     assert identity.gateway_arn == GATEWAY_ARN
     assert identity.principal_arn == PRINCIPAL
-    assert identity.agent_arn is None
+    assert event.used_agent_ids is None
     assert event.used_tools is None
     [use] = event.requested_tool_uses or []
     assert (use.tool_use_id, use.is_error) == (RID, None)
@@ -120,7 +121,9 @@ async def test_baggage_is_read_field_by_field_header_first(load: Load) -> None:
     await handle(runtime, payload, ctx())
     [event] = checker_of(runtime).invocations
     assert event.conversation_id == "FROM-HEADER"
-    assert identity_of(event).agent_arn == HARNESS_ARN  # harness.id from _meta, verified
+    assert event.used_agent_ids == [HARNESS_ARN]  # harness.id from _meta, verified
+    [agent] = event.available_agents or []
+    assert (agent.id, agent.raw_agent_id) == (HARNESS_ARN, "harness1-AbCdEfGhIj")
     assert ("claimed", HARNESS_ARN) in roles.looked_up
 
 
@@ -251,7 +254,7 @@ async def test_a_jwt_call_is_checked_with_the_gateway_role(load: Load) -> None:
     [event] = checker_of(runtime).invocations
     identity = identity_of(event)
     assert (identity.principal_arn, identity.gateway_arn) == (GATEWAY_ROLE, GATEWAY_ARN)
-    assert identity.agent_arn is None
+    assert event.used_agent_ids is None
     assert roles.looked_up == [("gateway", GATEWAY_ARN)]
 
 
@@ -264,21 +267,12 @@ async def test_a_jwt_call_without_a_role_is_still_sent_with_the_gateway_arn(load
     assert identity.gateway_arn == GATEWAY_ARN
 
 
-@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
-async def test_neither_gateway_arn_nor_principal_takes_the_no_answer_path(
-    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str
-) -> None:
-    caplog.set_level(logging.INFO, logger=LOGGER)
+async def test_neither_gateway_arn_nor_principal_is_still_checked(load: Load) -> None:
     payload = load("gateway_request_jwt")
-    runtime = make_runtime(verdict_fail_mode=fail_mode)
-    answer = await handle(runtime, payload, ctx(GATEWAY_ARN=None))
-    assert checker_of(runtime).invocations == []
-    if fail_mode == "allow":
-        assert answer == allow_request(body_of(payload))
-    else:
-        assert denied_text(answer).startswith(POLICY_UNAVAILABLE)
-    [line] = events(caplog, "fail_mode")
-    assert (line["check"], line["reason"]) == ("call", "no_identity")
+    runtime = make_runtime()
+    assert await handle(runtime, payload, ctx(GATEWAY_ARN=None)) == allow_request(body_of(payload))
+    [event] = checker_of(runtime).invocations
+    assert identity_of(event) == AWSIdentityDetails()
 
 
 # pass-through and unreadable requests
@@ -626,26 +620,17 @@ async def test_a_response_with_no_context_is_treated_like_a_jwt_call(load: Load)
     [event] = checker_of(runtime).invocations
     identity = identity_of(event)
     assert identity.principal_arn == GATEWAY_ROLE
-    assert identity.agent_arn is None
+    assert event.used_agent_ids is None
     assert roles.looked_up == [("gateway", GATEWAY_ARN)]
 
 
-@pytest.mark.parametrize("fail_mode", ["allow", "deny"])
-async def test_a_response_without_an_identity_takes_the_no_answer_path(
-    load: Load, caplog: pytest.LogCaptureFixture, fail_mode: str
-) -> None:
-    caplog.set_level(logging.INFO, logger=LOGGER)
+async def test_a_response_without_an_identity_is_still_checked(load: Load) -> None:
     payload = load("gateway_response")
     del request_of(payload)["context"]
-    runtime = make_runtime(verdict_fail_mode=fail_mode)
-    answer = await handle(runtime, payload, ctx(GATEWAY_ARN=None))
-    assert checker_of(runtime).invocations == []
-    if fail_mode == "allow":
-        assert answer == echoed_response(payload)
-    else:
-        assert denied_text(answer).startswith(WITHHELD + POLICY_UNAVAILABLE)
-    [line] = events(caplog, "fail_mode")
-    assert (line["check"], line["reason"]) == ("result", "no_identity")
+    runtime = make_runtime()
+    assert await handle(runtime, payload, ctx(GATEWAY_ARN=None)) == echoed_response(payload)
+    [event] = checker_of(runtime).invocations
+    assert identity_of(event) == AWSIdentityDetails()
 
 
 @pytest.mark.parametrize("fail_mode", ["allow", "deny"])
