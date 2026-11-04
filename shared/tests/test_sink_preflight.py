@@ -139,3 +139,34 @@ async def test_transport_error_raises() -> None:
     async with client(handler) as c:
         with pytest.raises(PreflightError):
             await call(c)
+
+
+def test_deny_reasons_are_joined_with_a_semicolon_and_blanks_dropped() -> None:
+    from slashid_ai_forwarder_core.sink import join_deny_reasons
+
+    assert join_deny_reasons(["a. ", "", "  ", "b."]) == "a; b."
+    assert join_deny_reasons(["a", "b", "c."]) == "a; b; c."
+    assert join_deny_reasons(["only."]) == "only."
+    assert join_deny_reasons([]) == ""
+
+
+def _raise(exc: Exception):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise exc
+
+    return handler
+
+
+@pytest.mark.parametrize(
+    ("handler", "cause"),
+    [
+        (_raise(httpx.ConnectError("x")), "transport"),
+        (_raise(httpx.ReadTimeout("x")), "timeout"),
+        (lambda request: httpx.Response(500), "status"),
+        (lambda request: httpx.Response(200, json={"nope": 1}), "unparseable"),
+    ],
+)
+async def test_a_failure_says_what_kind_it_was(handler, cause: str) -> None:
+    with pytest.raises(PreflightError) as caught:
+        await call(client(handler))
+    assert caught.value.cause == cause

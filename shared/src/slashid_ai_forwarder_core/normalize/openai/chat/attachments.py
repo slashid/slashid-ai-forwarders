@@ -2,7 +2,7 @@
 
 Inline ``data:`` URLs are decoded and hashed; ``s3://`` references (the only
 persisted source the endpoint accepts) go through the Converse S3 resolver.
-Only the fresh turn contributes, as in Converse. The ``aioboto3`` behind the
+Only the fresh turn contributes, as in Converse. The ``aiobotocore`` behind the
 resolver is imported on first use.
 """
 

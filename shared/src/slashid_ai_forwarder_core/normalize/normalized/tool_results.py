@@ -130,9 +130,10 @@ def extract_tool_result_files(
     """Walk canonical messages for _READ_TOOLS-matching tool_use/tool_result pairs.
 
     Returns one AIAccessedFile per unique (path, sha256) — dedup within a
-    single call. Callers (typically ``finalize``) append to
-    ``normalized.accessed_files``. See module docstring for the is_error
-    guard and fresh-region rule.
+    single call. Connector entries are returned unmerged (a file can come back
+    once per handler); ``finalize`` merges them. Callers (typically ``finalize``)
+    append to ``normalized.accessed_files``. See module docstring for the
+    is_error guard and fresh-region rule.
     """
     if not messages:
         return []
@@ -168,18 +169,7 @@ def extract_tool_result_files(
                 continue
             tool_name, tool_input = pair
             if connector := connector_files(tool_name, tool_input, block.tool_output):
-                out.extend(
-                    _build_accessed_file(
-                        name=cf.name,
-                        media_type=_mime_from_name(cf.name),
-                        content_bytes=cf.content,
-                        include_raw_content=config.include_raw_content,
-                        max_content_size=config.max_content_size,
-                        text_content=False,
-                        file_refs=cf.refs,
-                    )
-                    for cf in connector
-                )
+                out.extend(connector_accessed_file(cf, config=config) for cf in connector)
                 continue
             spec = _READ_TOOLS.get(tool_name)
             if not spec:
@@ -282,6 +272,20 @@ def connector_stub(cf: ConnectorFile) -> AIAccessedFile:
         name=cf.name,
         media_type=_mime_from_name(cf.name),
         provenance="tool_result",
+        file_refs=cf.refs,
+    )
+
+
+def connector_accessed_file(cf: ConnectorFile, *, config: BaseConfig) -> AIAccessedFile:
+    """A connector file as it is reported: its refs, its name and, when the call returned its
+    bytes, the hashes."""
+    return _build_accessed_file(
+        name=cf.name,
+        media_type=_mime_from_name(cf.name),
+        content_bytes=cf.content,
+        include_raw_content=config.include_raw_content,
+        max_content_size=config.max_content_size,
+        text_content=False,
         file_refs=cf.refs,
     )
 

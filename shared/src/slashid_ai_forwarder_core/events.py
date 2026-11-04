@@ -196,8 +196,10 @@ class AIToolServer(_WireModel):
 class AWSIdentityDetails(_WireModel):
     """AWS-source shape of AIInvocationObservedV1.identity_details.
 
-    ``principal_arn`` identifies the caller; ``access_key_id`` enables the
-    server's AssumeRole-chain unrolling when set.
+    ``principal_arn`` is the role or user the calls run as; ``agent_arn`` the
+    AgentCore agent (a Harness ARN); ``gateway_arn`` the AgentCore Gateway that
+    served the call. At least one is set. ``access_key_id`` enables the server's
+    AssumeRole-chain unrolling when set.
 
     ``kind`` is the discriminator field for the ``identity_details``
     union (``AWSIdentityDetails | GCPIdentityDetails``). Defaults to
@@ -207,7 +209,9 @@ class AWSIdentityDetails(_WireModel):
     """
 
     kind: Literal["aws"] = "aws"
-    principal_arn: str
+    principal_arn: str | None = None
+    agent_arn: str | None = None
+    gateway_arn: str | None = None
     access_key_id: str | None = None
     # Placeholder — not populated by any forwarder yet. Bedrock's Model
     # Invocation Logging carries only ``arn`` / ``resolved_arn`` /
@@ -218,6 +222,13 @@ class AWSIdentityDetails(_WireModel):
     # BQ x Cloud-Audit-Log correlation. Tri-state on purpose: ``None``
     # means "not observed", not "no MFA".
     mfa_authenticated: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_identifier(self) -> AWSIdentityDetails:
+        """A payload naming nobody has nothing to resolve; the server rejects it too."""
+        if not (self.principal_arn or self.agent_arn or self.gateway_arn):
+            raise ValueError("aws identity carries no identifier")
+        return self
 
 
 class GCPCredential(_WireModel):

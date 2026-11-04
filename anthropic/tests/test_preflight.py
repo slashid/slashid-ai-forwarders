@@ -78,7 +78,7 @@ async def test_deny_reasons_join_into_one_reason() -> None:
     async with client(lambda r: answer(SENSITIVE, "Another file is marked sensitive.")) as c:
         verdict = await call(c)
     assert verdict.action == "deny" and verdict.source == "preflight"
-    assert verdict.deny_reason == f"{SENSITIVE} Another file is marked sensitive."
+    assert verdict.deny_reason == f"{SENSITIVE}; Another file is marked sensitive."
 
 
 async def test_no_answer_is_a_check_failed() -> None:

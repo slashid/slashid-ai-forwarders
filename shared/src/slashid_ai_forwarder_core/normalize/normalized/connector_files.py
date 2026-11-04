@@ -2,10 +2,15 @@
 
 A connector returns a re-rendering of a file, not its stored bytes, so a content hash cannot
 match it; the provider's own id can. ``connector_files`` reads the call (and its result, when
-there is one); ``connector_refs`` reads the call alone, as a hook sees it before it runs.
+there is one); ``connector_refs`` reads the call alone, as a hook sees it before it runs. A
+result is a string, a list of ``{text}`` parts, or an MCP result object ``{content,
+structuredContent}``.
 
 Tool names are those of Claude Code's claude.ai connectors (``mcp__claude_ai_Google_Drive__*``)
-and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them).
+and of Codex's (``mcp__codex_apps__google_drive__*``, as its hook names them). Any other
+server's tool is recognized by its name's ending (``gdrive___read_file_content``,
+``mcp__gdrive__read_file_content``), under the same strict shapes; ``is_connector_tool`` says
+whether a name is one. A result can hold the same file more than once; the caller merges.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ import base64
 import re
 from collections.abc import Callable
 from typing import Literal
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
@@ -27,6 +32,13 @@ _FOLDER = "application/vnd.google-apps.folder"
 # A drive item's id, as opposed to a path segment.
 _ITEM_ID = re.compile(r"01[A-Z2-7]{30,}")
 _GRAPH_ITEM = re.compile(r"/drives/([^/]+)/items/([^/?#]+)")
+_MICROSOFT_HOSTS = (
+    "sharepoint.com",
+    "sharepoint.us",
+    "sharepoint.cn",
+    "office.com",
+    "microsoft.com",
+)
 _GUID = re.compile(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
 # What reading a folder returns: ``<name> (file|folder, N bytes) file:///…`` per child.
 _LISTING = re.compile(r"\((?:file|folder), \d+ bytes\) file:///")
@@ -107,6 +119,13 @@ class _TextPart(_Lenient):
 _TEXT_PARTS = TypeAdapter(list[_TextPart])
 
 
+class _McpResult(_Lenient):
+    """An MCP tool result: ``{content, structuredContent, isError}``."""
+
+    content: list[_TextPart] = []
+    structuredContent: JsonValue = None
+
+
 class _DriveFile(_Lenient):
     id: str | None = None
     mimeType: str | None = None
@@ -115,6 +134,7 @@ class _DriveFile(_Lenient):
     file_or_folder: str | None = None
     content: str | None = None
     b64_string: str | None = None
+    viewUrl: str | None = None
 
 
 class _DriveFiles(_Lenient):
@@ -122,23 +142,6 @@ class _DriveFiles(_Lenient):
 
     files: list[_DriveFile] = []
     results: list[_DriveFile] = []
-
-
-def connector_files(
-    tool_name: str, tool_input: JsonValue, tool_output: JsonValue
-) -> list[ConnectorFile]:
-    """The files of one connector call, ``[]`` for any other call. ``tool_output`` is ``None``
-    when there is no result."""
-    if match := _CLAUDE.fullmatch(tool_name):
-        source: Source = "claude"
-        family: Family = "drive" if match.group(1) == "Google_Drive" else "m365"
-    elif match := _CODEX.fullmatch(tool_name):
-        source = "codex"
-        family = "drive" if match.group(1) == "google_drive" else "m365"
-    else:
-        return []
-    handler = _HANDLERS.get((source, family))
-    return handler(match.group(2), tool_input, tool_output) if handler else []
 
 
 def connector_refs(tool_name: str, tool_input: JsonValue) -> list[ConnectorFile]:
@@ -158,10 +161,29 @@ def _args[M: BaseModel](model: type[M], tool_input: JsonValue) -> M | None:
         return None
 
 
+def _mcp_result(tool_output: JsonValue) -> _McpResult | None:
+    """A dict is an MCP result only if it has ``content`` or ``structuredContent``."""
+    if (
+        not isinstance(tool_output, dict)
+        or not {"content", "structuredContent"} & tool_output.keys()
+    ):
+        return None
+    return _args(_McpResult, tool_output)
+
+
+def _structured(tool_output: JsonValue) -> JsonValue:
+    mcp = _mcp_result(tool_output)
+    return mcp.structuredContent if mcp else None
+
+
 def _texts(tool_output: JsonValue) -> list[str]:
-    """A result's text: a string is one text, a list of ``{text}`` parts gives each part's."""
+    """A result's text: a string is one text, a list of ``{text}`` parts gives each part's, an
+    MCP result object gives its ``content`` parts'."""
     if isinstance(tool_output, str):
         return [tool_output]
+    if isinstance(tool_output, dict):
+        mcp = _mcp_result(tool_output)
+        return [part.text for part in mcp.content if part.text is not None] if mcp else []
     try:
         parts = _TEXT_PARTS.validate_python(tool_output)
     except ValidationError:
@@ -177,21 +199,21 @@ def _json[M: BaseModel](model: type[M], text: str) -> M | None:
 
 
 def _result[M: BaseModel](model: type[M], tool_output: JsonValue) -> M | None:
-    """claude.ai: the first text is the tool's JSON."""
+    """claude.ai: the tool's JSON is the first text, or the result's ``structuredContent``."""
+    if (data := _structured(tool_output)) is not None:
+        return _args(model, data)
     texts = _texts(tool_output)
     return _json(model, texts[0]) if texts else None
 
 
 def _payload[M: BaseModel](model: type[M], tool_output: JsonValue) -> M | None:
-    """Codex: the tool's JSON is the envelope's ``structuredContent``."""
+    """Codex: the tool's JSON is the envelope's ``structuredContent``, in the first text or on
+    the result object itself."""
+    if (data := _structured(tool_output)) is not None:
+        return _args(model, data)
     texts = _texts(tool_output)
     envelope = _json(_Envelope, texts[0]) if texts else None
-    if envelope is None:
-        return None
-    try:
-        return model.model_validate(envelope.structuredContent)
-    except ValidationError:
-        return None
+    return _args(model, envelope.structuredContent) if envelope else None
 
 
 def _bytes(b64: str | None) -> bytes | None:
@@ -212,9 +234,17 @@ def _google(file_id: str) -> str:
     return f"google/{file_id}"
 
 
+def _parse_url(url: str) -> ParseResult | None:
+    """``urlparse`` raises on some strings (``http://[::1``); such a URL names no file."""
+    try:
+        return urlparse(url)
+    except ValueError:
+        return None
+
+
 def _drive_id_of(url: str) -> str | None:
-    parts = urlparse(url)
-    if parts.hostname not in _DRIVE_HOSTS:
+    parts = _parse_url(url)
+    if parts is None or parts.hostname not in _DRIVE_HOSTS:
         return None
     if match := _DRIVE_ID.search(parts.path):
         return match.group(1)
@@ -222,24 +252,43 @@ def _drive_id_of(url: str) -> str | None:
     return ids[0] if ids else None
 
 
+_FILE_TOOLS = frozenset({"read_file_content", "get_file_metadata", "download_file_content"})
+_SOURCE_TOOLS = frozenset({"copy_file", "get_file_permissions"})
+_SEARCH_TOOLS = frozenset({"search_files", "list_recent_files"})
+
+
+def _result_file_id(file: _DriveFile | None) -> str | None:
+    """The id a Drive result repeats: its ``id`` beside a ``title`` or ``mimeType``, else the
+    one in a Drive ``viewUrl``."""
+    if file is None:
+        return None
+    if file.id and (file.title or file.mimeType):
+        return file.id
+    return _drive_id_of(file.viewUrl) if file.viewUrl else None
+
+
 def _claude_drive(
     action: str, tool_input: JsonValue, tool_output: JsonValue
 ) -> list[ConnectorFile]:
-    if action == "search_files":
+    if action in _SEARCH_TOOLS:
         found = _result(_DriveFiles, tool_output)
         return [
             _file(_google(f.id), name=f.title)
             for f in (found.files if found else [])
-            if f.id and f.mimeType != _FOLDER
+            if f.id and f.mimeType and f.mimeType != _FOLDER
         ]
-    if action not in {"read_file_content", "get_file_metadata", "download_file_content"}:
-        return []
     args = _args(_FileIdArgs, tool_input)
-    if args is None:
+    if action in _SOURCE_TOOLS:
+        # The result describes a copy or a permission list, not the file: no name.
+        return [_file(_google(args.fileId))] if args else []
+    if action not in _FILE_TOOLS:
         return []
     file = _result(_DriveFile, tool_output)
+    file_id = _result_file_id(file) or (args.fileId if args else None)
+    if not file_id:
+        return []
     content = _bytes(file.content) if file and action == "download_file_content" else None
-    return [_file(_google(args.fileId), name=file.title if file else None, content=content)]
+    return [_file(_google(file_id), name=file.title if file else None, content=content)]
 
 
 def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> list[ConnectorFile]:
@@ -248,12 +297,14 @@ def _codex_drive(action: str, tool_input: JsonValue, tool_output: JsonValue) -> 
         return [
             _file(_google(f.id), name=f.title)
             for f in (found.results if found else [])
-            if f.id and f.file_or_folder != "folder"
+            if f.id and f.file_or_folder and f.file_or_folder != "folder"
         ]
     file = _payload(_DriveFile, tool_output)
     if action == "fetch":
         url = _args(_UrlArgs, tool_input)
-        file_id = (file.id if file else None) or (_drive_id_of(url.url) if url else None)
+        file_id = (file.id if file and (file.mimeType or file.file_or_folder) else None) or (
+            _drive_id_of(url.url) if url else None
+        )
         if not file_id:
             return []
         name = (file.title or file.file_name) if file else None
@@ -277,15 +328,22 @@ def _item(drive_id: str, item_id: str) -> str:
     return f"m365/item/{drive_id}/{item_id}"
 
 
+def _microsoft_host(host: str | None) -> bool:
+    return host is not None and any(host == d or host.endswith(f".{d}") for d in _MICROSOFT_HOSTS)
+
+
 def _url_refs(url: str) -> list[str]:
     """The item a Graph URL names and the GUID a ``sourcedoc`` link carries."""
-    parts = urlparse(url)
+    parts = _parse_url(url)
     refs: list[str] = []
+    if parts is None:
+        return refs
     if parts.hostname == "graph.microsoft.com" and (match := _GRAPH_ITEM.search(parts.path)):
         refs.append(_item(unquote(match.group(1)), unquote(match.group(2))))
-    for value in parse_qs(parts.query).get("sourcedoc", []):
-        if _GUID.fullmatch(guid := value.strip("{}")):
-            refs.append(f"m365/guid/{guid.upper()}")
+    if _microsoft_host(parts.hostname):
+        for value in parse_qs(parts.query).get("sourcedoc", []):
+            if _GUID.fullmatch(guid := value.strip("{}")):
+                refs.append(f"m365/guid/{guid.upper()}")
     return refs
 
 
@@ -306,7 +364,7 @@ def _read_resource(tool_input: JsonValue, tool_output: JsonValue) -> list[Connec
         return []
     drive_id, sep, tail = args.uri.removeprefix("file:///").partition("/")
     rest = unquote(tail).strip("/")
-    if not drive_id or not sep or not rest:
+    if not drive_id.startswith("b!") or not sep or not rest:
         return []
     if "/" not in rest and _ITEM_ID.fullmatch(rest):
         return [_file(_item(drive_id, rest))]
@@ -355,9 +413,68 @@ def _codex_sharepoint(
 
 
 _Handler = Callable[[str, JsonValue, JsonValue], list[ConnectorFile]]
-_HANDLERS: dict[tuple[Source, Family], _Handler] = {
+# Each handler with the tool names it knows.
+_ACTIONS: tuple[tuple[_Handler, frozenset[str]], ...] = (
+    (_claude_drive, _SEARCH_TOOLS | _FILE_TOOLS | _SOURCE_TOOLS),
+    (_codex_drive, frozenset({"search", "fetch", "get_file_metadata"})),
+    (_claude_m365, frozenset({"read_resource", "sharepoint_folder_search"})),
+    (_codex_sharepoint, frozenset({"search", "get_drive_item", "fetch"})),
+)
+_KNOWN_ACTIONS = frozenset(a for _, actions in _ACTIONS for a in actions)
+_EXACT: dict[tuple[Source, Family], _Handler] = {
     ("claude", "drive"): _claude_drive,
     ("codex", "drive"): _codex_drive,
     ("claude", "m365"): _claude_m365,
     ("codex", "m365"): _codex_sharepoint,
 }
+
+
+def _exact(tool_name: str) -> tuple[_Handler, str] | None:
+    """The handler a claude.ai or Codex connector name picks, and its action."""
+    if match := _CLAUDE.fullmatch(tool_name):
+        key: tuple[Source, Family] = (
+            "claude",
+            "drive" if match.group(1) == "Google_Drive" else "m365",
+        )
+    elif match := _CODEX.fullmatch(tool_name):
+        key = ("codex", "drive" if match.group(1) == "google_drive" else "m365")
+    else:
+        return None
+    return _EXACT[key], match.group(2)
+
+
+def _actions_ending(tool_name: str) -> list[str]:
+    """The known tool names a name ends in, after nothing or a prefix ending in ``_``; of two
+    where one ends the other (``search``, ``sharepoint_folder_search``) only the longer."""
+    ending = [a for a in _KNOWN_ACTIONS if tool_name == a or tool_name.endswith(f"_{a}")]
+    return sorted(a for a in ending if not any(o != a and o.endswith(f"_{a}") for o in ending))
+
+
+def is_connector_tool(tool_name: str) -> bool:
+    """Whether some handler knows this tool name."""
+    if exact := _exact(tool_name):
+        handler, action = exact
+        return any(h is handler and action in actions for h, actions in _ACTIONS)
+    return bool(_actions_ending(tool_name))
+
+
+def connector_files(
+    tool_name: str, tool_input: JsonValue, tool_output: JsonValue
+) -> list[ConnectorFile]:
+    """The files of one connector call, ``[]`` for any other call. ``tool_output`` is ``None``
+    when there is no result, else a string, a list of ``{text}`` parts, or an MCP result object
+    ``{content, structuredContent}``.
+
+    A claude.ai or Codex connector name picks its handler. Any other name that ends in a known
+    tool name runs every handler that knows it, so the same file can come back more than once:
+    the caller merges them (``finalize.merge_by_refs``).
+    """
+    if exact := _exact(tool_name):
+        handler, action = exact
+        return handler(action, tool_input, tool_output)
+    files: list[ConnectorFile] = []
+    for action in _actions_ending(tool_name):
+        for handler, actions in _ACTIONS:
+            if action in actions:
+                files += handler(action, tool_input, tool_output)
+    return files

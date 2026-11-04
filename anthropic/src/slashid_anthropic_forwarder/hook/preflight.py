@@ -8,25 +8,11 @@ list is a real allow, and only a failure to get an answer at all raises
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import httpx
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
-from slashid_ai_forwarder_core.sink import PreflightError, preflight_invocation
+from slashid_ai_forwarder_core.sink import PreflightError, join_deny_reasons, preflight_invocation
 
 from .checks import CheckFailed, Verdict
-
-
-def join_deny_reasons(reasons: Sequence[str]) -> str:
-    """The endpoint's list as the single string Anthropic's ``deny_reason``
-    takes.
-
-    Joined with a space, because each reason is a standalone statement
-    written to be read by a person and the surface rendering
-    ``deny_reason`` is not guaranteed to honour a line break. The server
-    already deduplicates, so nothing is dropped here but blanks.
-    """
-    return " ".join(reason.strip() for reason in reasons if reason.strip())
 
 
 async def preflight_check(
