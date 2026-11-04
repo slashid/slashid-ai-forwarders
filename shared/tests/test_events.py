@@ -1756,3 +1756,32 @@ def test_aws_identity_wire_form_is_unchanged_for_a_principal_alone() -> None:
         "principal_arn": "arn:aws:iam::1:role/r",
         "access_key_id": "AK",
     }
+
+
+def test_preflight_arguments_carry_a_calls_input_as_the_model_wrote_it() -> None:
+    from slashid_ai_forwarder_core.events import preflight_arguments
+
+    args = {"path": " /workspace/a ", "options": {"recursive": True}}
+    assert preflight_arguments(args) == args
+    use = AIToolUse(tool_id="t", arguments=preflight_arguments(args))
+    # A policy tests the values exactly: the wire model's whitespace stripping must not reach them.
+    assert use.model_dump(mode="json", exclude_none=True)["arguments"] == args
+    assert "arguments" not in AIToolUse(tool_id="t").model_dump(mode="json", exclude_none=True)
+
+
+def test_preflight_arguments_are_left_out_when_they_cannot_be_judged() -> None:
+    from slashid_ai_forwarder_core.events import MAX_PREFLIGHT_ARGUMENTS_BYTES, preflight_arguments
+
+    assert preflight_arguments(None) is None
+    assert preflight_arguments("ls -la") is None
+    assert preflight_arguments(["a"]) is None
+    # Too big to send without risking the whole preflight: a rule on arguments says they were not
+    # sent, and every other rule still judges the call.
+    assert preflight_arguments({"content": "x" * MAX_PREFLIGHT_ARGUMENTS_BYTES}) is None
+
+
+def test_a_logged_event_never_carries_arguments() -> None:
+    from slashid_ai_forwarder_core.events import redact_for_logging
+
+    payload = {"requested_tool_uses": [{"tool_id": "t", "arguments": {"token": "s3cr3t"}}]}
+    assert redact_for_logging(payload) == {"requested_tool_uses": [{"tool_id": "t"}]}

@@ -11,6 +11,7 @@ from slashid_ai_forwarder_core.events import (
     AIToolServer,
     AIToolUse,
     AnthropicIdentityDetails,
+    preflight_arguments,
 )
 from slashid_ai_forwarder_core.normalize.finalize import merge_by_refs
 from slashid_ai_forwarder_core.normalize.normalized.connector_files import connector_refs
@@ -50,7 +51,9 @@ def tool_call_event(frame: ToolCallFrame, *, signed_at: int) -> AIInvocationObse
             files.append(upload_stub(path))
         tools.setdefault(tool.id, tool)
         servers.setdefault(server.id, server)
-        requested.append(AIToolUse(tool_id=tool.id, tool_use_id=use.id))
+        requested.append(
+            AIToolUse(tool_id=tool.id, tool_use_id=use.id, arguments=preflight_arguments(use.input))
+        )
     return AIInvocationObservedV1(
         request_id=frame.request_id,
         timestamp=signed_at_iso(signed_at),

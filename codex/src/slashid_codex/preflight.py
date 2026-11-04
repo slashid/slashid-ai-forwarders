@@ -26,6 +26,7 @@ from slashid_ai_forwarder_core.events import (
     AIToolServer,
     AIToolUse,
     OpenAIIdentityDetails,
+    preflight_arguments,
     used_tools_of,
 )
 from slashid_ai_forwarder_core.files import hash_local_file
@@ -305,7 +306,13 @@ class Preflight:
             hook,
             request_id=f"{hook.turn_id}:{hook.tool_use_id}",
             accessed_files=files,
-            requested=[AIToolUse(tool_id=tool.id, tool_use_id=hook.tool_use_id)],
+            requested=[
+                AIToolUse(
+                    tool_id=tool.id,
+                    tool_use_id=hook.tool_use_id,
+                    arguments=preflight_arguments(hook.tool_input),
+                )
+            ],
             tools=[tool],
             servers=[server],
         )

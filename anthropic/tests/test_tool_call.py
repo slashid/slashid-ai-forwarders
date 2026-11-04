@@ -297,3 +297,15 @@ def test_a_claude_ai_sandbox_read_of_its_own_files_names_nothing() -> None:
     )
     assert built is not None
     assert built.accessed_files is None
+
+
+def test_each_call_carries_its_arguments_for_the_policy() -> None:
+    ev = event(
+        use("Edit", "toolu_a", CLIENT, file_path="/etc/hosts", old_string="a", new_string="b"),
+        use("mcp__github__create_issue", "toolu_b", CLIENT, title="t"),
+    )
+    assert ev is not None
+    assert [u.arguments for u in ev.requested_tool_uses or []] == [
+        {"file_path": "/etc/hosts", "old_string": "a", "new_string": "b"},
+        {"title": "t"},
+    ]

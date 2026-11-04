@@ -347,6 +347,16 @@ async def test_tool_without_read(env: Env) -> None:
     assert env.store.for_round(SESSION, [], ["call_1"]) == []
 
 
+async def test_tool_call_carries_its_arguments_for_the_policy(env: Env) -> None:
+    hook = _connector_ptu(
+        "mcp__codex_apps__microsoft_sharepoint__search", {"query": "q"}, "exec-5", env.tmp_path
+    )
+    await env.preflight.pre_tool_use(hook)
+    assert env.sent.requested_tool_uses is not None
+    [use] = env.sent.requested_tool_uses
+    assert use.arguments == {"query": "q"}
+
+
 # --------------------------------------------------------------------------
 # Verdicts
 # --------------------------------------------------------------------------
