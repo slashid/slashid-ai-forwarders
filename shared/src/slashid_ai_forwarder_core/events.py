@@ -18,7 +18,14 @@ import logging
 from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SkipValidation,
+    field_validator,
+    model_validator,
+)
 
 from .content_utils import truncate_middle
 from .normalize.normalized.otel import extract_otel
@@ -111,6 +118,13 @@ class AIToolUse(_WireModel):
     CorrelationIdMiddleware) — they correlate this specific tool call with
     the corresponding Gate observability event on the SlashID side.
     Absent when the MCP server doesn't run the middleware.
+
+    `arguments` is a requested call's input as the model wrote it, set only
+    on events sent to the AI preflight (see ``preflight_arguments``), so a
+    policy can judge what the call would do. The server evaluates it and
+    never stores it; ``redact_for_logging`` drops it. It skips validation
+    because ``str_strip_whitespace`` would otherwise rewrite the strings
+    inside it, and a policy must test the values the call carries.
     """
 
     tool_id: str
@@ -118,6 +132,26 @@ class AIToolUse(_WireModel):
     tool_use_id: str | None = None
     trace_id: str | None = None
     span_id: str | None = None
+    arguments: Annotated[dict[str, Any] | None, SkipValidation] = None
+
+
+# The largest call input sent to the AI preflight, as compact JSON. Bigger
+# input (a Write of a whole file) is left out rather than risk the request:
+# a rule on arguments then reports that they were not sent, and every other
+# rule still judges the call.
+MAX_PREFLIGHT_ARGUMENTS_BYTES = 64 * 1024
+
+
+def preflight_arguments(tool_input: object) -> dict[str, Any] | None:
+    """A call's input as `AIToolUse.arguments`: an object, as the model
+    wrote it, no larger than ``MAX_PREFLIGHT_ARGUMENTS_BYTES``; else None."""
+    if not isinstance(tool_input, dict):
+        return None
+    arguments: dict[str, Any] = {str(k): v for k, v in tool_input.items()}
+    size = len(json.dumps(arguments, separators=(",", ":"), ensure_ascii=False).encode())
+    if size > MAX_PREFLIGHT_ARGUMENTS_BYTES:
+        return None
+    return arguments
 
 
 class AITool(_WireModel):
@@ -455,7 +489,7 @@ class EventEnvelope(_WireModel):
 # ``SLASHID_INCLUDE_RAW_CONTENT`` is set. Wire delivery to the SlashID
 # sink is fine — that's the customer's own destination — but ops-side
 # CloudWatch / Cloud Run logs shouldn't leak them.
-_LOG_REDACTED_FIELDS: frozenset[str] = frozenset({"redacted_text", "redacted_content"})
+_LOG_REDACTED_FIELDS: frozenset[str] = frozenset({"redacted_text", "redacted_content", "arguments"})
 
 
 def redact_for_logging(payload: dict[str, Any]) -> dict[str, Any]:
@@ -463,8 +497,9 @@ def redact_for_logging(payload: dict[str, Any]) -> dict[str, Any]:
     stripped, suitable for ops-side logging (CloudWatch, Cloud Run
     stdout, structured log aggregators).
 
-    Removes ``redacted_text`` on ``AIInvocationContent`` and
-    ``redacted_content`` on ``AIAccessedFile`` at any depth. The hash /
+    Removes ``redacted_text`` on ``AIInvocationContent``,
+    ``redacted_content`` on ``AIAccessedFile`` and ``arguments`` on
+    ``AIToolUse`` at any depth. The hash /
     mime / byte_length siblings stay in place so the log line still
     lets ops correlate an event without exposing the underlying bytes.
 
