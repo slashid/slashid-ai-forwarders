@@ -478,11 +478,20 @@ These are facts from the tests, not decisions.
 - Through AgentCore, one surface at a time: a Harness `before_tool_call` deny (the model quoted the server's reason and the reference); a Gateway REQUEST deny of the same call; a Gateway RESPONSE replacement on a search whose result named the file (`Content withheld: ...` with the file name and a reference, `isError` true, reaching the model); a Harness `after_tool_call` deny on the same search, which ended the run with `stopReason: hook_stopped` and no text. With both surfaces on, a Harness `before_tool_call` deny stops the call before the Gateway sees it, and its `after_tool_call` is recognized as our own and not checked.
 - Latency of a check: 300 to 940 ms (the first check of a container the slowest).
 
+**Corner cases, same day (demo stack, production server).**
+- **Tool blacklist.** With a policy blocking `add_numbers` on the server `demo`, the Harness `before_tool_call` denied the call with `This operation is blocked by your organization's policy. (ref ...)`, which the model quoted.
+- **Hops.** A Gateway REQUEST deny reached the Harness `after_tool_call` (only that hook attached), which recognized our reference, made no check and let the run end normally. A Gateway RESPONSE replacement did the same with both hook sets on (no `harness` result check was logged), and the model quoted the `Content withheld:` text.
+- **Failed role lookup.** With `GetHarness` and `GetGateway` denied to the function's role (a temporary inline deny, removed), the Harness `before_tool_call` logged `role_lookup_failed` (`access_denied`) and the server's `identity could not be resolved` deny was applied although the fail mode was `allow`: the model quoted it. On the Gateway path, where the principal comes from the request, the same loss only left the claimed Harness unverified (`role_lookup_failed` for `claimed_harness`, then `baggage_unverified: lookup_failed`) and the checks were allowed.
+- **Baggage.** The failing run shows that a real Harness-to-Gateway call carries a baggage `harness.id` (the function tried to verify it). With the permission back there was no `baggage_unverified` line and no lookup failure, so the claimed Harness's role matched the caller's role and the id was accepted. The id sent to the server is not visible in the logs.
+- **Shadow mode.** With a tagged file, all four checks (Harness before and after, Gateway REQUEST and RESPONSE) got the server's deny, were logged as `shadow` with `answered: allow`, and the file's content reached the model.
+- **Lambda timeout.** With an unreachable server and a 2 s function timeout: the Harness hooks with `failureMode: allow` let the call proceed (about 2 s per hook); with `failureMode: deny` the run ended with `hook_stopped`. The Gateway has no failure mode: the interceptor timeout surfaced as a tool error (`Connection to the MCP server was closed`), after which the Harness reported its MCP session as not running. The function's own budget (at most 6.5 s) stays under its timeout, so the fail mode applies only while the function answers.
+- **Lambda unavailable.** With the function's reserved concurrency at 0, the Gateway answered `500` to the MCP `initialize` (the function is invoked for every MCP method, not only `tools/call`), and `InvokeHarness` failed to load the Gateway tool at all. An outage of the function therefore takes the Gateway down, whatever the fail mode.
+- **A first look-up can fail.** Three times a check for a file got `Some files in this request could not be checked.`, then passed on retry: a result check for the tagged file (twice, back to back, while the server's policies were being edited), a direct call check once, and the first result check of a `lunch-menu.md` search (the same search, repeated, passed, and 14 direct requests for that file all passed). The cause is not visible from the function's logs. A deny of this kind is applied like any other.
+
 **Not exercised (still unknown).**
-- What the Gateway does when the Lambda errors or times out, with a result over 6 MB, or with streaming.
-- A truncated `toolInput`.
-- Real Drive and Microsoft result shapes (only the stand-in ran), and `remote_mcp` tools.
-- The baggage-based Harness id check on a real Harness-to-Gateway call: no `baggage_unverified` line was logged, which fits success or no claim, so it is not proven.
+- A result over 6 MB (a Lambda target cannot return more than 6 MB, so it needs another kind of target) and a streaming response.
+- A truncated `toolInput` (the model would have to write over 64 KiB).
+- A JWT-authorized Gateway (the Gateway role path through `GetGateway` ran only in unit tests; the server resolves that role, from a direct request), real Drive and Microsoft result shapes (only the stand-in ran), and `remote_mcp` tools.
 
 ---
 

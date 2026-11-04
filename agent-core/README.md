@@ -135,6 +135,7 @@ How a deny lands: Harness `before_tool_call` skips the call and the model receiv
 - **Region.** Role lookups go to `bedrock-agentcore-control` in the Lambda's own region, not the ARN's. Deploy the function in the region of its Harnesses and Gateways; a Harness in another account or region fails its lookup.
 - **Missing permission.** A missing `GetHarness` or `GetGateway` permission (or a failed lookup) leaves the event without `principal_arn`, logged as `role_lookup_failed`. The server denies a check whose identity it cannot resolve ("Your identity could not be resolved in your organization's directory."), which is what an empty identity, or `gateway_arn` or the agent without `principal_arn`, gets, so a missing permission denies every check of that call, whatever the fail mode.
 - **Idle connections.** A role lookup that lands on a connection that died while the Lambda was frozen fails once (no retry, `total_max_attempts` 1) and is cached for 30 s, so the first call after a long idle may lack `principal_arn` until that cache entry expires.
+- **The function is in the path.** A Gateway has no failure mode of its own: an interceptor timeout is a tool error and closes the Harness's MCP session, and an unavailable function is a `500` to the MCP `initialize`, so the Gateway tool does not load at all. The Harness hooks follow their own `failureMode` (`allow` lets the call go on, `deny` ends the run). The function answers within its budget (at most 6.5 s) so that the fail mode applies; keep its timeout above that.
 - **The Harness id on the Gateway path is weak.** It is the caller-set baggage `harness.id`, sent in `available_agents` and `used_agent_ids` (as the rebuilt Harness ARN) only when `GetHarness` for that Harness returns the caller's own role. That shows the claimed Harness shares the role, not that the caller is that Harness: another Harness or Runtime agent with the same role can claim it. Treat it as no stronger than the role. `conversation_id` (baggage `session.id`) is a claim too.
 - **Error results.** An `isError` result (or an `error` reply) is still checked, with `is_error` set and no file references.
 - **Two surfaces, one call.** A Harness with Gateway tools fires both surfaces for one call: four serial checks (measured: about 170-195 ms each when warm, in the Lambda's region), each bounded by the budget (14 s at the default, plus up to 1 s per cold role lookup, with a slow but reachable server) and no circuit breaker. Both are checked; either deny blocks. Turn one surface off if that is not worth it.
@@ -147,11 +148,10 @@ How a deny lands: Harness `before_tool_call` skips the call and the model receiv
 
 Not yet verified against AWS or the SlashID server (design spec, section 6). Live runs on 2026-11-03 (demo account, production SlashID) settled that the server accepts these preflights, that a Harness invokes its hook with its execution role, the allow and deny shapes of both surfaces, and that a server deny for a tagged file is applied by the Harness `before_tool_call` and `after_tool_call` and by the Gateway REQUEST and RESPONSE. The server denies a check whose identity it cannot resolve (an empty identity, or a `gateway_arn` or agent without a `principal_arn`), so a failed role lookup denies that call. Still open:
 
-- what the Gateway does when the interceptor Lambda errors, times out, receives a result over 6 MB or a streaming response;
-- that the baggage `harness.id` rebuilds the `harnessArn` on a real Harness-to-Gateway call (no `baggage_unverified` line appeared, which fits success or no claim), and that `REQUEST_ID` is the same on a call's REQUEST and RESPONSE;
-- that the deny reference survives a Gateway REQUEST deny into the Harness `after_tool_call` and a RESPONSE replacement into the Harness (the Harness `before_tool_call` to `after_tool_call` and Gateway REQUEST to RESPONSE hops held);
+- what the Gateway does with a result over 6 MB (a Lambda target cannot return that much) or a streaming response;
+- that `REQUEST_ID` is the same on a call's REQUEST and RESPONSE, and the Harness id the server receives on the Gateway path (the baggage check passed on a real call, but the id sent is not logged);
 - the shape of an allow echo without response headers and of a JSON-RPC batch deny;
-- a truncated `toolInput`, `remote_mcp` tools, and real Drive and Microsoft result shapes (only the stand-in was run).
+- a truncated `toolInput`, a JWT-authorized Gateway, `remote_mcp` tools, and real Drive and Microsoft result shapes (only the stand-in was run).
 
 ## Development
 
