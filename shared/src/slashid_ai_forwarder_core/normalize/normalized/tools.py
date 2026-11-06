@@ -9,9 +9,10 @@ does the one-way serialization at the boundary. Uses compact separators
 
 ``build_tools_declared`` is the vendor-agnostic factory: each vendor's
 ``_to_input`` passes an iterable of ``(raw_name, description, input_schema)``
-tuples; the helper parses names via ``parse_tool_name`` (`mcp__server__tool`
-/ `server__tool` / bare) and produces canonical ``AITool`` / ``AIToolServer``
-lists with stable, content-derived ids.
+tuples; the helper parses names via ``parse_tool_name`` (`mcp__server__tool`,
+`mcp_<uuid>_tool`, `Server:tool`, `server#tool`, `server__tool`, bare) and
+produces canonical ``AITool`` / ``AIToolServer`` lists with stable,
+content-derived ids.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any
 
 from pydantic.json_schema import JsonSchemaValue
 
-from ...events import AITool, AIToolServer, parse_tool_name
+from ...events import AITool, AIToolServer, canonical_server_name, parse_tool_name
 
 
 def make_ai_tool(
@@ -72,9 +73,11 @@ def build_tools_declared(
     into deduplicated ``(tools, tool_servers)`` lists.
 
     Server id = ``short_hash({name, kind})``; tool id = ``short_hash({server,
-    name, description, input_schema})`` — same content-derived recipe the
-    envelope side used pre-canonical, so hashes are stable across the
-    migration.
+    name, description, input_schema})``, where the server's name in both is
+    ``canonical_server_name`` of it: `Microsoft 365`, `microsoft-365` and
+    `Microsoft_365` are one server with one id, and for an MCP server that id
+    is the one ng-evangelion's Claude.ai connector sync mints for the same
+    connector. The server keeps the first spelling seen as its display name.
 
     Empty / whitespace-only names are skipped (matches the previous
     ``_available_tools`` behaviour on toolConfig entries with missing
@@ -86,10 +89,11 @@ def build_tools_declared(
         if not raw_name:
             continue
         tool_name, server_name, server_kind = parse_tool_name(raw_name)
-        server_id = _short_hash({"name": server_name, "kind": server_kind})
+        server_key = canonical_server_name(server_name)
+        server_id = _short_hash({"name": server_key, "kind": server_kind})
         tool_id = _short_hash(
             {
-                "server": server_name,
+                "server": server_key,
                 "name": tool_name,
                 "description": description or None,
                 "input_schema": input_schema or None,

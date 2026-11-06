@@ -94,6 +94,11 @@ class NormalizedInvocationOutput(_LenientModel):
 
     message: NormalizedMessage | None = None
     stop_reason: AIStopReason = "unknown"
+    # ``tool_result`` blocks the answer carries inline, beside the
+    # ``tool_use`` that asked for them: a claude.ai chat runs its tools
+    # inside the response, so their results never reach a later user
+    # message. ``used_tools_of`` counts them as this invocation's.
+    tool_results: list[NormalizedContent] = Field(default_factory=list)
 
 
 class NormalizedInvocation(_LenientModel):

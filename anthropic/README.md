@@ -113,11 +113,16 @@ around. Extend as new ones surface.
 - **No tool or MCP-server inventory.** `available_tools` lists only the tools
   actually *used*, by name, with no description and no schema. The Bedrock and
   Vertex forwarders read real declarations from the request body, so absence
-  here means unobservable, not unused. On a frame an MCP server is visible only
-  when the client names its tools `mcp__server__tool`; on claude.ai chat
-  messages the reader does better, since tool blocks carry `integration_name`
-  and `mcp_server_url` as explicit fields. Server attribution is partly
-  recoverable on one surface, tool definitions on neither.
+  here means unobservable, not unused. The server comes from the tool's name
+  alone: `mcp__server__tool` (hooks), and claude.ai's `Server:tool`,
+  `server#tool` and `mcp_<connector uuid>_tool`. Server ids are derived from
+  the name with case and punctuation folded (`Microsoft 365`, `microsoft-365`
+  and `Microsoft_365` are one server, with the id SlashID's Claude.ai connector
+  sync mints for that connector). A server named by its connector UUID still
+  gets an id of its own. Chat tool blocks also carry `integration_name` and
+  `mcp_server_url`, but every captured sample has `integration_name` set on
+  built-in tools (`File Creation`) and no MCP sample, so they are not used.
+  Tool definitions are recoverable on no surface.
 - **No `stop_reason` and no token counts** from any surface. `stop_reason` is
   inferred from the shape of the run; `tokens` is zero.
 - **Server-tool results are placeholders**, so content Anthropic's own tools

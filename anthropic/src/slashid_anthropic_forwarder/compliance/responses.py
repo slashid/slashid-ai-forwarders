@@ -46,6 +46,7 @@ from slashid_ai_forwarder_core.events import (
     build_event_from_normalized,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
+    inline_tool_results,
     message_to_normalized_invocation,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.schema import (
@@ -758,6 +759,9 @@ async def _standalone(
     normalized = await message_to_normalized_invocation(
         AnthropicRequestBody(messages=before), response, config=config
     )
+    # A chat answer ran its tools inline; without this their uses are lost
+    # (``response_blocks`` drops the results the answer union cannot hold).
+    normalized.output.tool_results = inline_tool_results(to_anthropic(run.messages))
     files = await accessed_files_for(before, config=config)
     normalized.accessed_files = [
         *[f for f in files if f.provenance != "attachment"],

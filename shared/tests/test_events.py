@@ -31,6 +31,7 @@ from slashid_ai_forwarder_core.events import (
     OpenAIIdentityDetails,
     build_event_from_normalized,
     build_sparse_event,
+    canonical_server_name,
     parse_tool_name,
     redact_for_logging,
 )
@@ -75,10 +76,158 @@ def _config(
         ("Bash", ("Bash", "builtin", "runtime")),
         ("Read", ("Read", "builtin", "runtime")),
         ("mcp__foo", ("foo", "builtin", "runtime")),
+        # claude.ai's spellings (prod, 2026-11-06)
+        (
+            "Microsoft 365:outlook_email_search",
+            ("outlook_email_search", "Microsoft 365", "mcp"),
+        ),
+        ("Fellow.ai:search_meetings", ("search_meetings", "Fellow.ai", "mcp")),
+        (
+            "mcp_72db0f47-fbeb-40ef-a715-1a004e535083_pitchbook_search",
+            ("pitchbook_search", "72db0f47-fbeb-40ef-a715-1a004e535083", "mcp"),
+        ),
+        ("workspace#bash", ("bash", "workspace", "mcp")),
+        # the first `:` splits, so a `__` after it stays in the tool name
+        (
+            "iLevel MCP Server:pcm__search_metadata",
+            ("pcm__search_metadata", "iLevel MCP Server", "mcp"),
+        ),
+        # an empty side is no server
+        (":odd", (":odd", "builtin", "runtime")),
+        ("odd#", ("odd#", "builtin", "runtime")),
+        # not a UUID: an ordinary bare name
+        ("mcp_notauuid_tool", ("mcp_notauuid_tool", "builtin", "runtime")),
     ],
 )
 async def test_parse_tool_name(name: str, expected: tuple[str, str, str]) -> None:
     assert parse_tool_name(name) == expected
+
+
+def _mcp_server_id(name: str) -> str:
+    # ng-evangelion's mcpServerID: sha256 of Python's compact, key-sorted
+    # json.dumps({"kind": "mcp", "name": <canonical name>}), first 16 hex.
+    data = json.dumps(
+        {"kind": "mcp", "name": canonical_server_name(name)}, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
+
+
+@pytest.mark.parametrize(
+    ("name", "server_id"),
+    [
+        # The vectors of ng-evangelion's TestMCPServerIDMatchesForwarder
+        # (backend/modules/nhi/adapters/entity_sources/anthropic): both sides
+        # must mint the same id for the same connector.
+        ("Drata", "6a83d6646b6eadd8"),
+        ("Microsoft 365", "5b0f8b4ec985f676"),
+        ("Café <x>&", "b40e0710c37f85b3"),
+        ("İstanbul", "16a1a329d67dbf07"),
+        ("__Claude  Docs__", "ce5f4baec6c27221"),
+        ("fellow.ai", "e8e037b3d5dca7c6"),
+        (" --_ ", "af6e3887bb2e66de"),
+        ("日本", "b3f10a446a9f008e"),
+        ("😀<>&\x7f", "c46a5f08a3fefb4c"),
+        ('"\\\n', "6dc7f6e7dbb3f94f"),
+    ],
+)
+def test_mcp_server_id_matches_ng_evangelion(name: str, server_id: str) -> None:
+    assert _mcp_server_id(name) == server_id
+
+
+@pytest.mark.parametrize(
+    ("name", "canonical"),
+    [
+        ("Microsoft 365", "microsoft_365"),
+        ("microsoft-365", "microsoft_365"),
+        ("Microsoft_365", "microsoft_365"),
+        ("Fellow.ai", "fellow_ai"),
+        ("__Claude  Docs__", "claude_docs"),
+        ("builtin", "builtin"),
+        # nothing alphanumeric left: the name keeps itself
+        (" --_ ", " --_ "),
+    ],
+)
+def test_canonical_server_name(name: str, canonical: str) -> None:
+    assert canonical_server_name(name) == canonical
+
+
+def test_spellings_of_one_server_share_its_ids() -> None:
+    tools, servers = build_tools_declared(
+        (name, None, None)
+        for name in (
+            "Microsoft 365:outlook_email_search",
+            "mcp__microsoft_365__outlook_email_search",
+            "mcp__Microsoft_365__outlook_email_search",
+        )
+    )
+    assert [(s.id, s.name, s.kind) for s in servers] == [
+        ("5b0f8b4ec985f676", "Microsoft 365", "mcp")
+    ]
+    assert len({t.id for t in tools}) == 1
+
+
+async def test_used_tools_resolve_across_server_spellings() -> None:
+    invocation = _invocation(
+        [
+            _msg("user", "mail"),
+            NormalizedMessage(
+                role="assistant",
+                content=[
+                    NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id="t1",
+                        tool_name="microsoft-365:outlook_email_search",
+                        tool_input={},
+                    )
+                ],
+            ),
+            NormalizedMessage(
+                role="user",
+                content=[NormalizedContent(kind="tool_result", tool_use_id="t1", tool_output="x")],
+            ),
+        ]
+    )
+    tools, servers = build_tools_declared(
+        [("mcp__Microsoft_365__outlook_email_search", None, None)]
+    )
+    invocation.input.tools_declared, invocation.input.tool_servers = tools, servers
+    event = await build_event_from_normalized(invocation, _plain_envelope(), config=_config())
+    assert event.used_tools == [AIToolUse(tool_id=tools[0].id, tool_use_id="t1", is_error=False)]
+
+
+async def test_inline_tool_results_count_as_this_invocations_uses() -> None:
+    # A claude.ai chat runs its tools inside the answer: the result sits
+    # beside the tool_use, never in a later user message.
+    invocation = NormalizedInvocation(
+        input=NormalizedInvocationInput(messages=[_msg("user", "vendors?")]),
+        output=NormalizedInvocationOutput(
+            message=NormalizedMessage(
+                role="assistant",
+                content=[
+                    NormalizedContent(
+                        kind="tool_use",
+                        tool_use_id="t1",
+                        tool_name="Drata:Drata_listVendors",
+                        tool_input={},
+                    ),
+                    NormalizedContent(kind="text", text="three vendors"),
+                ],
+            ),
+            tool_results=[
+                NormalizedContent(
+                    kind="tool_result", tool_use_id="t1", tool_output="[]", tool_is_error=True
+                )
+            ],
+            stop_reason="end_turn",
+        ),
+    )
+    tools, servers = build_tools_declared([("Drata:Drata_listVendors", None, None)])
+    invocation.input.tools_declared, invocation.input.tool_servers = tools, servers
+    event = await build_event_from_normalized(invocation, _plain_envelope(), config=_config())
+    assert servers[0].id == "6a83d6646b6eadd8"
+    assert event.used_tools == [AIToolUse(tool_id=tools[0].id, tool_use_id="t1", is_error=True)]
+    # It already ran: not a pending request.
+    assert not event.requested_tool_uses
 
 
 def _mil_record(**overrides: Any) -> dict[str, Any]:
