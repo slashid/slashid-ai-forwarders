@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, cast
 
 from ...config_base import BaseConfig
@@ -36,6 +37,7 @@ from .schema import (
     AnthropicMessageStart,
     AnthropicRequestBody,
     AnthropicRequestContentBlock,
+    AnthropicRequestMessage,
     AnthropicStreamEvent,
     AnthropicSystemBlock,
     AnthropicTextBlock,
@@ -188,6 +190,23 @@ def _translate_request_content(
                 )
             # AnthropicUnknownBlock: skipped silently.
     return out
+
+
+def inline_tool_results(messages: Sequence[AnthropicRequestMessage]) -> list[NormalizedContent]:
+    """The ``tool_result`` blocks assistant messages carry inline.
+
+    A claude.ai chat runs its tools inside the response, so the answer holds
+    each result beside the ``tool_use`` that asked for it; the response-side
+    union cannot model them. Callers put them on
+    ``NormalizedInvocationOutput.tool_results``.
+    """
+    return [
+        block
+        for msg in messages
+        if msg.role == "assistant"
+        for block in _translate_request_content(msg.content)
+        if block.kind == "tool_result"
+    ]
 
 
 def _message_to_output(msg: AnthropicMessage) -> NormalizedInvocationOutput:

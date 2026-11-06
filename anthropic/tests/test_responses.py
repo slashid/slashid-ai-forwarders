@@ -21,7 +21,7 @@ from slashid_anthropic_forwarder.compliance.responses import (
     response_blocks,
     to_anthropic,
 )
-from slashid_anthropic_forwarder.compliance.schema import Chat, SessionMessage
+from slashid_anthropic_forwarder.compliance.schema import Chat, SessionMessage, ToolResultBlock
 from slashid_anthropic_forwarder.hook.frame import PromptFrame, split_transcript
 from slashid_anthropic_forwarder.store import Retirement, Seen
 from slashid_anthropic_forwarder.store.gcp import FirestorePendingStore
@@ -193,6 +193,39 @@ async def test_the_chats_feed_emits_too() -> None:
     pushed = next(e for b in sink.bodies for e in b["events"] if e["request_id"] in joinable)
     assert chat.href is not None
     assert pushed["conversation_id"] == chat.href.rsplit("/", 1)[-1]
+
+
+async def test_a_chat_turns_inline_tool_results_are_its_used_tools() -> None:
+    # The response union drops a chat answer's inline results; the event
+    # must still count the tools that turn ran, as its own uses.
+    store, sink = a_store(), Sink()
+    await run(store, sink)
+    chat = Chat.model_validate(body("chat_messages_2.json"))
+    ran: dict[str, set[str]] = {}
+    for turn in chat_turns(chat):
+        address = joinable_address(to_anthropic(turn.messages))
+        results = {
+            block.tool_use_id
+            for message in turn.messages
+            for block in message.content
+            if isinstance(block, ToolResultBlock)
+        }
+        if address and results:
+            ran[address] = results
+    assert ran, (
+        "chat_messages_2 has a joinable turn with inline results; if not, the fixture changed"
+    )
+    pushed = {e["request_id"]: e for b in sink.bodies for e in b["events"]}
+    checked = 0
+    for address, results in ran.items():
+        if address not in pushed:
+            continue
+        used = {u["tool_use_id"] for u in pushed[address].get("used_tools") or []}
+        assert used == results
+        requested = {u["tool_use_id"] for u in pushed[address].get("requested_tool_uses") or []}
+        assert not requested & results
+        checked += 1
+    assert checked
 
 
 def test_an_inline_tool_result_never_reaches_the_response_union() -> None:

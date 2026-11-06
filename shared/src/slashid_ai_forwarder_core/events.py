@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
     # circular import at module load: types.py imports AIInvocationTokens /
     # AIStopReason / AITool / AIToolServer from events.py.
     from .config_base import BaseConfig
-    from .normalize.normalized.types import NormalizedInvocation
+    from .normalize.normalized.types import NormalizedInvocation, NormalizedMessage
 
 log = logging.getLogger(__name__)
 
@@ -574,15 +575,29 @@ def _build_content(
     )
 
 
-def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
-    """Split a Bedrock toolSpec name into (tool_name, server_name, server_kind).
+_MCP_UUID_TOOL = re.compile(
+    r"^mcp_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_(.+)$"
+)
 
-    - `mcp__{server}__{tool}` → (`{tool}`, `{server}`, `"mcp"`)
-    - `{server}__{tool}`      → (`{tool}`, `{server}`, `"runtime"`)
-    - `{tool}`                → (`{tool}`, `"builtin"`, `"runtime"`)
+
+def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
+    """Split a wire tool name into (tool_name, server_name, server_kind).
+
+    - `mcp__{server}__{tool}`  → (`{tool}`, `{server}`, `"mcp"`)
+    - `mcp_{uuid}_{tool}`      → (`{tool}`, `{uuid}`, `"mcp"`) — claude.ai names a
+      connector's tools by the connector's UUID
+    - `{server}:{tool}`        → (`{tool}`, `{server}`, `"mcp"`) — claude.ai's
+      `Microsoft 365:outlook_email_search` (the first `:` splits; both sides non-empty)
+    - `{server}#{tool}`        → (`{tool}`, `{server}`, `"mcp"`) — claude.ai's
+      `workspace#bash`
+    - `{server}__{tool}`       → (`{tool}`, `{server}`, `"runtime"`)
+    - `{tool}`                 → (`{tool}`, `"builtin"`, `"runtime"`)
       (bare tools share one synthetic `builtin` server; `runtime` is the
        AIToolServerDetails.kind enum value the SlashID schema uses for
        any non-MCP server.)
+
+    The server name comes back as spelled on the wire; ids are derived from
+    ``canonical_server_name`` of it, so spellings of one server share them.
     """
     if name.startswith("mcp__"):
         rest = name[len("mcp__") :]
@@ -590,20 +605,43 @@ def parse_tool_name(name: str) -> tuple[str, str, AIToolServerKind]:
             server, tool = rest.split("__", 1)
             return tool, server, "mcp"
         return rest, "builtin", "runtime"
+    if m := _MCP_UUID_TOOL.match(name):
+        return m.group(2), m.group(1), "mcp"
+    for sep in (":", "#"):
+        server, found, tool = name.partition(sep)
+        if found and server and tool:
+            return tool, server, "mcp"
     if "__" in name:
         server, tool = name.split("__", 1)
         return tool, server, "runtime"
     return name, "builtin", "runtime"
 
 
+def canonical_server_name(name: str) -> str:
+    """The spelling-independent key of a tool server's name.
+
+    One connector reaches us as `Microsoft 365`, `microsoft-365`, `microsoft_365`
+    and `Microsoft_365`, depending on the surface. ASCII letters are lowercased;
+    every run of anything else that is not an ASCII letter or digit becomes one
+    `_`; `_` is stripped at both ends. A name with nothing left keeps itself.
+
+    Must stay identical to ``canonicalMCPServerName`` in ng-evangelion
+    (backend/modules/nhi/adapters/entity_sources/anthropic/managed_agents.go):
+    both sides derive the same server id from it.
+    """
+    lowered = "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in name)
+    canonical = re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
+    return canonical or name
+
+
 def _tool_id_index(normalized: NormalizedInvocation) -> dict[tuple[str, str], str]:
-    """(server_name, parsed_tool_name) → AITool.id over the declared tools."""
+    """(canonical server name, parsed_tool_name) → AITool.id over the declared tools."""
     server_name_by_id = {s.id: s.name or "builtin" for s in normalized.input.tool_servers}
     id_by_key: dict[tuple[str, str], str] = {}
     for tool in normalized.input.tools_declared:
         server_name = server_name_by_id.get(tool.tool_server_id or "") or "builtin"
         if tool.name:
-            id_by_key[(server_name, tool.name)] = tool.id
+            id_by_key[(canonical_server_name(server_name), tool.name)] = tool.id
     return id_by_key
 
 
@@ -613,15 +651,28 @@ def _requested_tool_uses(normalized: NormalizedInvocation) -> list[AIToolUse]:
     if message is None:
         return []
     ids = _tool_id_index(normalized)
+    # A call whose result the answer carries inline already ran: it is in used_tools.
+    ran = {b.tool_use_id for b in normalized.output.tool_results if b.tool_use_id}
     requested: list[AIToolUse] = []
     for block in message.content:
         if block.kind != "tool_use" or not block.tool_name or block.tool_executor == "server":
             continue
+        if block.tool_use_id in ran:
+            continue
         name, server, _kind = parse_tool_name(block.tool_name)
-        tool_id = ids.get((server, name))
+        tool_id = ids.get((canonical_server_name(server), name))
         if tool_id:
             requested.append(AIToolUse(tool_id=tool_id, tool_use_id=block.tool_use_id))
     return requested
+
+
+def _tool_names_by_use_id(messages: list[NormalizedMessage]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for msg in messages:
+        for block in msg.content:
+            if block.kind == "tool_use" and block.tool_use_id and block.tool_name:
+                names[block.tool_use_id] = block.tool_name
+    return names
 
 
 def used_tools_of(normalized: NormalizedInvocation) -> list[AIToolUse]:
@@ -638,50 +689,58 @@ def used_tools_of(normalized: NormalizedInvocation) -> list[AIToolUse]:
 
     In-flight calls (``tool_use`` in this record's output with no matching
     ``tool_result`` yet) are deferred to the next invocation event.
+
+    A chat answer carries its results inline (``output.tool_results``),
+    run inside the response itself: those count here too, as this
+    invocation's, paired with the ``tool_use`` blocks of the answer.
     """
     input_messages = normalized.input.messages
-    if not input_messages:
+    inline_results = normalized.output.tool_results
+    if not input_messages and not inline_results:
         return []
 
     id_by_key = _tool_id_index(normalized)
 
     # tool_use_id → raw wire tool name, from any tool_use block in the history.
-    name_by_use_id: dict[str, str] = {}
-    for msg in input_messages:
-        for block in msg.content:
-            if block.kind == "tool_use" and block.tool_use_id and block.tool_name:
-                name_by_use_id[block.tool_use_id] = block.tool_name
+    # An inline result pairs with the answer's own tool_use instead: a vendor
+    # that reuses call ids across rounds (OpenAI chat's `call_0`) must not let
+    # the answer's pending call rename a result the history already paired.
+    name_by_use_id = _tool_names_by_use_id(input_messages)
+    answer = normalized.output.message
+    inline_name_by_use_id = _tool_names_by_use_id([answer] if answer else [])
 
+    results = [
+        (b, name_by_use_id) for msg in after_last_assistant(input_messages) for b in msg.content
+    ]
     used: list[AIToolUse] = []
     seen: set[str] = set()
-    for msg in after_last_assistant(input_messages):
-        for block in msg.content:
-            if block.kind != "tool_result" or not block.tool_use_id:
-                continue
-            uid = block.tool_use_id
-            if uid in seen:
-                continue
-            raw_name = name_by_use_id.get(uid)
-            if not raw_name:
-                continue
-            parsed_name, server_name, _kind = parse_tool_name(raw_name)
-            tool_id = id_by_key.get((server_name, parsed_name))
-            if not tool_id:
-                # Result references a tool we can't identify (tool_use
-                # missing from input history, or tools_declared omits it).
-                # Skip — an entry with no tool_id has no analytic value.
-                continue
-            trace_id, span_id = extract_otel(block.tool_output)
-            seen.add(uid)
-            used.append(
-                AIToolUse(
-                    tool_id=tool_id,
-                    tool_use_id=uid,
-                    is_error=block.tool_is_error,
-                    trace_id=trace_id,
-                    span_id=span_id,
-                )
+    for block, names in [*results, *((b, inline_name_by_use_id) for b in inline_results)]:
+        if block.kind != "tool_result" or not block.tool_use_id:
+            continue
+        uid = block.tool_use_id
+        if uid in seen:
+            continue
+        raw_name = names.get(uid)
+        if not raw_name:
+            continue
+        parsed_name, server_name, _kind = parse_tool_name(raw_name)
+        tool_id = id_by_key.get((canonical_server_name(server_name), parsed_name))
+        if not tool_id:
+            # Result references a tool we can't identify (tool_use
+            # missing from input history, or tools_declared omits it).
+            # Skip — an entry with no tool_id has no analytic value.
+            continue
+        trace_id, span_id = extract_otel(block.tool_output)
+        seen.add(uid)
+        used.append(
+            AIToolUse(
+                tool_id=tool_id,
+                tool_use_id=uid,
+                is_error=block.tool_is_error,
+                trace_id=trace_id,
+                span_id=span_id,
             )
+        )
     return used
 
 
