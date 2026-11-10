@@ -7,6 +7,7 @@ Monorepo of SlashID forwarders that observe AI-provider invocations and forward 
 - [`bedrock/`](bedrock/README.md) — AWS Bedrock forwarder Lambda. CloudWatch Logs subscription → SlashID.
 - [`vertex/`](vertex/README.md) — GCP Vertex AI forwarder Cloud Run service. BigQuery request-response logs → SlashID.
 - [`anthropic/`](anthropic/README.md) — Claude Enterprise forwarder on Cloud Run. Inference hooks (inline, with allow/deny) + Compliance API polling → SlashID.
+- [`portkey/`](portkey/README.md) — Portkey AI gateway forwarder. Guardrail webhooks (inline, with allow/deny, for any provider behind the gateway) → SlashID.
 - `shared/` — internal library reused across forwarders (event schema, HTTP sink, content hashing, base config, Anthropic + Converse + Gemini normalizers).
 
 ## Development
@@ -21,6 +22,7 @@ uv run pre-commit install                  # set up hooks
 (cd bedrock   && uv run pytest)            # Bedrock tests
 (cd vertex    && uv run pytest)            # Vertex tests
 (cd anthropic && uv run pytest)            # Anthropic tests
+(cd portkey   && uv run pytest)            # Portkey tests
 (cd shared    && uv run pytest)            # Shared library tests
 (cd bedrock   && uv run ruff check .)      # Bedrock lint
 (cd vertex    && uv run ruff check .)      # Vertex lint
@@ -39,5 +41,6 @@ Tagged releases are per-component with a component prefix:
 - `bedrock-vX.Y.Z` → publishes Lambda zip + CloudFormation template to GitHub Releases (see `bedrock/README.md`).
 - `vertex-vX.Y.Z` → publishes the service container image to GHCR; the Terraform module is consumed from the tag (see `vertex/README.md`).
 - `anthropic-vX.Y.Z` → publishes the receiver container image to GHCR; the Terraform module is consumed from the tag (see `anthropic/README.md`).
+- `portkey-vX.Y.Z` → publishes the webhook container image to GHCR (see `portkey/README.md`).
 
 The version in the tag must match the `version` field in the component's `pyproject.toml`. The release workflow enforces this.
