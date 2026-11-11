@@ -37,7 +37,7 @@ Prerequisite: Bedrock Model Invocation Logging (MIL) is on and delivers to a Clo
 Each release attaches the Lambda zip and `cloudformation.yaml`. Upload the zip to an S3 bucket of yours, then create the stack in the region of that log group:
 
 ```bash
-VERSION=0.1.6
+VERSION=0.1.7
 gh release download "bedrock-v$VERSION" -R slashid/slashid-ai-forwarders
 aws s3 cp "slashid-ai-forwarder-bedrock-v$VERSION.zip" "s3://<bucket>/releases/v$VERSION/forwarder.zip"
 
