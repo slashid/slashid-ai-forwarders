@@ -87,6 +87,7 @@ async def decide(
             endpoint=config.endpoint,
             push_token=token,
             timeout_s=config.verdict_budget_ms / 1000,
+            enforcement="shadow" if config.shadow_mode else "enforce",
         )
     except PreflightError as exc:
         return unjudged(config, f"preflight gave no verdict ({exc.cause}): {exc}")

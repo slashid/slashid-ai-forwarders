@@ -208,6 +208,29 @@ async def test_the_verdict_asks_for_the_decision_and_names_the_rule_behind_a_den
     )
 
 
+async def test_the_verdict_tells_slashid_what_the_caller_does_with_a_deny() -> None:
+    """SlashID records it with a denied check, so a blocked invocation can be
+    told from one that would have been blocked."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("slashid-preflight-enforcement"))
+        return httpx.Response(200, json=DENIED)
+
+    async with client(handler) as c:
+        for enforcement in ("enforce", "shadow", None):
+            await preflight_verdict(
+                c,
+                invocation(),
+                endpoint=ENDPOINT,
+                push_token="tok",
+                timeout_s=1.0,
+                enforcement=enforcement,
+            )
+        await preflight_verdict(c, invocation(), endpoint=ENDPOINT, push_token="tok", timeout_s=1.0)
+    assert seen == ["enforce", "shadow", None, None]
+
+
 async def test_a_server_that_names_no_decision_still_gives_a_verdict() -> None:
     body = {"deny_reasons": ["a.txt is sensitive."]}
     async with client(lambda r: httpx.Response(200, json=body)) as c:

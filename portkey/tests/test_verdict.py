@@ -109,6 +109,18 @@ async def test_shadow_mode_answers_allow_and_keeps_the_real_verdict() -> None:
     assert decision.composed.deny_reasons == (BLOCKED,)
 
 
+async def test_the_check_tells_slashid_a_deny_blocks_the_request() -> None:
+    slashid = SlashID(BLOCKED)
+    await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
+    assert slashid.enforcements == ["enforce"]
+
+
+async def test_under_shadow_mode_the_check_tells_slashid_a_deny_is_only_noted() -> None:
+    slashid = SlashID(BLOCKED)
+    await decide(EVENT, token="tok-1", config=config(shadow_mode=True), client=slashid.client)
+    assert slashid.enforcements == ["shadow"]
+
+
 def test_a_request_that_cannot_be_judged_takes_the_fail_mode() -> None:
     assert unjudged(config(), "nobody named").answered.to_wire() == {"verdict": True}
     denied = unjudged(config(verdict_fail_mode="deny"), "nobody named").answered
