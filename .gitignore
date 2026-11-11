@@ -32,3 +32,6 @@ fixtures/local/
 # into the runner workspace at auth time. Belt-and-braces to keep them
 # out of any commit even if a workflow forgets to pin ``add-paths``.
 gha-creds-*.json
+
+# Rubicon deployment: patched module copy, state and tfvars (local only)
+anthropic/deploy/terraform-rubicon/
