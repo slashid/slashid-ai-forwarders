@@ -15,7 +15,11 @@ from slashid_ai_forwarder_core.events import (
     AIModel,
     AnthropicIdentityDetails,
 )
-from slashid_ai_forwarder_core.sink import PreflightError, preflight_invocation
+from slashid_ai_forwarder_core.sink import (
+    PreflightError,
+    preflight_invocation,
+    preflight_verdict,
+)
 
 ENDPOINT = "https://api.slashid.example"
 
@@ -170,3 +174,55 @@ async def test_a_failure_says_what_kind_it_was(handler, cause: str) -> None:
     with pytest.raises(PreflightError) as caught:
         await call(client(handler))
     assert caught.value.cause == cause
+
+
+DENIED = {
+    "deny_reasons": ["This model is not allowed."],
+    "decision": {
+        "effect": "deny",
+        "reason": "This model is not allowed.",
+        "rule_id": "no-opus",
+        "policy_id": "conn:c1",
+    },
+}
+
+
+async def test_the_verdict_asks_for_the_decision_and_names_the_rule_behind_a_deny() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["capabilities"] = request.headers.get("slashid-preflight-capabilities")
+        return httpx.Response(200, json=DENIED)
+
+    async with client(handler) as c:
+        verdict = await preflight_verdict(
+            c, invocation(), endpoint=ENDPOINT, push_token="tok", timeout_s=1.0
+        )
+    assert seen["capabilities"] == "decision"
+    assert verdict.deny_reasons == ["This model is not allowed."]
+    assert verdict.decision is not None
+    assert (verdict.decision.effect, verdict.decision.rule_id, verdict.decision.policy_id) == (
+        "deny",
+        "no-opus",
+        "conn:c1",
+    )
+
+
+async def test_a_server_that_names_no_decision_still_gives_a_verdict() -> None:
+    body = {"deny_reasons": ["a.txt is sensitive."]}
+    async with client(lambda r: httpx.Response(200, json=body)) as c:
+        verdict = await preflight_verdict(
+            c, invocation(), endpoint=ENDPOINT, push_token="tok", timeout_s=1.0
+        )
+    assert verdict.deny_reasons == ["a.txt is sensitive."] and verdict.decision is None
+
+
+async def test_a_decision_in_a_shape_we_do_not_know_does_not_cost_the_verdict() -> None:
+    """The reasons are the verdict. A decision we cannot read is one we
+    cannot name the rule from, not a check that failed."""
+    body = {"deny_reasons": [], "decision": {"effect": "mask", "mask": ["ssn"]}}
+    async with client(lambda r: httpx.Response(200, json=body)) as c:
+        verdict = await preflight_verdict(
+            c, invocation(), endpoint=ENDPOINT, push_token="tok", timeout_s=1.0
+        )
+    assert verdict.deny_reasons == [] and verdict.decision is None

@@ -186,7 +186,24 @@ async def preflight_invocation(
     push_token: str,
     timeout_s: float,
 ) -> list[str]:
-    """POST /ip/nhi/events/ai-invocations/preflight. Returns the deny reasons.
+    """``preflight_verdict`` for a caller that acts on the deny reasons alone."""
+    verdict = await preflight_verdict(
+        client, invocation, endpoint=endpoint, push_token=push_token, timeout_s=timeout_s
+    )
+    return verdict.deny_reasons
+
+
+async def preflight_verdict(
+    client: httpx.AsyncClient,
+    invocation: AIInvocationObservedV1,
+    *,
+    endpoint: str,
+    push_token: str,
+    timeout_s: float,
+) -> AIPreflightResponse:
+    """POST /ip/nhi/events/ai-invocations/preflight. Returns the verdict: the
+    deny reasons and, from a server that sends it, the decision naming the
+    rule and the policy behind them.
 
     The body is the same ``AIInvocationObservedV1`` the push carries, sent
     before the model has answered and therefore incomplete. An empty list
@@ -208,6 +225,7 @@ async def preflight_invocation(
             headers={
                 "Authorization": f"Bearer {push_token}",
                 "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
+                "SlashID-Preflight-Capabilities": "decision",
             },
             timeout=timeout_s,
         )
@@ -218,6 +236,6 @@ async def preflight_invocation(
     if response.status_code != 200:
         raise PreflightError(f"HTTP {response.status_code}", "status")
     try:
-        return AIPreflightResponse.model_validate_json(response.content).deny_reasons
+        return AIPreflightResponse.model_validate_json(response.content)
     except ValidationError as exc:
         raise PreflightError("unparseable verdict", "unparseable") from exc

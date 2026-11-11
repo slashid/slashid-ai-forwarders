@@ -24,6 +24,8 @@ from pydantic import (
     ConfigDict,
     Field,
     SkipValidation,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
     field_validator,
     model_validator,
 )
@@ -486,12 +488,39 @@ class AIInvocationObservedV1(_WireModel):
     accessed_files: list[AIAccessedFile] | None = None
 
 
+class AIPreflightDecision(BaseModel):
+    """spec/ai-schemas.yaml — AIPreflightDecision: the verdict with the rule
+    and the policy behind it. ``rule_id`` is absent when no rule decided
+    (the policy's default, or a check that could not complete)."""
+
+    effect: Literal["allow", "deny"]
+    reason: str | None = None
+    rule_id: str | None = None
+    policy_id: str | None = None
+
+
 class AIPreflightResponse(BaseModel):
     """spec/ai-schemas.yaml — AIPreflightResponse. Empty ``deny_reasons``
     allows, non-empty denies. A response, so unknown fields are ignored
-    rather than forbidden: a field the server adds must not fail the check."""
+    rather than forbidden: a field the server adds must not fail the check.
+
+    ``decision`` restates the verdict and names what decided it. The server
+    sends it only to a caller that asked (``SlashID-Preflight-Capabilities:
+    decision``). The reasons are the verdict: a decision in a shape this
+    client does not know reads as none, never as a failed check."""
 
     deny_reasons: list[str]
+    decision: AIPreflightDecision | None = None
+
+    @field_validator("decision", mode="wrap")
+    @classmethod
+    def _unknown_decision_is_none(
+        cls, value: object, handler: ValidatorFunctionWrapHandler
+    ) -> AIPreflightDecision | None:
+        try:
+            return handler(value)
+        except ValidationError:
+            return None
 
 
 class EventEnvelope(_WireModel):
