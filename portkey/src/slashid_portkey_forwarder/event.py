@@ -2,8 +2,13 @@
 
 Before the model call there is one event: who is asking, which model, and
 the fresh round (the prompt, tool results and inline files since the last
-answer). After it there are two: the tool calls the model asked for, judged
-before the application runs any, and the completed invocation, recorded.
+answer). After it there are two: the answer and the tool calls the model
+asked for, judged before the application sees one or runs the other, and
+the completed invocation, recorded.
+
+What is judged is sent apart: the prompt as the input's text, what each
+tool returned on that tool's entry, the answer as the output's text. A
+rule on one then reads that one and no other.
 
 Portkey hands every provider's request and response over in OpenAI Chat
 Completions form, so one normalizer covers OpenAI, Anthropic and Gemini.
@@ -19,16 +24,23 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
+from slashid_ai_forwarder_core.content_utils import truncate_middle
 from slashid_ai_forwarder_core.events import (
     AIGatewayIdentityDetails,
+    AIInvocationContent,
     AIInvocationObservedV1,
     AIModel,
     AIToolUse,
     EventEnvelope,
     build_event_from_normalized,
     preflight_arguments,
+    preflight_result,
 )
 from slashid_ai_forwarder_core.normalize.finalize import finalize
+from slashid_ai_forwarder_core.normalize.normalized.types import (
+    NormalizedInvocation,
+    NormalizedMessage,
+)
 from slashid_ai_forwarder_core.normalize.openai.chat.normalize import (
     chat_request_to_normalized_invocation,
     chat_to_normalized_invocation,
@@ -39,6 +51,7 @@ from slashid_ai_forwarder_core.normalize.openai.chat.schema import (
     ChatCompletion,
     ChatRequest,
 )
+from slashid_ai_forwarder_core.normalize.turn import after_last_assistant
 
 from .config import Config
 from .hook import Hook
@@ -49,7 +62,7 @@ CHAT = "chatComplete"
 
 @dataclass(frozen=True)
 class After:
-    """``judged`` is None when the model asked for no tool call."""
+    """``judged`` is None when the gateway handed over no answer."""
 
     judged: AIInvocationObservedV1 | None
     record: AIInvocationObservedV1
@@ -87,7 +100,8 @@ async def before_event(
     # The text is for the check alone. The record built after the answer
     # follows ``include_raw_content``.
     judged_with = config.model_copy(update={"include_raw_content": config.preflight_content})
-    return _unanswered(await build_event_from_normalized(normalized, envelope, config=judged_with))
+    event = _unanswered(await build_event_from_normalized(normalized, envelope, config=judged_with))
+    return _results_apart(event, normalized, config) if config.preflight_content else event
 
 
 async def after_events(
@@ -114,20 +128,100 @@ async def after_events(
     )
     if response is None:
         record = _unanswered(record)
-    requested = await _requested(request, response, record, envelope, config)
-    if not requested:
+    if response is None:
         return After(judged=None, record=record)
+    requested = await _requested(request, response, record, envelope, config)
     judged = AIInvocationObservedV1(
         request_id=record.request_id,
         timestamp=record.timestamp,
         identity_details=identity,
         model=record.model,
         parsed_as=PARSED_AS,
-        requested_tool_uses=requested,
+        requested_tool_uses=requested or None,
         available_tools=record.available_tools,
         available_tool_servers=record.available_tool_servers,
+        output=_answer(request, response, normalized, record, config),
     )
     return After(judged=judged, record=record)
+
+
+def _results_apart(
+    event: AIInvocationObservedV1, normalized: NormalizedInvocation, config: Config
+) -> AIInvocationObservedV1:
+    """The fresh round with what its tools returned moved onto their own
+    entries: the input's text keeps what was asked. The input's hashes still
+    name the whole round."""
+    fresh = after_last_assistant(normalized.input.messages)
+    returned = {
+        block.tool_use_id: block.tool_output
+        for message in fresh
+        for block in message.content
+        if block.kind == "tool_result" and block.tool_use_id
+    }
+    used = [
+        use.model_copy(
+            update={
+                "result": preflight_result(
+                    returned[use.tool_use_id], max_content_size=config.max_content_size
+                )
+            }
+        )
+        if use.tool_use_id in returned
+        else use
+        for use in event.used_tools or []
+    ]
+    scope = fresh if config.input_scope == "round" else normalized.input.messages
+    asked = [
+        kept.model_dump(mode="json", exclude_none=True)
+        for message in scope
+        if (kept := _without_results(message)) is not None
+    ]
+    # No text left is still a prompt that was sent: an empty one.
+    text = json.dumps(asked, sort_keys=True, separators=(",", ":")) if asked else ""
+    return event.model_copy(
+        update={
+            "used_tools": used or None,
+            "input": event.input
+            and event.input.model_copy(
+                update={"redacted_text": truncate_middle(text, config.max_content_size)}
+            ),
+        }
+    )
+
+
+def _without_results(message: NormalizedMessage) -> NormalizedMessage | None:
+    """``message`` less its tool results; None when nothing else was in it."""
+    kept = [block for block in message.content if block.kind != "tool_result"]
+    return message.model_copy(update={"content": kept}) if kept else None
+
+
+def _answer(
+    request: ChatRequest,
+    response: ChatCompletion,
+    answered: NormalizedInvocation,
+    record: AIInvocationObservedV1,
+    config: Config,
+) -> AIInvocationContent:
+    """The answer as the check reads it: the text of every choice, since the
+    application may show any of them. Without the text it still says an
+    answer was given, which a rule on answers must not mistake for none."""
+    content = record.output or AIInvocationContent()
+    if not config.preflight_content:
+        return content.model_copy(update={"redacted_text": None})
+    texts: list[str] = []
+    for index, choice in enumerate(response.choices):
+        normalized = (
+            answered
+            if index == 0
+            else to_normalized(request, response.model_copy(update={"choices": [choice]}))
+        )
+        message = normalized.output.message
+        texts += [
+            b.text for b in (message.content if message else []) if b.kind == "text" and b.text
+        ]
+    return content.model_copy(
+        update={"redacted_text": truncate_middle("\n\n".join(texts), config.max_content_size)}
+    )
 
 
 def _unanswered(event: AIInvocationObservedV1) -> AIInvocationObservedV1:
@@ -138,15 +232,13 @@ def _unanswered(event: AIInvocationObservedV1) -> AIInvocationObservedV1:
 
 async def _requested(
     request: ChatRequest,
-    response: ChatCompletion | None,
+    response: ChatCompletion,
     record: AIInvocationObservedV1,
     envelope: EventEnvelope,
     config: Config,
 ) -> list[AIToolUse]:
     """Every choice's tool calls, each with the arguments the model wrote:
     the application may run any of them."""
-    if response is None:
-        return []
     requested: list[AIToolUse] = []
     for index, choice in enumerate(response.choices):
         if index == 0:

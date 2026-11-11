@@ -126,6 +126,11 @@ class AIToolUse(_WireModel):
     never stores it; ``redact_for_logging`` drops it. It skips validation
     because ``str_strip_whitespace`` would otherwise rewrite the strings
     inside it, and a policy must test the values the call carries.
+
+    `result` is what a completed call returned, as text, likewise set only
+    on events sent to the AI preflight (see ``preflight_result``), so a
+    policy can judge it before it reaches the model. Evaluated, never
+    stored, dropped from logs, and unvalidated for the same reason.
     """
 
     tool_id: str
@@ -134,6 +139,7 @@ class AIToolUse(_WireModel):
     trace_id: str | None = None
     span_id: str | None = None
     arguments: Annotated[dict[str, Any] | None, SkipValidation] = None
+    result: Annotated[str | None, SkipValidation] = None
 
 
 # The largest call input sent to the AI preflight, as compact JSON. Bigger
@@ -153,6 +159,21 @@ def preflight_arguments(tool_input: object) -> dict[str, Any] | None:
     if size > MAX_PREFLIGHT_ARGUMENTS_BYTES:
         return None
     return arguments
+
+
+def preflight_result(tool_output: object, *, max_content_size: int) -> str:
+    """What a completed call returned as `AIToolUse.result`: text as it is,
+    anything else as compact JSON, cut in the middle past
+    ``max_content_size`` like any other text. A tool that returned nothing
+    returned the empty string: a result that is sent, with nothing in it."""
+    if tool_output is None:
+        return ""
+    text = (
+        tool_output
+        if isinstance(tool_output, str)
+        else json.dumps(tool_output, separators=(",", ":"), ensure_ascii=False)
+    )
+    return truncate_middle(text, max_content_size)
 
 
 class AITool(_WireModel):
@@ -527,7 +548,9 @@ class EventEnvelope(_WireModel):
 # ``SLASHID_INCLUDE_RAW_CONTENT`` is set. Wire delivery to the SlashID
 # sink is fine — that's the customer's own destination — but ops-side
 # CloudWatch / Cloud Run logs shouldn't leak them.
-_LOG_REDACTED_FIELDS: frozenset[str] = frozenset({"redacted_text", "redacted_content", "arguments"})
+_LOG_REDACTED_FIELDS: frozenset[str] = frozenset(
+    {"redacted_text", "redacted_content", "arguments", "result"}
+)
 
 
 def redact_for_logging(payload: dict[str, Any]) -> dict[str, Any]:
@@ -536,8 +559,8 @@ def redact_for_logging(payload: dict[str, Any]) -> dict[str, Any]:
     stdout, structured log aggregators).
 
     Removes ``redacted_text`` on ``AIInvocationContent``,
-    ``redacted_content`` on ``AIAccessedFile`` and ``arguments`` on
-    ``AIToolUse`` at any depth. The hash /
+    ``redacted_content`` on ``AIAccessedFile`` and ``arguments`` and
+    ``result`` on ``AIToolUse`` at any depth. The hash /
     mime / byte_length siblings stay in place so the log line still
     lets ops correlate an event without exposing the underlying bytes.
 
