@@ -82,21 +82,71 @@ async def test_before_event_keeps_the_prompt_text_back_when_told_to() -> None:
     assert event.input.content_hashes
 
 
-async def test_before_event_sends_a_tool_result_as_part_of_the_fresh_round() -> None:
-    request = {
-        **REQUEST,
-        "messages": [
-            {"role": "user", "content": "look up falcon"},
-            {"role": "assistant", "content": None, "tool_calls": [tool_call("call_1", "x")]},
-            {"role": "tool", "tool_call_id": "call_1", "content": "falcon launch is 2027-01-15"},
-        ],
-    }
-    event = await before_event(hook(before(request)), ADA, config=config(), now=NOW)
+TOOL_ROUND: dict[str, Any] = {
+    **REQUEST,
+    "messages": [
+        {"role": "user", "content": "look up falcon"},
+        {"role": "assistant", "content": None, "tool_calls": [tool_call("call_1", "x")]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "falcon launch is 2027-01-15"},
+        {"role": "user", "content": "and who owns it?"},
+    ],
+}
+
+
+async def test_before_event_sends_what_a_tool_returned_as_that_tools_result() -> None:
+    event = await before_event(hook(before(TOOL_ROUND)), ADA, config=config(), now=NOW)
+    assert event is not None
+    [used] = event.used_tools or []
+    assert used.tool_use_id == "call_1"
+    assert used.result == "falcon launch is 2027-01-15"
+    assert [t.name for t in event.available_tools or [] if t.id == used.tool_id] == ["create_issue"]
+
+
+async def test_before_event_keeps_a_tool_result_out_of_the_prompt_text() -> None:
+    """A rule on prompts reads what was asked, a rule on tool results what
+    came back: one text holding both would let either rule block the other's."""
+    event = await before_event(hook(before(TOOL_ROUND)), ADA, config=config(), now=NOW)
     assert event is not None and event.input is not None
     text = event.input.redacted_text or ""
-    assert "falcon launch is 2027-01-15" in text
+    assert "and who owns it?" in text
+    assert "falcon launch is 2027-01-15" not in text
     # The round before the last answer was judged when it was sent.
     assert "look up falcon" not in text
+
+
+async def test_before_event_of_a_round_of_tool_results_alone_has_an_empty_prompt() -> None:
+    request = {**TOOL_ROUND, "messages": TOOL_ROUND["messages"][:3]}
+    event = await before_event(hook(before(request)), ADA, config=config(), now=NOW)
+    assert event is not None and event.input is not None
+    # Sent, and empty: no rule on prompts matches it, and none finds it missing.
+    assert event.input.redacted_text == ""
+    assert [u.result for u in event.used_tools or []] == ["falcon launch is 2027-01-15"]
+
+
+async def test_before_event_keeps_a_tool_result_back_with_the_prompt_text() -> None:
+    cfg = config(preflight_content=False)
+    event = await before_event(hook(before(TOOL_ROUND)), ADA, config=cfg, now=NOW)
+    assert event is not None
+    assert [u.result for u in event.used_tools or []] == [None]
+
+
+async def test_before_event_cuts_a_long_tool_result_like_any_other_text() -> None:
+    long = "a" * 400 + "MIDDLE" + "z" * 400
+    request = {
+        **TOOL_ROUND,
+        "messages": [*TOOL_ROUND["messages"][:2], {**TOOL_ROUND["messages"][2], "content": long}],
+    }
+    event = await before_event(
+        hook(before(request)), ADA, config=config(max_content_size=200), now=NOW
+    )
+    assert event is not None
+    [used] = event.used_tools or []
+    assert used.result is not None and len(used.result) <= 200
+    assert (
+        used.result.startswith("aaa")
+        and used.result.endswith("zzz")
+        and "MIDDLE" not in used.result
+    )
 
 
 async def test_before_event_hashes_an_inline_file() -> None:
@@ -135,7 +185,7 @@ async def test_the_same_request_gets_the_same_id_and_another_user_another() -> N
 
 async def test_after_record_is_the_completed_invocation() -> None:
     result = await after_events(hook(after(completion(TEXT_ANSWER))), ADA, config=config(), now=NOW)
-    assert result is not None and result.judged is None
+    assert result is not None
     record = result.record
     assert (record.tokens.input, record.tokens.output) == (12, 5)
     assert record.stop_reason == "end_turn"
@@ -186,6 +236,50 @@ async def test_after_judges_the_tool_calls_of_every_choice() -> None:
         {"title": "one"},
         {"title": "two"},
     ]
+
+
+async def test_after_judges_the_answer_itself_when_the_model_asked_for_no_tool() -> None:
+    result = await after_events(hook(after(completion(TEXT_ANSWER))), ADA, config=config(), now=NOW)
+    assert result is not None and result.judged is not None
+    judged = result.judged
+    assert judged.output is not None and judged.output.redacted_text == "Falcon is on track."
+    assert judged.requested_tool_uses is None
+    # The prompt was judged before the request left.
+    assert judged.input is None and judged.used_tools is None
+    assert judged.request_id == result.record.request_id
+    # The record follows its own setting: no text unless asked for.
+    assert result.record.output is not None and result.record.output.redacted_text is None
+
+
+async def test_after_judges_the_text_of_every_choice() -> None:
+    other = {"role": "assistant", "content": "Falcon slipped to March."}
+    result = await after_events(
+        hook(after(completion(TEXT_ANSWER, other))), ADA, config=config(), now=NOW
+    )
+    assert result is not None and result.judged is not None and result.judged.output is not None
+    assert result.judged.output.redacted_text == "Falcon is on track.\n\nFalcon slipped to March."
+
+
+async def test_after_judges_the_text_that_comes_with_tool_calls() -> None:
+    answer = {
+        "role": "assistant",
+        "content": "Opening the issue.",
+        "tool_calls": [tool_call("call_1", "ship it")],
+    }
+    result = await after_events(hook(after(completion(answer))), ADA, config=config(), now=NOW)
+    assert result is not None and result.judged is not None and result.judged.output is not None
+    assert result.judged.output.redacted_text == "Opening the issue."
+    assert [u.arguments for u in result.judged.requested_tool_uses or []] == [{"title": "ship it"}]
+
+
+async def test_after_says_there_was_an_answer_it_keeps_back_when_told_to() -> None:
+    """An answer whose text was not sent is one a rule on answers cannot
+    read, and denies; leaving the answer out would read as none to judge."""
+    cfg = config(preflight_content=False)
+    result = await after_events(hook(after(completion(TEXT_ANSWER))), ADA, config=cfg, now=NOW)
+    assert result is not None and result.judged is not None and result.judged.output is not None
+    assert result.judged.output.redacted_text is None
+    assert result.judged.output.content_hashes
 
 
 async def test_after_with_no_response_body_still_records_the_request() -> None:

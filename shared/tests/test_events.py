@@ -34,6 +34,7 @@ from slashid_ai_forwarder_core.events import (
     build_sparse_event,
     canonical_server_name,
     parse_tool_name,
+    preflight_result,
     redact_for_logging,
 )
 from slashid_ai_forwarder_core.normalize.anthropic.normalize import (
@@ -1292,6 +1293,37 @@ def test_redact_for_logging_strips_accessed_files_redacted_content() -> None:
     assert redacted["accessed_files"][0]["content_hashes"] == {"sha256": "abc"}
     # Files without redacted_content pass through unchanged.
     assert redacted["accessed_files"][1] == {"name": "doc.pdf", "content_hashes": {"sha256": "def"}}
+
+
+def test_redact_for_logging_strips_what_a_tool_was_called_with_and_what_it_returned() -> None:
+    payload = {
+        "used_tools": [
+            {"tool_id": "t1", "tool_use_id": "call_1", "result": "launch is 2027-01-15"}
+        ],
+        "requested_tool_uses": [{"tool_id": "t1", "arguments": {"title": "falcon"}}],
+    }
+    assert redact_for_logging(payload) == {
+        "used_tools": [{"tool_id": "t1", "tool_use_id": "call_1"}],
+        "requested_tool_uses": [{"tool_id": "t1"}],
+    }
+
+
+def test_preflight_result_is_the_text_a_tool_returned_and_json_for_anything_else() -> None:
+    assert preflight_result("launch is 2027-01-15", max_content_size=100) == "launch is 2027-01-15"
+    assert preflight_result({"n": 1, "ok": True}, max_content_size=100) == '{"n":1,"ok":true}'
+    assert preflight_result([{"type": "text", "text": "é"}], max_content_size=100) == (
+        '[{"type":"text","text":"é"}]'
+    )
+
+
+def test_preflight_result_of_a_tool_that_returned_nothing_is_empty_not_absent() -> None:
+    # Absent would tell a rule on tool results that the result was not sent.
+    assert preflight_result(None, max_content_size=100) == ""
+
+
+def test_preflight_result_is_cut_in_the_middle_past_the_content_limit() -> None:
+    cut = preflight_result("a" * 300 + "z" * 300, max_content_size=100)
+    assert len(cut) <= 100 and cut.startswith("a") and cut.endswith("z")
 
 
 def test_redact_for_logging_leaves_input_untouched() -> None:
