@@ -1775,7 +1775,7 @@ requires-dist = [
 
 [[package]]
 name = "slashid-ai-forwarder-anthropic"
-version = "0.1.14"
+version = "0.1.15"
 source = { editable = "anthropic" }
 dependencies = [
     { name = "fastapi" },
@@ -1810,7 +1810,7 @@ dev = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "slashid-ai-forwarder-bedrock"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "bedrock" }
 dependencies = [
     { name = "slashid-ai-forwarder-core", extra = ["converse"] },
@@ -1821,7 +1821,7 @@ requires-dist = [{ name = "slashid-ai-forwarder-core", extras = ["converse"], ed
 
 [[package]]
 name = "slashid-ai-forwarder-codex"
-version = "0.1.4"
+version = "0.1.5"
 source = { editable = "codex" }
 dependencies = [
     { name = "aiosqlite" },
@@ -1943,7 +1943,7 @@ requires-dist = [
 
 [[package]]
 name = "slashid-ai-forwarder-vertex"
-version = "0.1.12"
+version = "0.1.13"
 source = { editable = "vertex" }
 dependencies = [
     { name = "fastapi" },
