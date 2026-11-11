@@ -106,14 +106,32 @@ async def test_an_event_that_cannot_be_built_takes_the_fail_mode(
     assert (response.status_code, response.json()["verdict"]) == (200, False)
 
 
-async def test_after_hook_records_the_invocation_without_a_second_check() -> None:
+async def test_after_hook_judges_the_answer_and_records_the_invocation() -> None:
     slashid = SlashID()
     response = await post(slashid, after(completion(TEXT_ANSWER)))
     assert response.json() == {"verdict": True}
-    assert slashid.checked == []
+    [checked] = slashid.checked
+    assert checked["output"]["redacted_text"] == "Falcon is on track."
+    assert "input" not in checked
     [pushed] = slashid.pushed
     assert pushed["tokens"]["input"] == 12
-    assert slashid.tokens == ["Bearer tok-1"]
+    assert "redacted_text" not in pushed["output"]
+    assert slashid.tokens == ["Bearer tok-1", "Bearer tok-1"]
+
+
+async def test_after_hook_withholds_an_answer_slashid_denies_and_records_it_anyway() -> None:
+    slashid = SlashID("The answer contains content your organization's policy does not allow.")
+    response = await post(slashid, after(completion(TEXT_ANSWER)))
+    assert response.json()["verdict"] is False
+    assert len(slashid.pushed) == 1
+
+
+async def test_a_streamed_answer_is_recorded_without_a_check() -> None:
+    slashid = SlashID()
+    response = await post(slashid, after(None))
+    assert response.json() == {"verdict": True}
+    assert slashid.checked == []
+    assert len(slashid.pushed) == 1
 
 
 async def test_after_hook_judges_the_tool_calls_and_records_either_way() -> None:

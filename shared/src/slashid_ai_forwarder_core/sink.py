@@ -186,13 +186,36 @@ async def preflight_invocation(
     push_token: str,
     timeout_s: float,
 ) -> list[str]:
-    """POST /ip/nhi/events/ai-invocations/preflight. Returns the deny reasons.
+    """``preflight_verdict`` for a caller that acts on the deny reasons alone."""
+    verdict = await preflight_verdict(
+        client, invocation, endpoint=endpoint, push_token=push_token, timeout_s=timeout_s
+    )
+    return verdict.deny_reasons
+
+
+async def preflight_verdict(
+    client: httpx.AsyncClient,
+    invocation: AIInvocationObservedV1,
+    *,
+    endpoint: str,
+    push_token: str,
+    timeout_s: float,
+    enforcement: Literal["enforce", "shadow"] | None = None,
+) -> AIPreflightResponse:
+    """POST /ip/nhi/events/ai-invocations/preflight. Returns the verdict: the
+    deny reasons and, from a server that sends it, the decision naming the
+    rule and the policy behind them.
 
     The body is the same ``AIInvocationObservedV1`` the push carries, sent
     before the model has answered and therefore incomplete. An empty list
     allows. A server-side check that cannot complete denies with a reason of
     its own, so only a failure to get a verdict at all raises
     ``PreflightError``.
+
+    ``enforcement`` is what the caller does with a deny: ``enforce`` when it
+    blocks the invocation, ``shadow`` when it only notes the verdict. SlashID
+    records it with a denied check and it changes nothing about the verdict.
+    A caller that does not say leaves the record without it.
 
     No retry: the caller is inside a budget of ``timeout_s``. The server gets
     that budget less ``PREFLIGHT_RETURN_MARGIN_S`` through
@@ -201,14 +224,18 @@ async def preflight_invocation(
     just as we stop waiting and become our own fail mode instead.
     """
     server_budget_s = max(timeout_s - PREFLIGHT_RETURN_MARGIN_S, PREFLIGHT_MIN_BUDGET_S)
+    headers = {
+        "Authorization": f"Bearer {push_token}",
+        "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
+        "SlashID-Preflight-Capabilities": "decision",
+    }
+    if enforcement is not None:
+        headers["SlashID-Preflight-Enforcement"] = enforcement
     try:
         response = await client.post(
             f"{endpoint}{PREFLIGHT_PATH}",
             json=invocation.model_dump(mode="json", exclude_none=True),
-            headers={
-                "Authorization": f"Bearer {push_token}",
-                "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
-            },
+            headers=headers,
             timeout=timeout_s,
         )
     except httpx.TimeoutException as exc:
@@ -218,6 +245,6 @@ async def preflight_invocation(
     if response.status_code != 200:
         raise PreflightError(f"HTTP {response.status_code}", "status")
     try:
-        return AIPreflightResponse.model_validate_json(response.content).deny_reasons
+        return AIPreflightResponse.model_validate_json(response.content)
     except ValidationError as exc:
         raise PreflightError("unparseable verdict", "unparseable") from exc

@@ -50,6 +50,41 @@ async def test_deny_reasons_deny_and_travel_back_to_the_gateway() -> None:
     }
 
 
+async def test_a_deny_names_the_rule_and_the_policy_behind_it_when_slashid_does() -> None:
+    slashid = SlashID(
+        BLOCKED,
+        decision={
+            "effect": "deny",
+            "reason": BLOCKED,
+            "rule_id": "no-falcon",
+            "policy_id": "conn:c1",
+        },
+    )
+    decision = await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
+    assert slashid.capabilities == ["decision"]
+    assert decision.answered.to_wire() == {
+        "verdict": False,
+        "data": {
+            "deny_reasons": [BLOCKED],
+            "explanation": BLOCKED,
+            "rule_id": "no-falcon",
+            "policy_id": "conn:c1",
+        },
+    }
+
+
+async def test_a_deny_no_rule_decided_names_the_policy_alone() -> None:
+    slashid = SlashID(
+        BLOCKED, decision={"effect": "deny", "reason": BLOCKED, "policy_id": "conn:c1"}
+    )
+    decision = await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
+    assert decision.answered.to_wire()["data"] == {
+        "deny_reasons": [BLOCKED],
+        "explanation": BLOCKED,
+        "policy_id": "conn:c1",
+    }
+
+
 async def test_a_check_that_gave_no_answer_allows_by_default() -> None:
     slashid = SlashID(preflight_status=503)
     decision = await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
@@ -72,6 +107,18 @@ async def test_shadow_mode_answers_allow_and_keeps_the_real_verdict() -> None:
     decision = await decide(EVENT, token="tok-1", config=cfg, client=slashid.client)
     assert decision.answered.to_wire() == {"verdict": True}
     assert decision.composed.deny_reasons == (BLOCKED,)
+
+
+async def test_the_check_tells_slashid_a_deny_blocks_the_request() -> None:
+    slashid = SlashID(BLOCKED)
+    await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
+    assert slashid.enforcements == ["enforce"]
+
+
+async def test_under_shadow_mode_the_check_tells_slashid_a_deny_is_only_noted() -> None:
+    slashid = SlashID(BLOCKED)
+    await decide(EVENT, token="tok-1", config=config(shadow_mode=True), client=slashid.client)
+    assert slashid.enforcements == ["shadow"]
 
 
 def test_a_request_that_cannot_be_judged_takes_the_fail_mode() -> None:
