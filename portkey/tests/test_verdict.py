@@ -50,6 +50,41 @@ async def test_deny_reasons_deny_and_travel_back_to_the_gateway() -> None:
     }
 
 
+async def test_a_deny_names_the_rule_and_the_policy_behind_it_when_slashid_does() -> None:
+    slashid = SlashID(
+        BLOCKED,
+        decision={
+            "effect": "deny",
+            "reason": BLOCKED,
+            "rule_id": "no-falcon",
+            "policy_id": "conn:c1",
+        },
+    )
+    decision = await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
+    assert slashid.capabilities == ["decision"]
+    assert decision.answered.to_wire() == {
+        "verdict": False,
+        "data": {
+            "deny_reasons": [BLOCKED],
+            "explanation": BLOCKED,
+            "rule_id": "no-falcon",
+            "policy_id": "conn:c1",
+        },
+    }
+
+
+async def test_a_deny_no_rule_decided_names_the_policy_alone() -> None:
+    slashid = SlashID(
+        BLOCKED, decision={"effect": "deny", "reason": BLOCKED, "policy_id": "conn:c1"}
+    )
+    decision = await decide(EVENT, token="tok-1", config=config(), client=slashid.client)
+    assert decision.answered.to_wire()["data"] == {
+        "deny_reasons": [BLOCKED],
+        "explanation": BLOCKED,
+        "policy_id": "conn:c1",
+    }
+
+
 async def test_a_check_that_gave_no_answer_allows_by_default() -> None:
     slashid = SlashID(preflight_status=503)
     decision = await decide(EVENT, token="tok-1", config=config(), client=slashid.client)

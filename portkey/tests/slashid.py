@@ -19,11 +19,14 @@ class SlashID:
         preflight_status: int = 200,
         push_status: int = 200,
         timeout: bool = False,
+        decision: dict[str, Any] | None = None,
     ) -> None:
         self.deny_reasons = list(deny_reasons)
         self.preflight_status = preflight_status
         self.push_status = push_status
         self.timeout = timeout
+        self.decision = decision
+        self.capabilities: list[str | None] = []
         self.checked: list[dict[str, Any]] = []
         self.pushed: list[dict[str, Any]] = []
         self.tokens: list[str] = []
@@ -36,9 +39,13 @@ class SlashID:
             if self.timeout:
                 raise httpx.ReadTimeout("too slow", request=request)
             self.checked.append(body)
+            self.capabilities.append(request.headers.get("slashid-preflight-capabilities"))
             if self.preflight_status != 200:
                 return httpx.Response(self.preflight_status)
-            return httpx.Response(200, json={"deny_reasons": self.deny_reasons})
+            answer: dict[str, Any] = {"deny_reasons": self.deny_reasons}
+            if self.decision is not None:
+                answer["decision"] = self.decision
+            return httpx.Response(200, json=answer)
         assert request.url.path == PUSH, request.url.path
         if self.push_status != 200:
             return httpx.Response(self.push_status)
