@@ -14,6 +14,7 @@ MDM, as administrator:
    - **pip**, into a virtual environment: `python3.12 -m venv /opt/slashid/codex/venv && /opt/slashid/codex/venv/bin/pip install slashid-ai-forwarder-codex`, then link `venv/bin/slashid-ai-forwarder-codex` into `/opt/slashid/codex/bin`.
 
    On Windows the directories are `C:\ProgramData\SlashID\Codex\tools` (or `pipx`, `venv`) and `…\bin`. `requirements.toml` expects the command in the `bin` directory.
+
 2. Install the config (`deploy/config.example.toml`) at `/opt/slashid/codex/config.toml` and the token file it names, both read-only to users.
 3. Install `deploy/requirements.toml` as Codex's managed requirements.
 
@@ -23,24 +24,34 @@ Per-user state (`daemon.json`, `daemon.lock`, `daemon.log`, `daemon.stderr`, `sp
 
 ## Config
 
-| Field | Default | |
-|---|---|---|
-| `endpoint` | `https://api.slashid.com` | SlashID API origin, `https://` |
-| `push_token_file` | | the OpenAI connection's token, ≥ 32 characters |
-| `user_id` | | the ChatGPT workspace user (`user-…`) |
-| `verdict_fail_mode` | `deny` | without a verdict (SlashID or the daemon unavailable, bad payload): `deny` blocks, `allow` allows |
-| `preflight_timeout_seconds` | 4.0 | verdict budget from the hook's arrival, capped at 8 s |
-| `max_file_bytes` | 50 MiB | larger files go without hashes |
-| `include_raw_content`, `max_content_size` | off, 100000 | the round's text and the contents of files tool calls returned, in events, each cut to `max_content_size`; off, events carry hashes, content types and sizes only |
-| `input_scope`, `round_link_depth` | `round`, 10 | |
-| `codex_home` | `~/.codex` | does not read `CODEX_HOME` |
-| `codex_bin` | | for `codex mcp list`; else `codex` on `PATH`, else the desktop bundle |
-| `daemon_idle_seconds` | 600 | |
-| `request_timeout_seconds` | 10.0 | per SlashID request |
-| `max_retries` | 3 | per push request, on transient failures |
-| `dry_run` | false | dev only, below |
+| Field                                     | Default                   |                                                                                                                                                                   |
+| ----------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`                                | `https://api.slashid.com` | SlashID API origin, `https://`                                                                                                                                    |
+| `push_token_file`                         |                           | the OpenAI connection's token, ≥ 32 characters                                                                                                                    |
+| `user_id`                                 |                           | the ChatGPT workspace user (`user-…`)                                                                                                                             |
+| `verdict_fail_mode`                       | `deny`                    | without a verdict (SlashID or the daemon unavailable, bad payload): `deny` blocks, `allow` allows                                                                 |
+| `preflight_timeout_seconds`               | 4.0                       | verdict budget from the hook's arrival, capped at 8 s                                                                                                             |
+| `max_file_bytes`                          | 50 MiB                    | larger files go without hashes                                                                                                                                    |
+| `include_raw_content`, `max_content_size` | off, 100000               | the round's text and the contents of files tool calls returned, in events, each cut to `max_content_size`; off, events carry hashes, content types and sizes only |
+| `input_scope`, `round_link_depth`         | `round`, 10               |                                                                                                                                                                   |
+| `codex_home`                              | `~/.codex`                | does not read `CODEX_HOME`                                                                                                                                        |
+| `codex_bin`                               |                           | for `codex mcp list`; else `codex` on `PATH`, else the desktop bundle                                                                                             |
+| `daemon_idle_seconds`                     | 600                       |                                                                                                                                                                   |
+| `request_timeout_seconds`                 | 10.0                      | per SlashID request                                                                                                                                               |
+| `max_retries`                             | 3                         | per push request, on transient failures                                                                                                                           |
+| `dry_run`                                 | false                     | dev only, below                                                                                                                                                   |
 
 Environment variables are never read.
+
+## Live check
+
+With the package installed and a real token (Install above), on one machine:
+
+1. Run any prompt: `codex exec "say ok"`. The first hook starts the daemon, and `daemon.log` in the state directory shows `daemon <version> starting` and `listening on 127.0.0.1:<port>`. If it does not, no hook reached the daemon; see the first limitation below.
+2. Tools and files. Ask Codex to read a small file and call an MCP tool, for example `codex exec "cat notes.txt, then list my MCP servers"`. After the response the invocation appears in SlashID (the daemon pushes from a worker thread, so allow a few seconds): `available_tools` and `used_tools` name the shell tool and any MCP tools by server, and `accessed_files` lists `notes.txt` (the name, never the path) with its `sha256`, equal to `sha256sum notes.txt`. Only simple shell reads (`cat`, `sed`, `head`, `tail`, `nl`) and `view_image` are recognized as reads before they run; other commands are reported after the fact.
+3. A sensitive file. Tag a file as sensitive in SlashID, then `codex exec "cat <that file>"`. The `PreToolUse` hook answers before the command runs, and Codex shows the deny reason in place of the file.
+
+Without a token, use dry run, below: `daemon.log` then holds the invocation each hook sent (`dry run preflight:`) and the event it would push (`dry run push:`) as JSON, which is where to read the same fields.
 
 ## Development only
 

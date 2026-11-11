@@ -15,18 +15,18 @@ A Runtime agent is covered only for tools behind a Gateway. `before_invocation`,
 
 Tagged releases (`agentcore-vX.Y.Z`) publish `slashid-ai-forwarder-agentcore-vX.Y.Z.zip` and `cloudformation.yaml` to GitHub Releases. Upload the zip to an S3 bucket of yours, then deploy the template **in the region of your Harnesses and Gateways** (role lookups use the Lambda's own region).
 
-| Parameter                     | Description                                                                                                                                  |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LambdaPackageS3Bucket`, `LambdaPackageS3Key` | Where the zip is                                                                                                            |
-| `SlashIDPushToken`            | Event-streaming bearer token for the connection (NoEcho)                                                                                      |
-| `SlashIDEndpoint`             | (optional, default `https://api.slashid.com`)                                                                                                |
-| `FailMode`                    | (default `allow`) Answer when SlashID gives no answer                                                                                        |
-| `ShadowMode`                  | (default `false`) Evaluate and log, answer allow                                                                                             |
-| `HarnessHooksEnabled`, `GatewayHooksEnabled` | (default `true`) Turn a surface off without detaching it                                                                      |
-| `BudgetMs`                    | (default `3500`, 100-6500) Time one check may take                                                                                           |
-| `GatewayRoleArns`             | Execution role ARNs of the Gateways that use the function; each gets `lambda:InvokeFunction`. Empty for none                                  |
-| `HarnessRoleArns`             | Execution role ARNs of the Harnesses that use the function as a hook (`get-harness` → `harness.executionRoleArn`); each gets `lambda:InvokeFunction`. Empty for none |
-| `LogLevel`, `LogRetentionDays` | (default `INFO`, 30) `DEBUG` or `INFO`: the lines to alert on are INFO, so `WARNING` and `ERROR` are not offered                              |
+| Parameter                                     | Description                                                                                                                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LambdaPackageS3Bucket`, `LambdaPackageS3Key` | Where the zip is                                                                                                                                                     |
+| `SlashIDPushToken`                            | Event-streaming bearer token for the connection (NoEcho)                                                                                                             |
+| `SlashIDEndpoint`                             | (optional, default `https://api.slashid.com`)                                                                                                                        |
+| `FailMode`                                    | (default `allow`) Answer when SlashID gives no answer                                                                                                                |
+| `ShadowMode`                                  | (default `false`) Evaluate and log, answer allow                                                                                                                     |
+| `HarnessHooksEnabled`, `GatewayHooksEnabled`  | (default `true`) Turn a surface off without detaching it                                                                                                             |
+| `BudgetMs`                                    | (default `3500`, 100-6500) Time one check may take                                                                                                                   |
+| `GatewayRoleArns`                             | Execution role ARNs of the Gateways that use the function; each gets `lambda:InvokeFunction`. Empty for none                                                         |
+| `HarnessRoleArns`                             | Execution role ARNs of the Harnesses that use the function as a hook (`get-harness` → `harness.executionRoleArn`); each gets `lambda:InvokeFunction`. Empty for none |
+| `LogLevel`, `LogRetentionDays`                | (default `INFO`, 30) `DEBUG` or `INFO`: the lines to alert on are INFO, so `WARNING` and `ERROR` are not offered                                                     |
 
 The function (Python 3.14, 512 MB, 10 s) has the basic execution role plus `bedrock-agentcore:GetHarness` on `harness/*` and `bedrock-agentcore:GetGateway` on `gateway/*` of the account and region. The template permits the listed Harness and Gateway roles to invoke it: a Harness invokes its hooks with its execution role, a Gateway its interceptors with its own. Any other principal of the account whose identity policy allows `lambda:InvokeFunction` on it can invoke it too and could supply a forged client context (the identity the function reports), so restrict that permission.
 
@@ -88,16 +88,16 @@ An `UpdateGateway` that omits `interceptorConfigurations` clears them (tested), 
 
 All are environment variables set by the template.
 
-| Variable                         | Default | Meaning                                                                                                   |
-| -------------------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
-| `SLASHID_ENDPOINT`               | `https://api.slashid.com` | SlashID API endpoint                                                                    |
-| `SLASHID_PUSH_TOKEN`             | required | Bearer token; also the key of the deny reference. A missing token is a Lambda error                     |
-| `SLASHID_HARNESS_HOOKS_ENABLED`  | `true`  | When false, Harness payloads are answered allow without calling SlashID                                    |
-| `SLASHID_GATEWAY_HOOKS_ENABLED`  | `true`  | When false, Gateway payloads are echoed without calling SlashID                                           |
-| `SLASHID_VERDICT_FAIL_MODE`      | `allow` | `allow` or `deny`: the answer when a check gets none                                                       |
-| `SLASHID_VERDICT_BUDGET_MS`      | `3500`  | Bound on one check (100-6500); role lookups before it take up to 2 s, so 2 s + budget + overhead stays under the 10 s hook and Lambda timeouts |
-| `SLASHID_SHADOW_MODE`            | `false` | Evaluate and log, answer allow                                                                            |
-| `LOG_LEVEL`                      | `INFO`  | `DEBUG` or `INFO`: the level of this package's own log lines                                              |
+| Variable                        | Default                   | Meaning                                                                                                                                        |
+| ------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SLASHID_ENDPOINT`              | `https://api.slashid.com` | SlashID API endpoint                                                                                                                           |
+| `SLASHID_PUSH_TOKEN`            | required                  | Bearer token; also the key of the deny reference. A missing token is a Lambda error                                                            |
+| `SLASHID_HARNESS_HOOKS_ENABLED` | `true`                    | When false, Harness payloads are answered allow without calling SlashID                                                                        |
+| `SLASHID_GATEWAY_HOOKS_ENABLED` | `true`                    | When false, Gateway payloads are echoed without calling SlashID                                                                                |
+| `SLASHID_VERDICT_FAIL_MODE`     | `allow`                   | `allow` or `deny`: the answer when a check gets none                                                                                           |
+| `SLASHID_VERDICT_BUDGET_MS`     | `3500`                    | Bound on one check (100-6500); role lookups before it take up to 2 s, so 2 s + budget + overhead stays under the 10 s hook and Lambda timeouts |
+| `SLASHID_SHADOW_MODE`           | `false`                   | Evaluate and log, answer allow                                                                                                                 |
+| `LOG_LEVEL`                     | `INFO`                    | `DEBUG` or `INFO`: the level of this package's own log lines                                                                                   |
 
 `SLASHID_INCLUDE_RAW_CONTENT` is forced off: connector files carry no text.
 
@@ -111,15 +111,15 @@ When the Lambda itself errors or times out, **AWS decides, not this setting**: o
 
 Logs are one JSON object per line with a fixed set of keys, never a payload, header, baggage value, tool argument or result. `DEBUG` adds only the package's own fixed-vocabulary lines (the level is set on the package's logger, never the root, so `botocore`, `aiobotocore`, `httpx` and `httpcore` stay quiet and their signed-request logging is never switched on). With the `allow` default an outage is otherwise silent. Alert on:
 
-| `event`                    | Meaning                                                                                                              |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `event`                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fail_mode`                | A check got no answer, or a payload was unreadable; `surface`, `check`, `reason`, `mode` say which and what was applied. Reasons: `transport`, `timeout`, `status`, `unparseable`, `budget` (SlashID did not answer); `no_request` (a Gateway RESPONSE with no request, so no tool name); `unknown_payload`, `unknown_version`, `unknown_event` (a format we cannot place); `error` (an exception); `unreadable` (denied whatever the mode) |
-| `unreadable`               | A payload we cannot read, denied whatever the fail mode; `reason` is `bad_envelope` (a malformed hook or `tools/call`), `bad_tool_call`, `batch_with_call` (a JSON-RPC batch containing a `tools/call`) or `too_deep` (nested past the limit); a `fail_mode` line with reason `unreadable` follows |
-| `pass_through`             | A payload went through unchecked: `unknown_payload`, `surface_disabled` (once per container start), `streaming_response` |
-| `baggage_unverified`       | A Gateway call claimed a Harness (baggage `harness.id`) that could not be verified; the Harness id is left out        |
-| `role_lookup_failed`       | `GetHarness` or `GetGateway` failed (`access_denied`, `not_found`, `throttled`, `timeout`, ...); WARNING             |
-| `gateway_role_unavailable` | A Gateway call without a principal got no role from `GetGateway`                                                     |
-| `check`                    | Informational, not an alert: one per check that went to SlashID or ended without an answer; `surface`, `check` (`call` or `result`), `tool` (the tool's name as the platform gave it, cut at 128 characters), `outcome` (`allow`, `deny`, `no_answer`) and `latency_ms` (start of the check to its outcome) |
+| `unreadable`               | A payload we cannot read, denied whatever the fail mode; `reason` is `bad_envelope` (a malformed hook or `tools/call`), `bad_tool_call`, `batch_with_call` (a JSON-RPC batch containing a `tools/call`) or `too_deep` (nested past the limit); a `fail_mode` line with reason `unreadable` follows                                                                                                                                          |
+| `pass_through`             | A payload went through unchecked: `unknown_payload`, `surface_disabled` (once per container start), `streaming_response`                                                                                                                                                                                                                                                                                                                    |
+| `baggage_unverified`       | A Gateway call claimed a Harness (baggage `harness.id`) that could not be verified; the Harness id is left out                                                                                                                                                                                                                                                                                                                              |
+| `role_lookup_failed`       | `GetHarness` or `GetGateway` failed (`access_denied`, `not_found`, `throttled`, `timeout`, ...); WARNING                                                                                                                                                                                                                                                                                                                                    |
+| `gateway_role_unavailable` | A Gateway call without a principal got no role from `GetGateway`                                                                                                                                                                                                                                                                                                                                                                            |
+| `check`                    | Informational, not an alert: one per check that went to SlashID or ended without an answer; `surface`, `check` (`call` or `result`), `tool` (the tool's name as the platform gave it, cut at 128 characters), `outcome` (`allow`, `deny`, `no_answer`) and `latency_ms` (start of the check to its outcome)                                                                                                                                 |
 
 Others: `shadow`, `truncated_input`, `cache_miss`, `missing_request_id`, `unexpected_error` (ERROR). A format change on AWS's side shows up as `fail_mode` with reason `unknown_payload`, `unknown_version` or `unknown_event`; with the `allow` default only that line says result checks stopped.
 
@@ -174,6 +174,15 @@ SLASHID_LIVE=1 SLASHID_PUSH_TOKEN_FILE=path/to/token uv run pytest tests/live -s
 ```
 
 The token is read from that file and never printed; `SLASHID_ENDPOINT` overrides the endpoint. Use the test tenant: every id is synthetic (`live-test-...`, `123456789012`, `EXAMPLE`), but the server records each preflight it receives. With `-s` each test prints the HTTP status, the outcome, the number of deny reasons (not their text) and the latency.
+
+### Against a deployed stack
+
+AgentCore pushes no event, so the checks themselves are the evidence that tools and file references are extracted: follow the forwarder's log (`aws logs tail /aws/lambda/<stack>-forwarder --follow`) while a Harness runs a Drive tool.
+
+1. An allowed call. Ask the Harness to search Drive for a file whose title matches nothing sensitive. A Harness with Gateway tools logs four `check` lines for the one call (Harness `call`, Gateway `call`, Gateway `result`, Harness `result`), each with the tool's name in `tool` and `outcome` `allow`.
+2. A sensitive file read by id. Tag a file as sensitive in SlashID and ask the Harness to read it by its Drive id. The call is denied before it runs (`call` with `outcome` `deny`, on the Harness or the Gateway), and the model reports the reason: `A file in this request is classified as sensitive in your organization ("SENSITIVE_DATA"). (ref <12 hex>)`. That shows the file id was extracted from the tool input.
+3. A sensitive file in a result. Ask for a search whose results include the tagged file (a title match). The call goes through and the result is replaced by `Content withheld: A file in this request is classified as sensitive in your organization ("SENSITIVE_DATA"): "<name>" (ref <12 hex>)`. That shows the file ids were extracted from the result.
+4. Shadow mode (`ShadowMode` on the stack) logs a `shadow` line with what would have been answered and lets everything through.
 
 ## Releases
 

@@ -46,10 +46,69 @@ For both:
   token.** Splitting the hook and the readers across two deployments is not
   supported: two deployments cannot share a pending store, so the join between
   the sources disappears. Content addressing still makes both halves compute the
-  same `request_id`, so a *shared* token leaves the terminal's dedup to collapse
+  same `request_id`, so a _shared_ token leaves the terminal's dedup to collapse
   the overlap and only the enrichment is lost — but **separate connections**
   make the dedup key `{org}:{conn}:{request_id}` differ, and every invocation
   both halves saw is counted twice.
+
+## Deploy
+
+On GCP, with the Terraform module (hook only; the compliance-only and both variants are in [`deploy/terraform/README.md`](deploy/terraform/README.md)):
+
+```hcl
+module "slashid_anthropic_forwarder" {
+  source = "git::https://github.com/slashid/slashid-ai-forwarders.git//anthropic/deploy/terraform?ref=anthropic-vX.Y.Z"
+
+  project_id          = "<project>"
+  region              = "us-central1"
+  slashid_push_token  = var.slashid_push_token  # sensitive
+  hook_signing_secret = var.hook_signing_secret # whsec_..., sensitive
+  release_version     = "anthropic-vX.Y.Z"
+}
+```
+
+```bash
+terraform init && terraform apply
+terraform output hook_url
+```
+
+Then point the Inference hooks endpoint in claude.ai at `hook_url`, with the signing secret you gave the module. To upgrade, set `release_version` to the new tag and apply once the release workflow has pushed the image (Cloud Run pulls it through an Artifact Registry remote repository over GHCR). Without GCP, see "Running without GCP" below. For iterating on a test tenant, `deploy/dev-deploy.sh` (see Development).
+
+## Live check
+
+1. The endpoint is up and refuses an unsigned request: `curl -s -o /dev/null -w '%{http_code}\n' -X POST "$(terraform output -raw hook_url)" -d '{}'` prints `401`.
+2. Allowed tool use. From a Claude Code profile signed in to the organization, run a connector tool (the tool must be allowed, or `claude -p` stops to ask):
+
+   ```bash
+   claude -p "Use your Google Drive search tool to search for files whose title contains 'Recipes' and give their names." \
+     --allowedTools mcp__claude_ai_Google_Drive__search_files
+   ```
+
+   The service's own record is the Firestore database `slashid-anthropic`, collection `anthropic_pending`. A pushed record keeps its `event` for `SLASHID_TOMBSTONE_TTL_SECONDS` (2 h by default):
+
+   ```bash
+   uv run --no-project --with google-cloud-firestore python - <<'EOF'
+   from google.cloud import firestore
+
+   db = firestore.Client(project="<project>", database="slashid-anthropic")
+   events = [d.to_dict().get("event") or {} for d in db.collection("anthropic_pending").stream()]
+   for e in sorted(events, key=lambda e: str(e.get("timestamp")))[-5:]:
+       print(e.get("timestamp"), [t["name"] for t in e.get("available_tools", [])], e.get("accessed_files"))
+   EOF
+   ```
+
+   The latest events list the connector tool (`search_files`) in `available_tools`, and the frame that carries its call lists it in `used_tools`. A prompt that reads a file the hook can see as text (an attachment, or a connector read that returns its content) also gets an `accessed_files` entry with the file's digest; compare it with `sha256sum`.
+
+3. A sensitive file. Tag a file as sensitive in SlashID, then ask for it by its connector id (shadow mode off, which is the default):
+
+   ```bash
+   claude -p "Use your Google Drive connector to read the file with id <id of the tagged file> and give me its first line." \
+     --allowedTools mcp__claude_ai_Google_Drive__read_file_content
+   ```
+
+   The run stops with `A file in this request is classified as sensitive in your organization ("SENSITIVE_DATA"). Start a new conversation to continue.` A denied conversation stays denied, so use a new one for every try. With `SLASHID_SHADOW_MODE=true` the same request goes through, and the stored `composed_verdict` is what would have been answered.
+
+4. Without tagging anything: set `SLASHID_MOCK_DENIED_HASHES` (below) to the digest of a test file and attach that file in a new conversation.
 
 ## Known limitations
 
@@ -87,7 +146,7 @@ around. Extend as new ones surface.
   endpoint 404s on every attachment, so a file's size and digest can be learned
   only from the listing that names it. That is why
   `SLASHID_MAX_ATTACHMENT_FETCH_BYTES` is decided from the listing's
-  `size_bytes` *before* any fetch rather than from the file, and why `full`
+  `size_bytes` _before_ any fetch rather than from the file, and why `full`
   hashing depends on having walked the right listing first. A ranged read
   yields a snippet, never a digest.
 - **Denials are sticky.** Under enforcement the denied content stays in the
@@ -102,7 +161,7 @@ around. Extend as new ones surface.
   `is_shadow` field exists, and nothing across a 200-frame window spanning both
   settings infers one, so the receiver cannot tell whether the verdict it is
   about to return will be honoured. Denial activities compound it: they exist
-  only for denials that were actually *honoured*, so **a shadow deployment
+  only for denials that were actually _honoured_, so **a shadow deployment
   produces no record of what it would have blocked** — which is the one thing an
   operator staging a rollout wants to read. The only record of it is ours:
   `composed_verdict` is stored on every event beside the `verdict` that went
@@ -111,7 +170,7 @@ around. Extend as new ones surface.
 - **Compliance API enablement is not retroactive.** Nothing that happened
   before the primary owner enabled it is recorded, ever. There is no backfill.
 - **No tool or MCP-server inventory.** `available_tools` lists only the tools
-  actually *used*, by name, with no description and no schema. The Bedrock and
+  actually _used_, by name, with no description and no schema. The Bedrock and
   Vertex forwarders read real declarations from the request body, so absence
   here means unobservable, not unused. The server comes from the tool's name
   alone: `mcp__server__tool` (hooks), and claude.ai's `Server:tool`,
@@ -173,7 +232,7 @@ transcript is a different projection: it prepends a marker the client never
 sent, carries turns from before recording began, and includes sub-agent turns no
 frame shows.
 
-There is also nothing to key on *before* the model answers. A frame's messages
+There is also nothing to key on _before_ the model answers. A frame's messages
 carry only `role` and `content`, with no message id, and the frame's own
 `request_id` is just the delivery id, distinct on all 492 captured deliveries.
 
@@ -187,11 +246,11 @@ activity. One field, and the join goes from 68% to exact.
 newest-first. A poller therefore cannot resume from a cursor: it must drain the
 entire lagging window every tick and rely on its own tombstones to suppress what
 it already emitted. A bound on sessions per tick then risks truncating the
-*oldest* tail, so the watermark cannot advance on a partial drain, and a backlog
+_oldest_ tail, so the watermark cannot advance on a partial drain, and a backlog
 can grow without bound.
 
 The two neighbouring feeds do support it, with three different vocabularies:
-activities takes `order=asc`, chats takes `order_by=updated_at` and *rejects* an
+activities takes `order=asc`, chats takes `order_by=updated_at` and _rejects_ an
 `updated_at` filter unless it is present, sessions takes neither. Page cursors
 differ too — `last_id` on two feeds, `next_page` on the third.
 
@@ -330,51 +389,51 @@ timer does not use it.
 ## Configuration
 
 All env vars use the `SLASHID_` prefix, except `LOG_LEVEL`. Rows marked
-*container-env-only* are not Terraform variables: set them on the revision.
+_container-env-only_ are not Terraform variables: set them on the revision.
 
-| var | required | default |
-| --- | --- | --- |
-| `SLASHID_ENDPOINT` | no | `https://api.slashid.com` |
-| `SLASHID_PUSH_TOKEN` | yes | — |
-| `SLASHID_PLATFORM` | no | `local` (the Terraform module sets `gcp`) |
-| `SLASHID_PROJECT_ID` | with `gcp` | — |
-| `SLASHID_DATA_DIR` | no | user data directory (`/data` in the image) — local platform only |
-| `SLASHID_HOOK_SIGNING_SECRET` | no | — (comma-separated; any number live during a rotation; without it the push token alone is accepted) |
-| `SLASHID_COMPLIANCE_KEY` | no | — |
-| `SLASHID_ORGANIZATION_UUID` | with `SLASHID_COMPLIANCE_KEY` | — |
-| `SLASHID_PREFLIGHT_ENABLED` | no | `true` |
-| `SLASHID_VERDICT_FAIL_MODE` | no | `allow` |
-| `SLASHID_VERDICT_BUDGET_MS` | no | `3500` |
-| `SLASHID_PUSH_BUDGET_MS` | no | `2000` |
-| `SLASHID_SHADOW_MODE` | no | `false` |
-| `SLASHID_MAX_BODY_BYTES` | no | `33554432` (Cloud Run's HTTP/1 cap) |
-| `SLASHID_DATABASE` | no | `slashid-anthropic` |
-| `SLASHID_PENDING_COLLECTION` | no | `anthropic_pending` |
-| `SLASHID_CHECKPOINT_COLLECTION` | no | `anthropic_checkpoints` |
-| `SLASHID_JOIN_WAIT_SECONDS` | no | `3600` |
-| `SLASHID_TOMBSTONE_TTL_SECONDS` | no | `7200` — must exceed `JOIN_WAIT + POLL_LAG + TICK_INTERVAL`, asserted at startup |
-| `SLASHID_MAX_FLUSHES_PER_TICK` | no | `500` |
-| `SLASHID_TICK_INTERVAL_SECONDS` | no | `300` |
-| `SLASHID_TICK_PRINCIPAL` | no | — (unset refuses every tick) |
-| `SLASHID_TICK_AUDIENCE` | no | — (Cloud Run checks it where ingress is not public) |
-| `SLASHID_POLL_LAG_SECONDS` | no | `120` |
-| `SLASHID_MAX_SESSIONS_PER_TICK` | no | `200` |
-| `SLASHID_ATTACHMENT_HASHING` | no | `md5` (or `full`) |
-| `SLASHID_MAX_ATTACHMENT_FETCH_BYTES` | no | `10485760` |
-| `SLASHID_COMPLIANCE_TIMEOUT_SECONDS` | no | `60` (per Compliance API request) |
-| `SLASHID_RESPONSE_READER_BUDGET_SECONDS` | no | `300` (the response reader's share of a tick) |
-| `SLASHID_MAX_TRANSCRIPT_MESSAGES` | no | `2000` (longer sessions emit from their tail) |
-| `SLASHID_SOFT_JOIN_WINDOW_SECONDS` | no | `15` |
-| `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |
-| `SLASHID_MAX_CONTENT_SIZE` | no | `100000` |
-| `SLASHID_INPUT_SCOPE` | no | `round` (the messages since the last response; `session` sends the whole transcript) |
-| `SLASHID_ROUND_LINK_DEPTH` | no | `10` (rounds listed in `recent_round_hashes`) |
-| `SLASHID_REQUEST_TIMEOUT_SECONDS` | no | `10.0` — *container-env-only* |
-| `SLASHID_MAX_RETRIES` | no | `3` — *container-env-only* |
-| `SLASHID_CAPTURE_BUCKET` | no | — *container-env-only*, test tenants |
-| `SLASHID_CAPTURE_DENY_MARKER` | no | — *container-env-only*, test tenants |
-| `SLASHID_MOCK_DENIED_HASHES` | no | — *container-env-only*, test tenants |
-| `LOG_LEVEL` | no | `INFO` |
+| var                                      | required                      | default                                                                                             |
+| ---------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `SLASHID_ENDPOINT`                       | no                            | `https://api.slashid.com`                                                                           |
+| `SLASHID_PUSH_TOKEN`                     | yes                           | —                                                                                                   |
+| `SLASHID_PLATFORM`                       | no                            | `local` (the Terraform module sets `gcp`)                                                           |
+| `SLASHID_PROJECT_ID`                     | with `gcp`                    | —                                                                                                   |
+| `SLASHID_DATA_DIR`                       | no                            | user data directory (`/data` in the image) — local platform only                                    |
+| `SLASHID_HOOK_SIGNING_SECRET`            | no                            | — (comma-separated; any number live during a rotation; without it the push token alone is accepted) |
+| `SLASHID_COMPLIANCE_KEY`                 | no                            | —                                                                                                   |
+| `SLASHID_ORGANIZATION_UUID`              | with `SLASHID_COMPLIANCE_KEY` | —                                                                                                   |
+| `SLASHID_PREFLIGHT_ENABLED`              | no                            | `true`                                                                                              |
+| `SLASHID_VERDICT_FAIL_MODE`              | no                            | `allow`                                                                                             |
+| `SLASHID_VERDICT_BUDGET_MS`              | no                            | `3500`                                                                                              |
+| `SLASHID_PUSH_BUDGET_MS`                 | no                            | `2000`                                                                                              |
+| `SLASHID_SHADOW_MODE`                    | no                            | `false`                                                                                             |
+| `SLASHID_MAX_BODY_BYTES`                 | no                            | `33554432` (Cloud Run's HTTP/1 cap)                                                                 |
+| `SLASHID_DATABASE`                       | no                            | `slashid-anthropic`                                                                                 |
+| `SLASHID_PENDING_COLLECTION`             | no                            | `anthropic_pending`                                                                                 |
+| `SLASHID_CHECKPOINT_COLLECTION`          | no                            | `anthropic_checkpoints`                                                                             |
+| `SLASHID_JOIN_WAIT_SECONDS`              | no                            | `3600`                                                                                              |
+| `SLASHID_TOMBSTONE_TTL_SECONDS`          | no                            | `7200` — must exceed `JOIN_WAIT + POLL_LAG + TICK_INTERVAL`, asserted at startup                    |
+| `SLASHID_MAX_FLUSHES_PER_TICK`           | no                            | `500`                                                                                               |
+| `SLASHID_TICK_INTERVAL_SECONDS`          | no                            | `300`                                                                                               |
+| `SLASHID_TICK_PRINCIPAL`                 | no                            | — (unset refuses every tick)                                                                        |
+| `SLASHID_TICK_AUDIENCE`                  | no                            | — (Cloud Run checks it where ingress is not public)                                                 |
+| `SLASHID_POLL_LAG_SECONDS`               | no                            | `120`                                                                                               |
+| `SLASHID_MAX_SESSIONS_PER_TICK`          | no                            | `200`                                                                                               |
+| `SLASHID_ATTACHMENT_HASHING`             | no                            | `md5` (or `full`)                                                                                   |
+| `SLASHID_MAX_ATTACHMENT_FETCH_BYTES`     | no                            | `10485760`                                                                                          |
+| `SLASHID_COMPLIANCE_TIMEOUT_SECONDS`     | no                            | `60` (per Compliance API request)                                                                   |
+| `SLASHID_RESPONSE_READER_BUDGET_SECONDS` | no                            | `300` (the response reader's share of a tick)                                                       |
+| `SLASHID_MAX_TRANSCRIPT_MESSAGES`        | no                            | `2000` (longer sessions emit from their tail)                                                       |
+| `SLASHID_SOFT_JOIN_WINDOW_SECONDS`       | no                            | `15`                                                                                                |
+| `SLASHID_INCLUDE_RAW_CONTENT`            | no                            | `false`                                                                                             |
+| `SLASHID_MAX_CONTENT_SIZE`               | no                            | `100000`                                                                                            |
+| `SLASHID_INPUT_SCOPE`                    | no                            | `round` (the messages since the last response; `session` sends the whole transcript)                |
+| `SLASHID_ROUND_LINK_DEPTH`               | no                            | `10` (rounds listed in `recent_round_hashes`)                                                       |
+| `SLASHID_REQUEST_TIMEOUT_SECONDS`        | no                            | `10.0` — _container-env-only_                                                                       |
+| `SLASHID_MAX_RETRIES`                    | no                            | `3` — _container-env-only_                                                                          |
+| `SLASHID_CAPTURE_BUCKET`                 | no                            | — _container-env-only_, test tenants                                                                |
+| `SLASHID_CAPTURE_DENY_MARKER`            | no                            | — _container-env-only_, test tenants                                                                |
+| `SLASHID_MOCK_DENIED_HASHES`             | no                            | — _container-env-only_, test tenants                                                                |
+| `LOG_LEVEL`                              | no                            | `INFO`                                                                                              |
 
 `SLASHID_MOCK_DENIED_HASHES` denies any invocation whose `accessed_files` carry
 a listed digest. It runs **alongside** preflight rather than instead of it. It

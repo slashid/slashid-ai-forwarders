@@ -5,8 +5,8 @@ Customer-deployed GCP Cloud Run service that polls Vertex AI
 each into a canonical `AIInvocationObservedV1` event, and pushes to the
 SlashID NHI subgraph.
 
-Deployed via the Terraform module under `deploy/terraform/` (arriving
-in a follow-up PR). The module provisions the BigQuery dataset + tables,
+Deployed via the Terraform module under `deploy/terraform/` (see Deploy
+below). The module provisions the BigQuery dataset + tables,
 the Cloud Run service and its Cloud Scheduler job, Firestore checkpoint
 document, Secret Manager entry for the push token, and enables Vertex request-response
 logging on each configured publisher model via `setPublisherModelConfig`.
@@ -55,7 +55,7 @@ gotchas to plan around. Extend as new ones are discovered.
   (opt-in via the `regions` Terraform variable) captures Console and
   Vertex AI Studio traffic, but Google routes each request to whichever
   region has capacity and never discloses which. The payload lands in
-  the BigQuery dataset you chose; where it was *processed* is not
+  the BigQuery dataset you chose; where it was _processed_ is not
   knowable. BigQuery also has no `global` location, so that dataset is
   created in the deployment region rather than alongside the
   inference — and because dataset location is immutable, reordering
@@ -88,7 +88,7 @@ gotchas to plan around. Extend as new ones are discovered.
   entries, but the request body is opaque `HttpBody` — the model
   isn't captured anywhere in the log, and there's no downstream
   audit trail for the resolved publisher/model either. The entries
-  carry identity and timestamp but not the *what*, and the forwarder
+  carry identity and timestamp but not the _what_, and the forwarder
   emits nothing for them. This is the default way to call most
   model-as-a-service models (gpt-oss, Llama, DeepSeek, Qwen), so that
   traffic goes unrecorded. Route via
@@ -115,6 +115,66 @@ gotchas to plan around. Extend as new ones are discovered.
   customer-managed IAM. The forwarder still stubs them if
   inaccessible.
 
+## Deploy
+
+Prerequisites: a GCP project with Vertex AI enabled, Terraform, and `gcloud` signed in with `gcloud auth login`. The module turns on request-response logging with a `curl` that takes its token from `gcloud auth print-access-token`, so Application Default Credentials alone do not work. You also need the Event streaming token of the connection.
+
+```hcl
+module "slashid_vertex_forwarder" {
+  source = "github.com/slashid/slashid-ai-forwarders//vertex/deploy/terraform?ref=vertex-vX.Y.Z"
+
+  project_id         = "<project>"
+  regions            = ["us-central1"]
+  slashid_push_token = var.slashid_push_token # sensitive
+  release_version    = "vertex-vX.Y.Z"
+}
+```
+
+```bash
+terraform init && terraform apply
+```
+
+Multi-region, the `global` endpoint, `observed_models` and `fileData` bucket grants are in [`deploy/terraform/README.md`](deploy/terraform/README.md). The first enablement of logging takes about 10 minutes to propagate. To upgrade, set `release_version` to the new tag and apply once the release workflow has pushed the image: Cloud Run pulls it through an Artifact Registry remote repository over GHCR.
+
+## Live check
+
+Call a model the module observes, in a region it covers, with a tool declared and a small file attached. `thinking_budget=0` keeps Gemini 2.5 from answering with no text:
+
+```bash
+printf 'quarterly numbers\n' > notes.txt
+uv run --no-project --with google-genai python - <<'EOF'
+from google import genai
+from google.genai import types
+
+client = genai.Client(vertexai=True, project="<project>", location="us-central1")
+tool = types.Tool(function_declarations=[types.FunctionDeclaration(
+    name="get_weather", description="Weather for a city",
+    parameters={"type": "OBJECT", "properties": {"city": {"type": "STRING"}}, "required": ["city"]})])
+r = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents=[types.Part.from_bytes(data=open("notes.txt", "rb").read(), mime_type="text/plain"),
+              "What is the weather in Paris? Use the tool."],
+    config=types.GenerateContentConfig(tools=[tool], thinking_config=types.ThinkingConfig(thinking_budget=0)),
+)
+print([p.function_call.name for p in r.candidates[0].content.parts if p.function_call])
+EOF
+```
+
+The event follows in about two minutes: the 30 s identity buffer, BigQuery's streaming buffer, then the next one-minute tick (`tick complete: {"events_pushed":1,...}`; ticks with `events_pushed` 0 are normal on an idle project). The service logs each pushed event as an `event:` line with the whole JSON:
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"event:"' \
+  --project <project> --freshness=15m --limit=5 --format='value(textPayload)'
+```
+
+Check that the event is built right:
+
+- `available_tools` names `get_weather`.
+- `accessed_files` has one entry with `provenance` `attachment`, `media_type` `text/plain`, `byte_length` equal to the file's size, and `content_hashes.sha256` equal to `sha256sum notes.txt`.
+- `model`, `tokens` and `identity_details` (the calling principal) are filled in.
+
+Vertex has no preflight, so there is no verdict to trigger: a sensitive file is judged on the SlashID side, from the hashes the event carries.
+
 ## Development
 
 ```bash
@@ -125,33 +185,27 @@ Runtime deps (`fastapi`, `uvicorn`, `google-cloud-bigquery`,
 `google-cloud-firestore`, `google-cloud-secret-manager`) are declared in
 `pyproject.toml`; the workspace-level `uv sync` installs them.
 
-Live smoke against a real GCP project:
-
-```bash
-(cd vertex && ./generate-content <MODEL> <PROMPT>)   # coming soon
-```
-
 ## Configuration
 
 All env vars use the `SLASHID_` prefix:
 
-| var | required | default |
-| --- | --- | --- |
-| `SLASHID_ENDPOINT` | no | `https://api.slashid.com` |
-| `SLASHID_PUSH_TOKEN` | yes | — |
-| `SLASHID_PROJECT_ID` | yes | — |
-| `SLASHID_GCP_REGIONS` | yes | — (JSON list, e.g. `["us-central1","europe-west1"]`) |
-| `SLASHID_TICK_PRINCIPAL` | yes, to accept ticks | — (the service account whose OIDC token `POST /tick` accepts; unset refuses every tick) |
-| `SLASHID_TICK_AUDIENCE` | no | — (checked only when set) |
-| `SLASHID_BQ_DATASET_PREFIX` | no | `slashid_vertex_reqresp_logs` (per-region dataset name = `{prefix}_{region_slug}`) |
-| `SLASHID_DATABASE` | no | `slashid-vertex` |
-| `SLASHID_CHECKPOINT_COLLECTION` | no | `slashid_vertex` |
-| `SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT` | no | `checkpoint` |
-| `SLASHID_MAX_ROWS_PER_TICK` | no | `1000` |
-| `SLASHID_INCLUDE_RAW_CONTENT` | no | `false` |
-| `SLASHID_MAX_CONTENT_SIZE` | no | `100000` |
-| `SLASHID_INPUT_SCOPE` | no | `round` (the messages since the last response; `session` sends the whole transcript) |
-| `SLASHID_ROUND_LINK_DEPTH` | no | `10` (rounds listed in `recent_round_hashes`) |
+| var                                     | required             | default                                                                                 |
+| --------------------------------------- | -------------------- | --------------------------------------------------------------------------------------- |
+| `SLASHID_ENDPOINT`                      | no                   | `https://api.slashid.com`                                                               |
+| `SLASHID_PUSH_TOKEN`                    | yes                  | —                                                                                       |
+| `SLASHID_PROJECT_ID`                    | yes                  | —                                                                                       |
+| `SLASHID_GCP_REGIONS`                   | yes                  | — (JSON list, e.g. `["us-central1","europe-west1"]`)                                    |
+| `SLASHID_TICK_PRINCIPAL`                | yes, to accept ticks | — (the service account whose OIDC token `POST /tick` accepts; unset refuses every tick) |
+| `SLASHID_TICK_AUDIENCE`                 | no                   | — (checked only when set)                                                               |
+| `SLASHID_BQ_DATASET_PREFIX`             | no                   | `slashid_vertex_reqresp_logs` (per-region dataset name = `{prefix}_{region_slug}`)      |
+| `SLASHID_DATABASE`                      | no                   | `slashid-vertex`                                                                        |
+| `SLASHID_CHECKPOINT_COLLECTION`         | no                   | `slashid_vertex`                                                                        |
+| `SLASHID_FIRESTORE_CHECKPOINT_DOCUMENT` | no                   | `checkpoint`                                                                            |
+| `SLASHID_MAX_ROWS_PER_TICK`             | no                   | `1000`                                                                                  |
+| `SLASHID_INCLUDE_RAW_CONTENT`           | no                   | `false`                                                                                 |
+| `SLASHID_MAX_CONTENT_SIZE`              | no                   | `100000`                                                                                |
+| `SLASHID_INPUT_SCOPE`                   | no                   | `round` (the messages since the last response; `session` sends the whole transcript)    |
+| `SLASHID_ROUND_LINK_DEPTH`              | no                   | `10` (rounds listed in `recent_round_hashes`)                                           |
 
 ## Release
 

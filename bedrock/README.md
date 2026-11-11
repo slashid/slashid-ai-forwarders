@@ -32,17 +32,38 @@ Record bodies are parsed as `anthropic-message`, `anthropic-stream`, `bedrock-co
 
 ## Install
 
-> Coming in v0.1 — published as a CloudFormation template attached to each GitHub release.
+Prerequisite: Bedrock Model Invocation Logging (MIL) is on and delivers to a CloudWatch Logs group.
 
-The customer provides:
+Each release attaches the Lambda zip and `cloudformation.yaml`. Upload the zip to an S3 bucket of yours, then create the stack in the region of that log group:
 
-| Parameter                    | Description                                                                                                                                                                                                     |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BedrockLogGroupName`        | The CloudWatch log group MIL writes to                                                                                                                                                                          |
-| `BedrockBodyOffloadS3Bucket` | (optional) Bucket Bedrock writes offloaded prompts to. Granted `s3:GetObject` so the Lambda can inline large prompts. Leave blank to skip — offloaded records still ingest, just without tool-catalog metadata. |
-| `SlashIDEndpoint`            | (optional, default `https://api.slashid.com`) SlashID API endpoint                                                                                                                                              |
-| `SlashIDPushToken`           | Event-streaming bearer token for the connection (NoEcho)                                                                                                                                                        |
-| `IncludeRawContent`          | (optional, default `false`) Opt-in to forwarding raw prompt/response JSON. When off, only content hash + mime type + byte length are sent.                                                                      |
+```bash
+VERSION=0.1.6
+gh release download "bedrock-v$VERSION" -R slashid/slashid-ai-forwarders
+aws s3 cp "slashid-ai-forwarder-bedrock-v$VERSION.zip" "s3://<bucket>/releases/v$VERSION/forwarder.zip"
+
+aws cloudformation create-stack --stack-name slashid-bedrock-forwarder \
+  --template-body file://cloudformation.yaml --capabilities CAPABILITY_IAM \
+  --parameters \
+    ParameterKey=BedrockLogGroupName,ParameterValue=/aws/bedrock/modelinvocations \
+    ParameterKey=SlashIDPushToken,ParameterValue="$SLASHID_PUSH_TOKEN" \
+    ParameterKey=LambdaPackageS3Bucket,ParameterValue=<bucket> \
+    ParameterKey=LambdaPackageS3Key,ParameterValue="releases/v$VERSION/forwarder.zip"
+```
+
+To upgrade, upload the new zip under a new key and run `update-stack` with the same template, `UsePreviousValue=true` for every parameter except `LambdaPackageS3Key`.
+
+The parameters:
+
+| Parameter                                     | Description                                                                                                                                                                                                     |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BedrockLogGroupName`                         | The CloudWatch log group MIL writes to                                                                                                                                                                          |
+| `BedrockBodyOffloadS3Bucket`                  | (optional) Bucket Bedrock writes offloaded prompts to. Granted `s3:GetObject` so the Lambda can inline large prompts. Leave blank to skip — offloaded records still ingest, just without tool-catalog metadata. |
+| `SlashIDEndpoint`                             | (optional, default `https://api.slashid.com`) SlashID API endpoint                                                                                                                                              |
+| `SlashIDPushToken`                            | Event-streaming bearer token for the connection (NoEcho)                                                                                                                                                        |
+| `IncludeRawContent`                           | (optional, default `false`) Opt-in to forwarding raw prompt/response JSON. When off, only content hash + mime type + byte length are sent.                                                                      |
+| `LambdaPackageS3Bucket`, `LambdaPackageS3Key` | Where the zip is                                                                                                                                                                                                |
+| `LambdaMemoryMB`, `LambdaTimeoutSeconds`      | (optional, defaults `512` and `180`) The timeout must cover the offloaded-body retry window (~90 s)                                                                                                             |
+| `LogRetentionDays`, `LogLevel`                | (optional, defaults `30` and `INFO`) `DEBUG` also logs the serialized event (no raw prompt or response text)                                                                                                    |
 
 The push token is the only credential the Lambda needs. SlashID derives the org and connection IDs from the token; identity creation and STS role-chain unrolling happen on the SlashID side.
 
@@ -61,7 +82,40 @@ uv run ruff format            # format
 
 ## Smoke-testing against a live account
 
-Once the CloudFormation template is deployed against a test AWS account, trigger real Bedrock invocations and confirm `AIInvocationObservedV1` events land on the SlashID side. Two paths worth exercising — they hit different branches of `mil_normalize.normalize_record`. Both use your existing AWS SDK credential chain (env, `~/.aws/credentials`, or `aws sso login`).
+Once the CloudFormation template is deployed against a test AWS account, trigger real Bedrock invocations and confirm `AIInvocationObservedV1` events land on the SlashID side. The forwarder's own log group (`/aws/lambda/<ForwarderFunctionName>`, an output of the stack) shows each pushed event as an `event: {...}` line. Two paths worth exercising — they hit different branches of `mil_normalize.normalize_record`. Both use your existing AWS SDK credential chain (env, `~/.aws/credentials`, or `aws sso login`).
+
+### Tools and file hashes in the event
+
+One round trip with a tool declared, a file attached and the tool's result returned checks the whole event. Save the script as `check.py` and run `printf 'quarterly numbers\n' > notes.txt && uv run --no-project --with boto3 python check.py`:
+
+```python
+import boto3
+
+c = boto3.client("bedrock-runtime", region_name="us-east-2")
+tools = {"tools": [{"toolSpec": {"name": "get_weather", "description": "Weather for a city",
+    "inputSchema": {"json": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}}]}
+user = {"role": "user", "content": [
+    {"document": {"name": "notes", "format": "txt", "source": {"bytes": open("notes.txt", "rb").read()}}},
+    {"text": "What is the weather in Paris? Use the tool."}]}
+model = "us.amazon.nova-pro-v1:0"
+first = c.converse(modelId=model, messages=[user], toolConfig=tools)["output"]["message"]
+use = next(b["toolUse"] for b in first["content"] if "toolUse" in b)
+back = {"role": "user", "content": [{"toolResult": {"toolUseId": use["toolUseId"], "content": [{"text": "18C and sunny"}]}}]}
+c.converse(modelId=model, messages=[user, first, back], toolConfig=tools)
+```
+
+About a minute later, read the two events from the forwarder's log:
+
+```bash
+aws logs filter-log-events --log-group-name /aws/lambda/<stack>-forwarder \
+  --filter-pattern '"event:"' --start-time $(( ($(date +%s) - 600) * 1000 )) --query 'events[].message' --output text
+```
+
+- Both events list `get_weather` in `available_tools`.
+- Both carry `accessed_files` with `name` `notes`, `media_type` `text/plain`, `byte_length` equal to the file's size, `provenance` `attachment`, and `content_hashes.sha256` equal to `sha256sum notes.txt`.
+- The second event (the one that carries the tool result) has `used_tools` with that call's `tool_use_id` and `is_error` `false`; its `tool_id` matches the tool's id in `available_tools`.
+
+Bedrock has no preflight, so there is no verdict to trigger: a sensitive file is judged on the SlashID side, from the hashes the event carries.
 
 ### Via AWS Converse (already-Converse pass-through path)
 
