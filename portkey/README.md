@@ -17,7 +17,9 @@ tools, files) in SlashID.
 
 1. In SlashID, create the connection the gateway reports to and copy its
    Event streaming token.
-2. Run the image (`ghcr.io/slashid/slashid-ai-forwarder-portkey:<version>`)
+2. Run the image (`ghcr.io/slashid/slashid-ai-forwarder-portkey:<version>`;
+   `docker run -p 8080:8080 <image>`, or build it with
+   `docker build -f portkey/Dockerfile .` from the repository root)
    where the gateway can reach it. A self-hosted gateway must list the host
    in `TRUSTED_CUSTOM_HOSTS` when it is on a private network.
 3. In Portkey, add a webhook guardrail to the config your requests use, once
@@ -108,6 +110,24 @@ Two limits come from the gateway:
 Text longer than `SLASHID_MAX_CONTENT_SIZE` (100,000 characters) is cut in
 the middle before it is sent; a rule on prompt content does not see the cut
 part.
+
+## Live check
+
+1. Without the gateway, post a before-request hook straight to the service. The token is the connection's Event streaming token, and `_user` must be a person SlashID knows by that address:
+
+   ```bash
+   curl -s -X POST http://localhost:8080/hooks/portkey \
+     -H "Authorization: Bearer $SLASHID_PUSH_TOKEN" -H 'content-type: application/json' \
+     -d '{"eventType": "beforeRequestHook", "provider": "openai", "requestType": "chatComplete",
+          "metadata": {"_user": "<email>"},
+          "request": {"json": {"model": "gpt-5", "messages": [{"role": "user", "content": "hello"}]},
+                      "text": "hello", "isStreamingRequest": false, "isTransformed": false},
+          "response": {"json": {}, "text": "", "statusCode": null, "isTransformed": false}}'
+   ```
+
+   An allowed request answers `{"verdict":true}`; a denied one answers `{"verdict":false,"data":{"deny_reasons":[...],"explanation":"..."}}`. The service logs `verdict <id>: allow, answered allow`.
+
+2. Through the gateway, with the guardrails from Setup on the config: send a chat completion with `metadata` naming the user, then one that mentions a file you tagged as sensitive. The first returns the model's answer and its invocation appears in SlashID; the second returns 446.
 
 ## Development
 
