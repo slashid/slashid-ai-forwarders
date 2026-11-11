@@ -100,10 +100,10 @@ async def _before(runtime: Runtime, hook: HarnessToolHook) -> JsonValue:
     files = call_files(call)
     key = _key(hook)
     # A key seen before (a repeated toolUseId) never keeps the earlier call's input.
-    runtime.inputs.pop(key)
+    runtime.inputs.pop(key, None)
     decision = await run_check(runtime, call, files=files, result_is_error=None)
     if decision.deny is None and files:
-        runtime.inputs.put(key, CachedInput(tool_name=call.raw_name, tool_input=call.tool_input))
+        runtime.inputs[key] = CachedInput(tool_name=call.raw_name, tool_input=call.tool_input)
     return _answer(decision)
 
 
@@ -117,7 +117,7 @@ def _output(result: HarnessToolResult) -> JsonValue:
 
 
 async def _after(runtime: Runtime, hook: HarnessToolHook) -> JsonValue:
-    cached = runtime.inputs.pop(_key(hook))
+    cached = runtime.inputs.pop(_key(hook), None)
     result = parse_harness_result(hook.context.toolResult)
     if is_own_result(result, runtime.key):
         return _answer(Decision(None))

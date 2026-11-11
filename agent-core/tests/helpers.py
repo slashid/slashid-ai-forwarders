@@ -5,17 +5,16 @@ import time
 from collections.abc import Callable
 
 import pytest
+from cachetools import TTLCache
 from pydantic import JsonValue
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1, AWSIdentityDetails
 
-from slashid_agentcore_forwarder.cache import TtlCache
 from slashid_agentcore_forwarder.checks import Outcome
 from slashid_agentcore_forwarder.config import Config
 from slashid_agentcore_forwarder.deny import derive_key
 from slashid_agentcore_forwarder.payloads import ClientContext
 from slashid_agentcore_forwarder.roles import HarnessDetails
 from slashid_agentcore_forwarder.runtime import Runtime
-from slashid_agentcore_forwarder.tool_call import CachedInput
 
 LOGGER = "slashid_agentcore_forwarder"
 GATEWAY_ARN = "arn:aws:bedrock-agentcore:us-east-2:123456789012:gateway/gw-EXAMPLE"
@@ -89,7 +88,7 @@ def make_runtime(*outcomes: Outcome, roles: FakeRoles | None = None, **config: o
         key=derive_key(cfg.push_token),
         checker=FakeChecker(*outcomes),
         roles=roles or FakeRoles(),
-        inputs=TtlCache[CachedInput](ttl_s=600, max_entries=1000),
+        inputs=TTLCache(1000, 600),
     )
 
 

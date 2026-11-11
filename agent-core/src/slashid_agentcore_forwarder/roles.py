@@ -12,10 +12,10 @@ from typing import Protocol
 from aiobotocore.config import AioConfig
 from aiobotocore.session import get_session
 from botocore.exceptions import ClientError
+from cachetools import TLRUCache, TTLCache
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from slashid_agentcore_forwarder import logs
-from slashid_agentcore_forwarder.cache import TtlCache
 from slashid_agentcore_forwarder.models import Lenient
 
 LOOKUP_TIMEOUT_S = 1.0
@@ -91,12 +91,21 @@ def _classify(exc: Exception) -> logs.RoleLookupError:
     return "other"
 
 
+def _expiry(ttl_s: float) -> Callable[[str, str | None, float], float]:
+    """A found role lives ``ttl_s``; a failed lookup (``None``) is remembered only briefly."""
+
+    def ttu(_arn: str, role: str | None, now: float) -> float:
+        return now + (ttl_s if role else FAILURE_TTL_S)
+
+    return ttu
+
+
 class Roles:
     def __init__(
         self,
         control: Callable[[], Awaitable[ControlPlane]],
         *,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = time.monotonic,
         lookup_timeout_s: float = LOOKUP_TIMEOUT_S,
         shared_max_entries: int = SHARED_MAX_ENTRIES,
         claimed_max_entries: int = CLAIMED_MAX_ENTRIES,
@@ -104,14 +113,14 @@ class Roles:
         self._control = control
         self._clock = clock
         self._timeout_s = lookup_timeout_s
-        self._shared = TtlCache[str | None](
-            ttl_s=ROLE_TTL_S, max_entries=shared_max_entries, clock=clock
+        self._shared: TLRUCache[str, str | None] = TLRUCache(
+            shared_max_entries, _expiry(ROLE_TTL_S), timer=clock
         )
-        self._claimed = TtlCache[str | None](
-            ttl_s=CLAIMED_TTL_S, max_entries=claimed_max_entries, clock=clock
+        self._claimed: TLRUCache[str, str | None] = TLRUCache(
+            claimed_max_entries, _expiry(CLAIMED_TTL_S), timer=clock
         )
-        self._details = TtlCache[HarnessDetails](
-            ttl_s=ROLE_TTL_S, max_entries=shared_max_entries, clock=clock
+        self._details: TTLCache[str, HarnessDetails] = TTLCache(
+            shared_max_entries, ROLE_TTL_S, timer=clock
         )
         self._claimed_lookups: deque[float] = deque()
 
@@ -134,7 +143,7 @@ class Roles:
             harness = _HarnessResponse.model_validate(response).harness
             if kind == "harness":
                 details = HarnessDetails(name=harness.harnessName, version=harness.harnessVersion)
-                self._details.put(arn, details)
+                self._details[arn] = details
             return harness.executionRoleArn
 
         return await self._guarded(kind, lookup)
@@ -149,10 +158,10 @@ class Roles:
     async def _shared_lookup(
         self, arn: str, lookup: Callable[[str], Awaitable[str | None]]
     ) -> str | None:
-        if self._shared.has(arn):
-            return self._shared.get(arn)
+        if arn in self._shared:
+            return self._shared[arn]
         role = await lookup(arn)
-        self._shared.put(arn, role, ttl_s=None if role else FAILURE_TTL_S)
+        self._shared[arn] = role
         return role
 
     async def harness_role(self, harness_arn: str) -> str | None:
@@ -168,8 +177,8 @@ class Roles:
     async def claimed_harness_role(self, harness_arn: str, *, fresh: bool = False) -> str | None:
         """A role for an id the caller chose: own cache, and at most 10 uncached lookups a
         minute (``RateLimited`` beyond). ``fresh`` re-reads past the cache and counts."""
-        if not fresh and self._claimed.has(harness_arn):
-            return self._claimed.get(harness_arn)
+        if not fresh and harness_arn in self._claimed:
+            return self._claimed[harness_arn]
         now = self._clock()
         while self._claimed_lookups and self._claimed_lookups[0] <= now - 60:
             self._claimed_lookups.popleft()
@@ -177,7 +186,7 @@ class Roles:
             raise RateLimited
         self._claimed_lookups.append(now)
         role = await self._harness(harness_arn, "claimed_harness")
-        self._claimed.put(harness_arn, role, ttl_s=None if role else FAILURE_TTL_S)
+        self._claimed[harness_arn] = role
         return role
 
 

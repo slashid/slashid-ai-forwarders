@@ -252,7 +252,7 @@ async def test_a_call_that_is_not_cached_drops_the_stale_entry_of_its_key(
     """A repeated ``call_0`` must not hand the earlier call's input to this call's result."""
     caplog.set_level(logging.INFO, logger=LOGGER)
     runtime = make_runtime(outcome)
-    runtime.inputs.put(CACHE_KEY, CachedInput(tool_name=READ, tool_input={"fileId": "STALE"}))
+    runtime.inputs[CACHE_KEY] = CachedInput(tool_name=READ, tool_input={"fileId": "STALE"})
     await handle(runtime, drive_before(load, toolInput={"query": "no file ref here"}))
     assert runtime.inputs.get(CACHE_KEY) is None
     await handle(runtime, after_with(load, READ, drive_result("NEW")))
@@ -293,9 +293,8 @@ def drive_result(file_id: str = "ID1") -> JsonValue:
 async def test_after_sends_a_result_check_with_the_cached_input(load: Load) -> None:
     runtime = make_runtime()
     payload = after_with(load, "gdrive___download_file_content", drive_result())
-    runtime.inputs.put(
-        CACHE_KEY,
-        CachedInput(tool_name="gdrive___download_file_content", tool_input={"fileId": "ID1"}),
+    runtime.inputs[CACHE_KEY] = CachedInput(
+        tool_name="gdrive___download_file_content", tool_input={"fileId": "ID1"}
     )
     assert await handle(runtime, payload) == ALLOW
     [event] = checker_of(runtime).invocations
@@ -312,7 +311,7 @@ async def test_after_sends_a_result_check_with_the_cached_input(load: Load) -> N
 
 async def test_after_pops_the_entry_even_for_our_own_deny(load: Load) -> None:
     runtime = make_runtime()
-    runtime.inputs.put(CACHE_KEY, CachedInput(tool_name=READ, tool_input={"fileId": "ID1"}))
+    runtime.inputs[CACHE_KEY] = CachedInput(tool_name=READ, tool_input={"fileId": "ID1"})
     text = with_reference("Blocked by policy.", runtime.key)
     payload = after_with(load, READ, {"status": "error", "content": [{"text": text}]})
     assert await handle(runtime, payload) == ALLOW
@@ -370,8 +369,8 @@ async def test_a_cached_entry_for_another_tool_is_a_miss(
 ) -> None:
     caplog.set_level(logging.INFO, logger=LOGGER)
     runtime = make_runtime()
-    runtime.inputs.put(
-        CACHE_KEY, CachedInput(tool_name="gdrive___search_files", tool_input={"fileId": "ID1"})
+    runtime.inputs[CACHE_KEY] = CachedInput(
+        tool_name="gdrive___search_files", tool_input={"fileId": "ID1"}
     )
     await handle(runtime, after_with(load, READ, {"status": "success", "content": [{"text": "x"}]}))
     [event] = checker_of(runtime).invocations
@@ -416,7 +415,7 @@ async def test_an_error_result_is_checked_without_files(
 ) -> None:
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     runtime = make_runtime()
-    runtime.inputs.put(CACHE_KEY, CachedInput(tool_name=READ, tool_input={"fileId": "ID1"}))
+    runtime.inputs[CACHE_KEY] = CachedInput(tool_name=READ, tool_input={"fileId": "ID1"})
     result: JsonValue = {"status": "error", "content": [{"text": "boom"}]}
     assert await handle(runtime, after_with(load, READ, result)) == ALLOW
     [event] = checker_of(runtime).invocations
@@ -437,7 +436,7 @@ async def test_is_error_flag_marks_an_error(load: Load) -> None:
 
 async def test_a_truncated_result_takes_refs_from_the_cached_input(load: Load) -> None:
     runtime = make_runtime()
-    runtime.inputs.put(CACHE_KEY, CachedInput(tool_name=READ, tool_input={"fileId": "ID1"}))
+    runtime.inputs[CACHE_KEY] = CachedInput(tool_name=READ, tool_input={"fileId": "ID1"})
     preview = json.dumps({"content": b64(b"x"), "id": "PREVIEW", "title": "p.md"})
     payload = after_with(load, READ, {"truncated": True, "preview": preview})
     assert await handle(runtime, payload) == ALLOW
@@ -459,7 +458,7 @@ async def test_a_truncated_result_without_input_gives_no_files(load: Load) -> No
 
 async def test_a_non_object_result_is_a_result_with_no_references(load: Load) -> None:
     runtime = make_runtime()
-    runtime.inputs.put(CACHE_KEY, CachedInput(tool_name=READ, tool_input={"fileId": "ID1"}))
+    runtime.inputs[CACHE_KEY] = CachedInput(tool_name=READ, tool_input={"fileId": "ID1"})
     assert await handle(runtime, after_with(load, READ, "just a string")) == ALLOW
     [event] = checker_of(runtime).invocations
     [use] = event.used_tools or []
@@ -470,8 +469,8 @@ async def test_a_non_object_result_is_a_result_with_no_references(load: Load) ->
 
 async def test_a_result_with_structured_content_is_read(load: Load) -> None:
     runtime = make_runtime()
-    runtime.inputs.put(
-        CACHE_KEY, CachedInput(tool_name="gdrive___search_files", tool_input={"query": "q"})
+    runtime.inputs[CACHE_KEY] = CachedInput(
+        tool_name="gdrive___search_files", tool_input={"query": "q"}
     )
     hits: JsonValue = {"files": [{"id": "A", "title": "a.md", "mimeType": "text/markdown"}]}
     result: JsonValue = {"status": "success", "content": [], "structuredContent": hits}

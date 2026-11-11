@@ -41,7 +41,7 @@ def test_build_runtime_wires_the_config() -> None:
 
 def test_build_runtime_gives_each_runtime_its_own_cache() -> None:
     first, second = build_runtime(make_config()), build_runtime(make_config())
-    first.inputs.put("k", CachedInput(tool_name="t", tool_input=None))
+    first.inputs["k"] = CachedInput(tool_name="t", tool_input=None)
     assert first.inputs.get("k") is not None
     assert second.inputs.get("k") is None
 
@@ -49,7 +49,7 @@ def test_build_runtime_gives_each_runtime_its_own_cache() -> None:
 def test_the_input_cache_is_bounded() -> None:
     cache = build_runtime(make_config()).inputs
     for n in range(INPUT_MAX_ENTRIES + 1):
-        cache.put(str(n), CachedInput(tool_name="t", tool_input=None))
+        cache[str(n)] = CachedInput(tool_name="t", tool_input=None)
     assert cache.get("0") is None
     assert cache.get("1") is not None
 

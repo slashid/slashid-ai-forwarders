@@ -20,11 +20,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cachetools import TTLCache
 from pydantic import JsonValue
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 
 from helpers import FakeRoles, Load, ctx, denied_text, obj
-from slashid_agentcore_forwarder.cache import TtlCache
 from slashid_agentcore_forwarder.checks import Checker, Outcome
 from slashid_agentcore_forwarder.config import Config
 from slashid_agentcore_forwarder.deny import derive_key, is_own_deny
@@ -128,10 +128,10 @@ class Live:
             key=derive_key(self.config.push_token),
             checker=Recording(checker, trip),
             roles=roles,
-            inputs=TtlCache[CachedInput](ttl_s=600, max_entries=10),
+            inputs=TTLCache(10, 600),
         )
         if cached is not None:
-            runtime.inputs.put(cache_key(HARNESS, SESSION, TOOL_USE), cached)
+            runtime.inputs[cache_key(HARNESS, SESSION, TOOL_USE)] = cached
         client_ctx = ctx(GATEWAY_ARN=GATEWAY, REQUEST_ID=LIVE_RID) if gateway else ctx()
         answer = await dispatch(runtime, payload, client_ctx)
         return RunResult(answer, trip, runtime)

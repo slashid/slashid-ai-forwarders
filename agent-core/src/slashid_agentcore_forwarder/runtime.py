@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from cachetools import TTLCache
 from slashid_ai_forwarder_core.events import AIInvocationObservedV1
 
-from slashid_agentcore_forwarder.cache import TtlCache
 from slashid_agentcore_forwarder.checks import Checker, Outcome
 from slashid_agentcore_forwarder.config import Config, load_config
 from slashid_agentcore_forwarder.deny import derive_key
@@ -29,7 +29,7 @@ class Runtime:
     key: bytes
     checker: CheckRunner
     roles: RoleLookup
-    inputs: TtlCache[CachedInput]
+    inputs: TTLCache[str, CachedInput]
 
 
 def build_runtime(config: Config) -> Runtime:
@@ -38,7 +38,7 @@ def build_runtime(config: Config) -> Runtime:
         key=derive_key(config.push_token),
         checker=Checker(config),
         roles=Roles(default_control),
-        inputs=TtlCache[CachedInput](ttl_s=INPUT_TTL_S, max_entries=INPUT_MAX_ENTRIES),
+        inputs=TTLCache(INPUT_MAX_ENTRIES, INPUT_TTL_S),
     )
 
 
