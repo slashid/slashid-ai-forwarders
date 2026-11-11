@@ -200,6 +200,7 @@ async def preflight_verdict(
     endpoint: str,
     push_token: str,
     timeout_s: float,
+    enforcement: Literal["enforce", "shadow"] | None = None,
 ) -> AIPreflightResponse:
     """POST /ip/nhi/events/ai-invocations/preflight. Returns the verdict: the
     deny reasons and, from a server that sends it, the decision naming the
@@ -211,6 +212,11 @@ async def preflight_verdict(
     its own, so only a failure to get a verdict at all raises
     ``PreflightError``.
 
+    ``enforcement`` is what the caller does with a deny: ``enforce`` when it
+    blocks the invocation, ``shadow`` when it only notes the verdict. SlashID
+    records it with a denied check and it changes nothing about the verdict.
+    A caller that does not say leaves the record without it.
+
     No retry: the caller is inside a budget of ``timeout_s``. The server gets
     that budget less ``PREFLIGHT_RETURN_MARGIN_S`` through
     ``SlashID-Request-Timeout``, because it spends all of what it is given and
@@ -218,15 +224,18 @@ async def preflight_verdict(
     just as we stop waiting and become our own fail mode instead.
     """
     server_budget_s = max(timeout_s - PREFLIGHT_RETURN_MARGIN_S, PREFLIGHT_MIN_BUDGET_S)
+    headers = {
+        "Authorization": f"Bearer {push_token}",
+        "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
+        "SlashID-Preflight-Capabilities": "decision",
+    }
+    if enforcement is not None:
+        headers["SlashID-Preflight-Enforcement"] = enforcement
     try:
         response = await client.post(
             f"{endpoint}{PREFLIGHT_PATH}",
             json=invocation.model_dump(mode="json", exclude_none=True),
-            headers={
-                "Authorization": f"Bearer {push_token}",
-                "SlashID-Request-Timeout": f"{server_budget_s:.3f}",
-                "SlashID-Preflight-Capabilities": "decision",
-            },
+            headers=headers,
             timeout=timeout_s,
         )
     except httpx.TimeoutException as exc:
