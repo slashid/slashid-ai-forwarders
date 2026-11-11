@@ -76,36 +76,37 @@ One Lambda that checks every tool call of an Amazon Bedrock AgentCore agent, and
 - **Deployment**: Lambda from a CloudFormation template, deployed in the region of the Harnesses and Gateways it serves. Each Harness and Gateway execution role is listed in the stack so it may invoke the function; hooks and interceptors are attached with the AWS CLI. A Harness's hooks are removed by every `agentcore deploy`.
 - **Limitations**: a Runtime agent is covered only for tools behind a Gateway; a Harness hook is capped at 64 KiB, so a larger result is checked without its file references; an `after_tool_call` deny stops the run but the result stays in the session, while a Gateway RESPONSE deny does withhold it; a Gateway has no failure mode of its own; a Harness with Gateway tools makes four serial checks per call (~170-300 ms each warm, ~1 s cold); the Harness id on the Gateway path is as weak as the role, and a JWT-authorized Gateway cannot verify it at all.
 
+## Deployments
+
+The deployments we know of, as checked on 2026-11-11: our test deployments, all attached to the Demo Org, and one customer deployment (Rubicon Founders). Other customer deployments are not tracked here.
+
+| Implementation | Kind | SlashID org | Where | Resources | Running | Deployed with |
+| --- | --- | --- | --- | --- | --- | --- |
+| Bedrock | test | Demo Org (`61e26316-68b9-4e98-81d7-b9b771fe3d96`) | AWS account `851725497009`, `us-east-2` | CloudFormation stack `slashid-bedrock-forwarder`, Lambda `slashid-bedrock-forwarder-forwarder` | 0.1.6 | the release zip copied to the stack's artifact bucket, then `update-stack` with only `LambdaPackageS3Key` changed |
+| Vertex | test | Demo Org (`61e26316-68b9-4e98-81d7-b9b771fe3d96`) | GCP project `strong-hue-507702-k7`, `us-central1` | Cloud Run service `slashid-ai-forwarder-vertex` and its Cloud Scheduler job | 0.1.12 | `vertex/deploy/terraform`, local state, `release_version` set to the tag |
+| Anthropic | test | Demo Org (`61e26316-68b9-4e98-81d7-b9b771fe3d96`) | GCP project `strong-hue-507702-k7`, `us-central1` | Cloud Run service `slashid-ai-forwarder-anthropic` | 0.1.14 | `anthropic/deploy/terraform`, local state, `release_version` set to the tag; `deploy/dev-deploy.sh` for iteration |
+| Anthropic (second instance) | customer | Rubicon Founders (`4575c5f8-03dd-a79d-d4c1-7b0fb1bccb89`) | GCP project `strong-hue-507702-k7`, `us-central1` | Cloud Run service `slashid-ai-forwarder-anthropic-rubicon`, Scheduler job `slashid-rubicon-tick` | 0.1.14 | `anthropic/deploy/terraform-rubicon`, its own local state |
+| Codex | test | Demo Org (`61e26316-68b9-4e98-81d7-b9b771fe3d96`) | a developer machine | `uv tool` install of `slashid-ai-forwarder-codex` | 0.1.3 (0.1.4 is out) | `uv tool install --force`, from PyPI |
+| Portkey | none | | | | | | |
+| AgentCore | test | Demo Org (`61e26316-68b9-4e98-81d7-b9b771fe3d96`) | AWS account `851725497009`, `us-east-2` | CloudFormation stack `agentdemo-agentcore-forwarder-jwt`, serving the demo Harness and Gateways | 0.1.0 | the release zip and `cloudformation.yaml`, with `CAPABILITY_IAM CAPABILITY_AUTO_EXPAND` |
+
+Versions were read from the running services (Cloud Run images, the stack parameters, `uv tool list`). The Cloud Run images are pulled through an Artifact Registry remote repository over GHCR, so apply only after the release workflow has pushed the image.
+
 ## Development
 
 Requirements: `uv`, `pre-commit`.
 
 ```bash
-uv sync                                    # install workspace deps + dev tools
-uv run pre-commit install                  # set up hooks
+uv sync                      # install workspace deps + dev tools
+uv run pre-commit install    # set up hooks
+```
 
-# per-subproject (tool config lives in each subproject's pyproject.toml)
-(cd bedrock   && uv run pytest)            # Bedrock tests
-(cd vertex    && uv run pytest)            # Vertex tests
-(cd anthropic && uv run pytest)            # Anthropic tests
-(cd portkey   && uv run pytest)            # Portkey tests
-(cd agent-core && uv run pytest)           # AgentCore tests
-(cd codex     && uv run pytest)            # Codex tests
-(cd shared    && uv run pytest)            # Shared library tests
-(cd bedrock   && uv run ruff check .)      # Bedrock lint
-(cd vertex    && uv run ruff check .)      # Vertex lint
-(cd anthropic && uv run ruff check .)      # Anthropic lint
-(cd portkey   && uv run ruff check .)      # Portkey lint
-(cd agent-core && uv run ruff check .)     # AgentCore lint
-(cd codex     && uv run ruff check .)      # Codex lint
-(cd shared    && uv run ruff check .)      # Shared lint
-(cd bedrock   && uv run ty check)          # Bedrock type-check
-(cd vertex    && uv run ty check)          # Vertex type-check
-(cd anthropic && uv run ty check)          # Anthropic type-check
-(cd portkey   && uv run ty check)          # Portkey type-check
-(cd agent-core && uv run ty check)         # AgentCore type-check
-(cd codex     && uv run ty check)          # Codex type-check
-(cd shared    && uv run ty check)          # Shared type-check
+Subprojects: `bedrock`, `vertex`, `anthropic`, `codex`, `portkey`, `agent-core` and `shared`. Tool config lives in each one's `pyproject.toml`; run these from inside it:
+
+```bash
+cd <subproject> && uv run pytest        # tests
+cd <subproject> && uv run ruff check .  # lint
+cd <subproject> && uv run ty check      # type-check
 ```
 
 ## Releases
