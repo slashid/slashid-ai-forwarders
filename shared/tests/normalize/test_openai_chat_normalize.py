@@ -17,6 +17,7 @@ from slashid_ai_forwarder_core.normalize.normalized.types import (
     NormalizedInvocation,
 )
 from slashid_ai_forwarder_core.normalize.openai.chat.normalize import (
+    chat_request_to_normalized_invocation,
     chat_stream_to_normalized_invocation,
     chat_to_normalized_invocation,
     to_normalized,
@@ -316,3 +317,33 @@ async def test_message_fragment_stream_matches_non_stream() -> None:
     assert streamed.output.message == plain.output.message
     assert (plain.output.stop_reason, streamed.output.stop_reason) == ("end_turn", "end_turn")
     assert streamed.tokens == plain.tokens == AIInvocationTokens(input=10, output=4)
+
+
+async def test_request_alone_normalizes_with_its_attachments_and_no_output() -> None:
+    data = base64.b64encode(b"quarterly numbers").decode()
+    request = ChatRequest.model_validate(
+        {
+            "model": "gpt-5",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "summarize"},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "q3.txt",
+                                "file_data": f"data:text/plain;base64,{data}",
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    normalized = await chat_request_to_normalized_invocation(request, config=_CONFIG)
+    assert [m.role for m in normalized.input.messages] == ["user"]
+    assert normalized.output.message is None
+    assert [(f.name, f.byte_length, f.provenance) for f in normalized.accessed_files] == [
+        ("q3.txt", 17, "attachment")
+    ]

@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from slashid_ai_forwarder_core.config_base import BaseConfig
 from slashid_ai_forwarder_core.events import (
+    AIGatewayIdentityDetails,
     AIInvocationObservedV1,
     AIInvocationTokens,
     AIModel,
@@ -1755,6 +1756,27 @@ def test_openai_identity_details_round_trips_through_the_union() -> None:
         }
     )
     assert isinstance(event.identity_details, OpenAIIdentityDetails)
+
+
+def test_ai_gateway_identity_details_round_trips_through_the_union() -> None:
+    details = AIGatewayIdentityDetails(user_email="ada@example.com", agent_id="stylist")
+    assert details.model_dump(exclude_none=True) == {
+        "kind": "ai_gateway",
+        "user_email": "ada@example.com",
+        "agent_id": "stylist",
+    }
+    with pytest.raises(ValidationError, match="ai_gateway identity carries no identifier"):
+        AIGatewayIdentityDetails()
+    event = AIInvocationObservedV1.model_validate(
+        {
+            "request_id": "r",
+            "timestamp": "2026-11-10T00:00:00Z",
+            "identity_details": {"kind": "ai_gateway", "user_id": "u-1"},
+            "model": {"id": "gpt-5"},
+            "parsed_as": "portkey-openai-chat",
+        }
+    )
+    assert isinstance(event.identity_details, AIGatewayIdentityDetails)
 
 
 def test_tool_use_is_error_is_optional() -> None:

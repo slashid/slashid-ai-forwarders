@@ -328,8 +328,34 @@ class OpenAIIdentityDetails(_WireModel):
         return self
 
 
+class AIGatewayIdentityDetails(_WireModel):
+    """AI-gateway-source shape of ``AIInvocationObservedV1.identity_details``.
+
+    A gateway (Portkey) sits in front of every provider, so the provider's
+    own principal is the gateway's key, the same for every caller. Who
+    acted is what the calling application says in the request's metadata:
+    the person (``user_email``, or ``user_id`` when it is not an address)
+    and, when the call runs on an agent's behalf, the agent (``agent_id``).
+    """
+
+    kind: Literal["ai_gateway"] = "ai_gateway"
+    user_email: str | None = None
+    user_id: str | None = None
+    agent_id: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_identifier(self) -> AIGatewayIdentityDetails:
+        if not (self.user_email or self.user_id or self.agent_id):
+            raise ValueError("ai_gateway identity carries no identifier")
+        return self
+
+
 IdentityDetails = Annotated[
-    AWSIdentityDetails | GCPIdentityDetails | AnthropicIdentityDetails | OpenAIIdentityDetails,
+    AWSIdentityDetails
+    | GCPIdentityDetails
+    | AnthropicIdentityDetails
+    | OpenAIIdentityDetails
+    | AIGatewayIdentityDetails,
     Field(discriminator="kind"),
 ]
 

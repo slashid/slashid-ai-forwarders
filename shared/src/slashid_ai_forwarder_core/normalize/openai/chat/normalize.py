@@ -63,6 +63,15 @@ async def chat_to_normalized_invocation(
     return normalized
 
 
+async def chat_request_to_normalized_invocation(
+    request: ChatRequest, *, config: BaseConfig
+) -> NormalizedInvocation:
+    """A request with no response yet: what a check sees before the model answers."""
+    normalized = NormalizedInvocation(input=_request_to_input(request))
+    normalized.accessed_files = await extract_attachments(request, config=config)
+    return normalized
+
+
 async def chat_stream_to_normalized_invocation(
     request: ChatRequest, response: ChatStream, *, config: BaseConfig
 ) -> NormalizedInvocation:
