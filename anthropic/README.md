@@ -77,8 +77,38 @@ Then point the Inference hooks endpoint in claude.ai at `hook_url`, with the sig
 ## Live check
 
 1. The endpoint is up and refuses an unsigned request: `curl -s -o /dev/null -w '%{http_code}\n' -X POST "$(terraform output -raw hook_url)" -d '{}'` prints `401`.
-2. Observe before enforcing: deploy with `SLASHID_SHADOW_MODE=true` (see Rollout), send a prompt from a Claude Enterprise user, and confirm the invocation appears in SlashID. The service's own record is the Firestore database `slashid-anthropic`, collection `anthropic_pending`; a pushed record keeps its `event` for `SLASHID_TOMBSTONE_TTL_SECONDS` (2 h by default). With a compliance key, each tick also logs a `tick:` line with the reader counters.
-3. Drive a real denial without tagging anything in SlashID: set `SLASHID_MOCK_DENIED_HASHES` (below) to the digest of a test file, turn shadow mode off, and attach that file in a new conversation. A denied session stays denied, so use a new conversation for every try.
+2. Allowed tool use. From a Claude Code profile signed in to the organization, run a connector tool (the tool must be allowed, or `claude -p` stops to ask):
+
+   ```bash
+   claude -p "Use your Google Drive search tool to search for files whose title contains 'Recipes' and give their names." \
+     --allowedTools mcp__claude_ai_Google_Drive__search_files
+   ```
+
+   The service's own record is the Firestore database `slashid-anthropic`, collection `anthropic_pending`. A pushed record keeps its `event` for `SLASHID_TOMBSTONE_TTL_SECONDS` (2 h by default):
+
+   ```bash
+   uv run --no-project --with google-cloud-firestore python - <<'EOF'
+   from google.cloud import firestore
+
+   db = firestore.Client(project="<project>", database="slashid-anthropic")
+   events = [d.to_dict().get("event") or {} for d in db.collection("anthropic_pending").stream()]
+   for e in sorted(events, key=lambda e: str(e.get("timestamp")))[-5:]:
+       print(e.get("timestamp"), [t["name"] for t in e.get("available_tools", [])], e.get("accessed_files"))
+   EOF
+   ```
+
+   The latest events list the connector tool (`search_files`) in `available_tools`, and the frame that carries its call lists it in `used_tools`. A prompt that reads a file the hook can see as text (an attachment, or a connector read that returns its content) also gets an `accessed_files` entry with the file's digest; compare it with `sha256sum`.
+
+3. A sensitive file. Tag a file as sensitive in SlashID, then ask for it by its connector id (shadow mode off, which is the default):
+
+   ```bash
+   claude -p "Use your Google Drive connector to read the file with id <id of the tagged file> and give me its first line." \
+     --allowedTools mcp__claude_ai_Google_Drive__read_file_content
+   ```
+
+   The run stops with `A file in this request is classified as sensitive in your organization ("SENSITIVE_DATA"). Start a new conversation to continue.` A denied conversation stays denied, so use a new one for every try. With `SLASHID_SHADOW_MODE=true` the same request goes through, and the stored `composed_verdict` is what would have been answered.
+
+4. Without tagging anything: set `SLASHID_MOCK_DENIED_HASHES` (below) to the digest of a test file and attach that file in a new conversation.
 
 ## Known limitations
 

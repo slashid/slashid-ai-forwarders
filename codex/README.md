@@ -48,10 +48,10 @@ Environment variables are never read.
 With the package installed and a real token (Install above), on one machine:
 
 1. Run any prompt: `codex exec "say ok"`. The first hook starts the daemon, and `daemon.log` in the state directory shows `daemon <version> starting` and `listening on 127.0.0.1:<port>`. If it does not, no hook reached the daemon; see the first limitation below.
-2. After the response, the invocation (model, tokens, tools) appears in SlashID. The daemon pushes from a worker thread, so allow a few seconds.
-3. Drive a real denial: tag a file as sensitive in SlashID, then `codex exec "cat <that file>"`. The `PreToolUse` hook blocks the call and Codex shows the deny reason. Only simple shell reads (`cat`, `sed`, `head`, `tail`, `nl`) and `view_image` are checked before they run.
+2. Tools and files. Ask Codex to read a small file and call an MCP tool, for example `codex exec "cat notes.txt, then list my MCP servers"`. After the response the invocation appears in SlashID (the daemon pushes from a worker thread, so allow a few seconds): `available_tools` and `used_tools` name the shell tool and any MCP tools by server, and `accessed_files` lists `notes.txt` (the name, never the path) with its `sha256`, equal to `sha256sum notes.txt`. Only simple shell reads (`cat`, `sed`, `head`, `tail`, `nl`) and `view_image` are recognized as reads before they run; other commands are reported after the fact.
+3. A sensitive file. Tag a file as sensitive in SlashID, then `codex exec "cat <that file>"`. The `PreToolUse` hook answers before the command runs, and Codex shows the deny reason in place of the file.
 
-Without a token, use dry run, below.
+Without a token, use dry run, below: `daemon.log` then holds the invocation each hook sent (`dry run preflight:`) and the event it would push (`dry run push:`) as JSON, which is where to read the same fields.
 
 ## Development only
 

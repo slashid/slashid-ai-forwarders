@@ -113,7 +113,7 @@ part.
 
 ## Live check
 
-1. Without the gateway, post a before-request hook straight to the service. The token is the connection's Event streaming token, and `_user` must be a person SlashID knows by that address:
+1. The service answers a hook. Post a before-request hook straight to it. The token is the connection's Event streaming token, and `_user` must be a person SlashID knows by that address:
 
    ```bash
    curl -s -X POST http://localhost:8080/hooks/portkey \
@@ -127,7 +127,35 @@ part.
 
    An allowed request answers `{"verdict":true}`; a denied one answers `{"verdict":false,"data":{"deny_reasons":[...],"explanation":"..."}}`. The service logs `verdict <id>: allow, answered allow`.
 
-2. Through the gateway, with the guardrails from Setup on the config: send a chat completion with `metadata` naming the user, then one that mentions a file you tagged as sensitive. The first returns the model's answer and its invocation appears in SlashID; the second returns 446.
+2. Tools and files. The after-request hook records the invocation, and the service does not echo it, so run a second copy with `SLASHID_ENDPOINT` pointed at a listener that prints what it receives (`uv run uvicorn slashid_portkey_forwarder.main:app --factory --port 8098`, from `portkey/`):
+
+   ```python
+   # sink.py: python3 sink.py, then SLASHID_ENDPOINT=http://127.0.0.1:8765
+   import http.server
+
+   class H(http.server.BaseHTTPRequestHandler):
+       def do_POST(self):
+           body = self.rfile.read(int(self.headers["content-length"]))
+           preflight = self.path.endswith("/preflight")
+           if not preflight:
+               print(self.path, body.decode(), flush=True)
+           self.send_response(200)
+           self.send_header("content-type", "application/json")
+           self.end_headers()
+           self.wfile.write(b'{"deny_reasons": []}' if preflight else b"{}")
+
+   http.server.HTTPServer(("127.0.0.1", 8765), H).serve_forever()
+   ```
+
+   Build an after-request hook from the test fixtures (a request with an attached file and a declared tool, and an answer) and post it to port 8098 as above:
+
+   ```bash
+   (cd portkey && uv run python -c "import json; from tests import hooks; print(json.dumps(hooks.after(hooks.completion(hooks.TEXT_ANSWER))))")
+   ```
+
+   The printed event has `available_tools` naming `create_issue` (the `mcp__github__` prefix is the server) and `accessed_files` with `q3.txt`, `text/plain`, 17 bytes and a `sha256` equal to `printf 'quarterly numbers' | sha256sum`.
+
+3. A sensitive file, through the gateway with the guardrails from Setup on the config. Tag a file as sensitive in SlashID and send a chat completion that attaches it, with `metadata` naming a user SlashID knows: Portkey returns 446. The same request without the file returns the model's answer, and its invocation appears in SlashID.
 
 ## Development
 

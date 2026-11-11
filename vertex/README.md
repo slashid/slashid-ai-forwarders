@@ -138,31 +138,42 @@ Multi-region, the `global` endpoint, `observed_models` and `fileData` bucket gra
 
 ## Live check
 
-Call a model the module observes, in a region it covers (`thinking_budget=0`, or Gemini 2.5 can answer with no text):
+Call a model the module observes, in a region it covers, with a tool declared and a small file attached. `thinking_budget=0` keeps Gemini 2.5 from answering with no text:
 
 ```bash
+printf 'quarterly numbers\n' > notes.txt
 uv run --no-project --with google-genai python - <<'EOF'
 from google import genai
 from google.genai import types
 
 client = genai.Client(vertexai=True, project="<project>", location="us-central1")
+tool = types.Tool(function_declarations=[types.FunctionDeclaration(
+    name="get_weather", description="Weather for a city",
+    parameters={"type": "OBJECT", "properties": {"city": {"type": "STRING"}}, "required": ["city"]})])
 r = client.models.generate_content(
     model="gemini-2.5-flash",
-    contents="Reply with one word: ping",
-    config=types.GenerateContentConfig(thinking_config=types.ThinkingConfig(thinking_budget=0)),
+    contents=[types.Part.from_bytes(data=open("notes.txt", "rb").read(), mime_type="text/plain"),
+              "What is the weather in Paris? Use the tool."],
+    config=types.GenerateContentConfig(tools=[tool], thinking_config=types.ThinkingConfig(thinking_budget=0)),
 )
-print(r.text)
+print([p.function_call.name for p in r.candidates[0].content.parts if p.function_call])
 EOF
 ```
 
-The event follows in about two minutes: the 30 s identity buffer, BigQuery's streaming buffer, then the next one-minute tick. A tick that found it logs a non-zero `events_pushed`:
+The event follows in about two minutes: the 30 s identity buffer, BigQuery's streaming buffer, then the next one-minute tick (`tick complete: {"events_pushed":1,...}`; ticks with `events_pushed` 0 are normal on an idle project). The service logs each pushed event as an `event:` line with the whole JSON:
 
 ```bash
-gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"tick complete"' \
-  --project <project> --freshness=15m --limit=5 --format='value(timestamp,textPayload)'
+gcloud logging read 'resource.type="cloud_run_revision" AND textPayload:"event:"' \
+  --project <project> --freshness=15m --limit=5 --format='value(textPayload)'
 ```
 
-Ticks with `{"events_pushed":0,"envelopes_seen":0}` are normal on an idle project.
+Check that the event is built right:
+
+- `available_tools` names `get_weather`.
+- `accessed_files` has one entry with `provenance` `attachment`, `media_type` `text/plain`, `byte_length` equal to the file's size, and `content_hashes.sha256` equal to `sha256sum notes.txt`.
+- `model`, `tokens` and `identity_details` (the calling principal) are filled in.
+
+Vertex has no preflight, so there is no verdict to trigger: a sensitive file is judged on the SlashID side, from the hashes the event carries.
 
 ## Development
 

@@ -84,6 +84,39 @@ uv run ruff format            # format
 
 Once the CloudFormation template is deployed against a test AWS account, trigger real Bedrock invocations and confirm `AIInvocationObservedV1` events land on the SlashID side. The forwarder's own log group (`/aws/lambda/<ForwarderFunctionName>`, an output of the stack) shows each pushed event as an `event: {...}` line. Two paths worth exercising — they hit different branches of `mil_normalize.normalize_record`. Both use your existing AWS SDK credential chain (env, `~/.aws/credentials`, or `aws sso login`).
 
+### Tools and file hashes in the event
+
+One round trip with a tool declared, a file attached and the tool's result returned checks the whole event. Save the script as `check.py` and run `printf 'quarterly numbers\n' > notes.txt && uv run --no-project --with boto3 python check.py`:
+
+```python
+import boto3
+
+c = boto3.client("bedrock-runtime", region_name="us-east-2")
+tools = {"tools": [{"toolSpec": {"name": "get_weather", "description": "Weather for a city",
+    "inputSchema": {"json": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}}]}
+user = {"role": "user", "content": [
+    {"document": {"name": "notes", "format": "txt", "source": {"bytes": open("notes.txt", "rb").read()}}},
+    {"text": "What is the weather in Paris? Use the tool."}]}
+model = "us.amazon.nova-pro-v1:0"
+first = c.converse(modelId=model, messages=[user], toolConfig=tools)["output"]["message"]
+use = next(b["toolUse"] for b in first["content"] if "toolUse" in b)
+back = {"role": "user", "content": [{"toolResult": {"toolUseId": use["toolUseId"], "content": [{"text": "18C and sunny"}]}}]}
+c.converse(modelId=model, messages=[user, first, back], toolConfig=tools)
+```
+
+About a minute later, read the two events from the forwarder's log:
+
+```bash
+aws logs filter-log-events --log-group-name /aws/lambda/<stack>-forwarder \
+  --filter-pattern '"event:"' --start-time $(( ($(date +%s) - 600) * 1000 )) --query 'events[].message' --output text
+```
+
+- Both events list `get_weather` in `available_tools`.
+- Both carry `accessed_files` with `name` `notes`, `media_type` `text/plain`, `byte_length` equal to the file's size, `provenance` `attachment`, and `content_hashes.sha256` equal to `sha256sum notes.txt`.
+- The second event (the one that carries the tool result) has `used_tools` with that call's `tool_use_id` and `is_error` `false`; its `tool_id` matches the tool's id in `available_tools`.
+
+Bedrock has no preflight, so there is no verdict to trigger: a sensitive file is judged on the SlashID side, from the hashes the event carries.
+
 ### Via AWS Converse (already-Converse pass-through path)
 
 `./converse` invokes a Bedrock native-Converse model — Nova Pro by default. MIL emits these records in Converse shape natively, so the normalizer's Anthropic branch is skipped entirely; this exercises the pass-through and validates that `build_event_from_normalized` handles Converse-shape input directly.
