@@ -1,0 +1,55 @@
+{
+  "interceptorInputVersion": "1.0",
+  "mcp": {
+    "gatewayRequest": {
+      "path": "/mcp",
+      "httpMethod": "POST",
+      "headers": {
+        "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        "baggage": "Self=example,session.id=00000000-0000-4000-8000-000000000001",
+        "mcp-protocol-version": "2025-03-26",
+        "user-agent": "example-agent/1.0",
+        "Authorization": "AWS4-HMAC-SHA256 SYNTHETIC-SIGNATURE"
+      },
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+          "name": "gdrive___read_file_content",
+          "arguments": {
+            "fileId": "ID1"
+          },
+          "_meta": {
+            "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            "baggage": "Self=example,session.id=00000000-0000-4000-8000-000000000001"
+          }
+        }
+      },
+      "context": {
+        "identity": {
+          "awsPrincipalArn": "arn:aws:iam::123456789012:role/AgentCore-example-ApplicationRuntimeAgentRole"
+        }
+      }
+    },
+    "gatewayResponse": {
+      "statusCode": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": "Synthetic file body."
+            }
+          ]
+        }
+      }
+    }
+  }
+}
