@@ -150,6 +150,10 @@ resource "google_cloud_run_v2_service" "receiver" {
         value = tostring(var.preflight_enabled)
       }
       env {
+        name  = "SLASHID_PREFLIGHT_PROMPT"
+        value = tostring(var.preflight_prompt)
+      }
+      env {
         name  = "SLASHID_VERDICT_FAIL_MODE"
         value = var.verdict_fail_mode
       }

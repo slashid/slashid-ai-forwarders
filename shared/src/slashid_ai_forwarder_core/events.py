@@ -477,6 +477,9 @@ class AIInvocationObservedV1(_WireModel):
     recent_round_hashes: list[str] | None = None
     input: AIInvocationContent | None = None
     output: AIInvocationContent | None = None
+    # What the person typed in this round and nothing else: no tool result,
+    # no file, no model output. Sent with a prompt's preflight check only.
+    prompt_text: str | None = None
     accessed_files: list[AIAccessedFile] | None = None
 
 

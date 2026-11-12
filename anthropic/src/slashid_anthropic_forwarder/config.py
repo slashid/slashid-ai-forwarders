@@ -23,6 +23,12 @@ class Config(BaseConfig):
     # POST {endpoint}/ip/nhi/events/ai-invocations/preflight on every prompt
     # and tool call.
     preflight_enabled: bool = True
+    # Send what the person typed with the prompt check, apart from tool
+    # results, uploads and the client's own context. SlashID infers the
+    # person's intent from it. Off by default because it is text leaving
+    # the deployment whatever ``include_raw_content`` says; the records
+    # this service stores and pushes never carry it.
+    preflight_prompt: bool = False
     # Answer when a check fails or comes back unverified. Allow by default:
     # refusing to answer is self-inflicted downtime, and the customer has
     # Anthropic-side failure handling for strictness.
