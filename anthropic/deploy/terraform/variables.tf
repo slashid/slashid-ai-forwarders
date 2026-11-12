@@ -62,6 +62,12 @@ variable "preflight_enabled" {
   default     = true
 }
 
+variable "preflight_prompt" {
+  description = "Send what the person typed with the prompt check, apart from tool results, uploads and the client's own context. SlashID infers the person's intent from it, which intent-based access control needs. It is prompt text leaving the deployment whatever include_raw_content says; the records this service pushes never carry it."
+  type        = bool
+  default     = false
+}
+
 variable "verdict_fail_mode" {
   description = "allow or deny when a check fails or answers unverified. Distinct from Anthropic's own failure handling, which covers the case where this service does not answer at all."
   type        = string

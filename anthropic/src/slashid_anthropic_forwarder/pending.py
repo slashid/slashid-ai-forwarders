@@ -35,6 +35,7 @@ from .config import Config
 from .hook.checks import Decision
 from .hook.envelope import partial_event
 from .hook.frame import PromptFrame, split_transcript
+from .hook.prompt import typed_prompt
 from .record import DENIAL_ACTIVITY, FILE_DIGESTS, HOOK, PendingRecord, open_fields, to_event
 from .store import Outcome, PendingStore, Retirement
 
@@ -250,14 +251,27 @@ async def unanswered_round(
     with an assistant message the appended run would merge into the
     trailing one, and this record would duplicate the previous run's with
     its output stripped. So an empty fresh round records nothing.
+
+    With ``preflight_prompt`` on, the event also carries what the person
+    typed in the fresh round as ``prompt_text``, which SlashID infers their
+    intent from.
     """
-    if not split_transcript(frame).fresh:
+    fresh = split_transcript(frame).fresh
+    if not fresh:
         return None
     whole = frame.model_copy(update={"messages": [*frame.messages, _NO_ANSWER_YET]})
     event = await partial_event(whole, request_id=webhook_id, signed_at=signed_at, config=config)
     if event is None:
         return None
-    return event.model_copy(update={"output": None, "stop_reason": None})
+    # For the check alone: ``write_from_frame`` drops it before storing.
+    typed = typed_prompt(fresh) if config.preflight_prompt else None
+    return event.model_copy(
+        update={
+            "output": None,
+            "stop_reason": None,
+            "prompt_text": typed[: config.max_content_size] if typed else None,
+        }
+    )
 
 
 async def write_from_frame(
@@ -315,9 +329,11 @@ async def write_from_frame(
     #    Written on every frame: without it a session's last round has no
     #    successor to report it, and the reader never emits unjoinable
     #    runs, so nothing else ever would.
-    fresh = tail_event
-    if fresh is None:
+    if tail_event is None:
         return
+    # The typed prompt rode along for the verdict. What a record keeps of
+    # the text follows ``include_raw_content``, so it is not stored.
+    fresh = tail_event.model_copy(update={"prompt_text": None})
     if not decision.blocked:
         # A shadow-mode deny lands here too: the request ran, a successor
         # frame will arrive, and this tail is discarded by it. Note the
