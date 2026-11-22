@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import httpx
+import pytest
 from google.cloud.firestore import AsyncClient as FirestoreAsyncClient
 from pydantic import BaseModel
 from slashid_ai_forwarder_core.events import (
@@ -539,3 +540,15 @@ async def test_without_a_reader_a_denial_still_flushes() -> None:
     async with sink.client() as client:
         assert await flush_due(store, config=config(), client=client, now=past_deadline) == 1
     assert sink.request_ids == [address]
+
+
+@pytest.mark.parametrize("decision", [ALLOWED, BLOCKED])
+async def test_the_typed_prompt_is_for_the_check_and_is_never_stored(decision: Decision) -> None:
+    """The record follows ``include_raw_content``; the prompt rode along for
+    the verdict only."""
+    store = a_store()
+    await write(frame("frame_first_turn"), store, decision=decision, preflight_prompt=True)
+    stored = json.dumps([data for data, _ in fake(store).docs.values()], default=str)
+    assert fake(store).docs
+    assert "prompt_text" not in stored
+    assert "pong-A" not in stored

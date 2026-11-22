@@ -402,6 +402,7 @@ _container-env-only_ are not Terraform variables: set them on the revision.
 | `SLASHID_COMPLIANCE_KEY`                 | no                            | —                                                                                                   |
 | `SLASHID_ORGANIZATION_UUID`              | with `SLASHID_COMPLIANCE_KEY` | —                                                                                                   |
 | `SLASHID_PREFLIGHT_ENABLED`              | no                            | `true`                                                                                              |
+| `SLASHID_PREFLIGHT_PROMPT`               | no                            | `false` (send what the person typed with the check: [the typed prompt](#the-typed-prompt))          |
 | `SLASHID_VERDICT_FAIL_MODE`              | no                            | `allow`                                                                                             |
 | `SLASHID_VERDICT_BUDGET_MS`              | no                            | `3500`                                                                                              |
 | `SLASHID_PUSH_BUDGET_MS`                 | no                            | `2000`                                                                                              |
@@ -442,6 +443,21 @@ having anything tagged sensitive: the deny reason, the guardrail stamp, the
 `deny:` address and the denial reader's join onto it. Content-addressed, unlike
 `SLASHID_CAPTURE_DENY_MARKER`: a literal token is tripped by anyone who merely
 quotes it.
+
+### The typed prompt
+
+With `SLASHID_PREFLIGHT_PROMPT=true`, the check on a prompt also carries
+`prompt_text`: the text the person typed in the round the model is about to
+read. It leaves out what tools returned, uploaded files and their listing, the
+client's own `<system-reminder>` context and everything the model wrote, so
+text someone else could have written never speaks for the person. A round with
+nothing typed, such as one that only returns tool results, sends none.
+
+SlashID infers from it which systems the person means to use and how, which
+intent-based access control needs. The setting is separate from
+`SLASHID_INCLUDE_RAW_CONTENT`, off by default, and applies to the check only:
+the records this service stores and pushes never carry the field. A SlashID API
+that does not know the field ignores it.
 
 ## Rollout
 
